@@ -1,0 +1,20 @@
+{
+  "name": "marble-race-simulator",
+  "version": "0.1.0",
+  "description": "Browser-based physics marble racing simulator with random tracks, obstacles, cameras, live ranking, and generated racer names.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "check:track-code": "node scripts/check-track-debug-code.js",
+    "check:speed-sustain": "node scripts/check-speed-sustain.js",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-basic-ssl": "^1.2.0",
+    "cannon-es": "^0.20.0",
+    "three": "^0.160.1",
+    "vite": "^5.4.21"
+  },
+  "devDependencies": {}
+}

@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Marble Rush</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="canvas-container" aria-label="3D marble racing simulation"></div>
+      <button id="ui-toggle-btn" class="ui-toggle left-ui-toggle" type="button" aria-controls="left-hud" aria-expanded="true" title="Hide left UI">Hide UI</button>
+      <button id="right-ui-toggle-btn" class="ui-toggle right-ui-toggle" type="button" aria-controls="right-hud" aria-expanded="true" title="Hide right UI">Hide Right UI</button>
+
+      <aside id="left-hud" class="hud hud-left">
+        <div class="brand">
+          <span class="brand-mark">✦</span>
+          <div>
+            <h1>Marble Rush</h1>
+            <p>Marble Rush Physics League</p>
+          </div>
+        </div>
+
+        <section id="controls-panel" class="panel controls-panel collapsed">
+          <div class="panel-header">
+            <h2>Control Panel</h2>
+            <button id="controls-toggle-btn" class="panel-toggle" type="button" aria-controls="controls-panel" aria-expanded="false">Show</button>
+          </div>
+          <div class="panel-body">
+          <div class="control-grid">
+            <label>
+              Marble Count
+              <input id="marble-count" type="number" min="1" value="12" />
+            </label>
+            <label>
+              Track Length
+              <select id="length-select">
+                <option value="short">Short 240m</option>
+                <option value="medium" selected>Standard 380m</option>
+                <option value="long">Long 560m</option>
+                <option value="epic">Endurance 840m</option>
+                <option value="custom">Custom length</option>
+              </select>
+              <input id="custom-length-input" type="number" min="80" max="3000" step="10" value="380" placeholder="Custom meters" />
+            </label>
+            <label class="span-2 speed-control">
+              Race Speed: <span id="speed-label">Standard</span>
+              <input id="speed-slider" type="range" min="0" max="3" step="1" value="1" />
+              <div class="speed-ticks"><span>Slow</span><span>Standard</span><span>Fast</span><span>Crazy</span></div>
+            </label>
+            <label class="span-2 guide-bias-control compact-range-control">
+              Guide Point Mix: <span id="guide-bias-label">68%</span>
+              <input id="guide-bias-slider" type="range" min="0" max="100" step="5" value="68" />
+              <div class="speed-ticks"><span>Tangent</span><span>Balanced</span><span>Guide</span></div>
+            </label>
+            <label class="span-2 width-control">
+              Track Width: <span id="width-label">Normal</span>
+              <input id="width-slider" type="range" min="0" max="3" step="1" value="2" />
+              <div class="speed-ticks"><span>Ultra Narrow</span><span>Narrow</span><span>Normal</span><span>Wide</span></div>
+            </label>
+            <label class="span-2 obstacle-control">
+              Obstacles: <span id="obstacle-label">Standard</span>
+              <input id="obstacle-slider" type="range" min="0" max="3" step="1" value="1" />
+              <div class="speed-ticks"><span>None</span><span>Standard</span><span>Many</span><span>Extreme</span></div>
+            </label>
+            <label class="span-2">
+              Curve Style
+              <select id="curve-select">
+                <option value="mixed" selected>Mixed: U-turns + S-curves</option>
+                <option value="sCurve">S-curves</option>
+                <option value="uTurn">U-turn hairpins</option>
+                <option value="gentle">Gentle random</option>
+              </select>
+            </label>
+            <label class="span-2 catchup-control">
+              <span>Catch-up Assist: <strong id="catchup-label">On</strong></span>
+              <input id="catchup-toggle" type="checkbox" checked />
+              <small>Non-leading marbles get a small top-speed boost so they do not fall too far behind without unfair overtakes.</small>
+            </label>
+            <label class="span-2 guide-points-control">
+              <span>Show Guide Points</span>
+              <input id="show-guide-points-toggle" type="checkbox" />
+              <small>Overlay all track guide points on the race track for debugging.</small>
+            </label>
+            <label class="span-2">
+              Random Seed
+              <input id="seed-input" type="text" value="" placeholder="Leave blank for random" />
+            </label>
+          </div>
+          <p class="hint">Marbles stage at the gate after loading | Smooth bird’s-eye Default Auto camera by default | Track length presets are doubled and Custom length supports typed meters | Overall speed is now doubled again; use the slider to slow down or speed up | Track width can be Ultra Narrow / Narrow / Normal / Wide and changing it regenerates the track | Rail momentum assist prevents marbles losing forward inertia when they scrape rails | “Generate New Track” rerolls the route and obstacles | “Re-stage” resets the same track | Drag to orbit | Scroll to zoom | Press 1-6 for cameras | R to re-stage | Space to open gate/pause</p>
+          </div>
+        </section>
+
+        <section class="panel action-panel">
+          <h2>Race Actions</h2>
+          <div class="button-row">
+            <button id="start-btn">Open Gate</button>
+            <button id="regen-btn">Generate New Track</button>
+            <button id="pause-btn">Pause</button>
+          </div>
+          <div class="record-row">
+            <button id="record-btn" type="button">Start Recording</button>
+            <span id="record-status" aria-live="polite">Not recording</span>
+          </div>
+        </section>
+
+        <section id="obstacle-types-panel" class="panel obstacle-types-panel collapsed">
+          <div class="panel-header">
+            <h2>Obstacle Types</h2>
+            <button id="obstacle-types-toggle-btn" class="panel-toggle" type="button" aria-controls="obstacle-types-panel" aria-expanded="false">Show</button>
+          </div>
+          <div class="panel-body">
+            <div id="obstacle-type-toggles" class="obstacle-type-toggles" aria-label="Toggle obstacle types">
+              <label><span>Pop Bumper</span><input type="checkbox" data-obstacle-type="popBumper" checked /></label>
+              <label><span>Slingshot</span><input type="checkbox" data-obstacle-type="slingshot" checked /></label>
+              <label><span>Spinner Gate</span><input type="checkbox" data-obstacle-type="spinnerGate" checked /></label>
+              <label><span>Rollover Lane</span><input type="checkbox" data-obstacle-type="rolloverLane" checked /></label>
+              <label><span>Drop Target</span><input type="checkbox" data-obstacle-type="dropTarget" checked /></label>
+            </div>
+            <small>Turn obstacle families on/off, then regenerate the track to rebuild with those types.</small>
+          </div>
+        </section>
+
+        <section id="camera-panel" class="panel camera-panel collapsed">
+          <div class="panel-header">
+            <h2>Camera</h2>
+            <button id="camera-toggle-btn" class="panel-toggle" type="button" aria-controls="camera-panel" aria-expanded="false">Show</button>
+          </div>
+          <div class="panel-body">
+            <div class="button-grid">
+              <button data-camera="default">Default Auto</button>
+              <button data-camera="leadPack">Follow Lead Pack</button>
+              <button data-camera="orbit">Free Orbit</button>
+              <button data-camera="leader">Follow Leader</button>
+              <button data-camera="selected">Follow Selected</button>
+              <button data-camera="cinematicLeader">Cinematic Leader</button>
+              <button data-camera="finish">Finish View</button>
+            </div>
+            <label>
+              Follow Marble
+              <select id="marble-select"></select>
+            </label>
+          </div>
+        </section>
+
+        <section id="debug-panel" class="panel debug-panel">
+          <div class="panel-header">
+            <h2>Debug Console</h2>
+            <div class="panel-header-actions">
+              <button id="debug-copy-btn" class="panel-toggle" type="button">Copy Debug</button>
+              <span id="debug-copy-status" aria-live="polite">Ready</span>
+              <button id="debug-toggle-btn" class="panel-toggle" type="button" aria-controls="debug-panel" aria-expanded="true">Hide</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="track-code-row debug-track-code-row">
+              <label for="track-code-output">Track Debug Code</label>
+              <textarea id="track-code-output" rows="3" readonly spellcheck="false" aria-label="Copyable track debug code"></textarea>
+              <div class="track-code-actions">
+                <button id="copy-track-code-btn" type="button">Copy Track Code</button>
+                <span id="track-code-status" aria-live="polite">Ready</span>
+              </div>
+              <small>Send this code when a generated track has a bug; it stores seed, presets, obstacle density, speed, and generated piece summary for debugging.</small>
+            </div>
+            <div class="track-code-row track-code-import-row debug-track-code-row">
+              <label for="track-code-import">Paste Track Debug Code</label>
+              <textarea id="track-code-import" rows="5" spellcheck="false" aria-label="Paste MR1 track debug code" placeholder="Paste MR1: debug code here to regenerate that exact track"></textarea>
+              <div class="track-code-actions">
+                <button id="import-track-code-btn" type="button">Import Track Code</button>
+                <span id="track-code-import-status" aria-live="polite">Ready</span>
+              </div>
+              <small>Use this to restore the original seed and presets, then regenerate the same track.</small>
+            </div>
+            <pre id="debug-console" aria-live="polite">Waiting for debug data…</pre>
+          </div>
+        </section>
+      </aside>
+
+      <aside id="right-hud" class="hud hud-right">
+        <section class="panel stats-panel">
+          <h2>Live Race Status</h2>
+          <div class="stats-grid">
+            <div><span id="race-state">Idle</span><small>Status</small></div>
+            <div><span id="elapsed">0.0s</span><small>Time</small></div>
+            <div><span id="track-length">0m</span><small>Track</small></div>
+            <div><span id="fps">--</span><small>FPS</small></div>
+          </div>
+        </section>
+
+        <section class="panel leaderboard-panel">
+          <h2>Live Standings</h2>
+          <ol id="leaderboard"></ol>
+        </section>
+      </aside>
+
+      <div id="winner-banner" class="winner-banner hidden"></div>
+      <div id="broadcast-caption" class="broadcast-caption hidden" aria-live="polite">
+        <span class="caption-kicker">LIVE EVENT</span>
+        <strong id="caption-title">Race ready</strong>
+        <small id="caption-detail">Waiting for gate</small>
+      </div>
+      <div id="countdown-overlay" class="countdown-overlay hidden" aria-live="assertive"></div>
+      <div id="final-showcase" class="final-showcase hidden" aria-live="polite"></div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
