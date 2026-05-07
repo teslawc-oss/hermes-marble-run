@@ -267,6 +267,16 @@ const BROADCAST_CAMERA = {
   outOfBoundsIgnoreLabel: 'auto camera: if a marble is outside the track for more than 1 second, stop targeting it until it respawns/returns',
   leader: { back: -7.2, side: 3.2, height: 24.5 },
   leadPack: { back: -7.6, side: 1.8, height: 22.8, packHeightStep: 1.25 },
+  leadBattle: {
+    enabled: true,
+    label: 'auto close-up when top two marbles are neck-and-neck',
+    maxGap: 3.2,
+    minProgress: 0.04,
+    back: -2.8,
+    side: 0.65,
+    height: 6.2,
+    targetLift: 0.58,
+  },
   selected: { back: -7.0, side: -3.2, height: 22.0 },
   unfinished: { back: -6.8, side: 2.8, height: 21.6 },
   finish: { forward: 8.5, height: 25.5 },
@@ -452,6 +462,8 @@ class MarbleRace {
     this.cameraTargetSmoothed = new THREE.Vector3();
     this.leadPackDistanceSmoothed = 0;
     this.leadPackInitialized = false;
+    this.leadBattleInitialized = false;
+    this.leadBattleState = null;
     this.defaultCameraPhaseUntil = 0;
     this.defaultCameraFocusId = null;
     this.firstFinishTime = 0;
@@ -986,6 +998,8 @@ class MarbleRace {
     this.updateCurveStyle();
     this.cameraMode = 'default';
     this.leadPackInitialized = false;
+    this.leadBattleInitialized = false;
+    this.leadBattleState = null;
     this.defaultCameraPhaseUntil = 0;
     this.defaultCameraFocusId = null;
     this.firstFinishTime = 0;
@@ -1244,8 +1258,9 @@ class MarbleRace {
   }
 
   clearMarbles() {
-    this.marbleData.forEach(({ mesh, body }) => {
+    this.marbleData.forEach(({ mesh, body, labelSprite }) => {
       this.scene.remove(mesh);
+      if (labelSprite) this.scene.remove(labelSprite);
       this.world.removeBody(body);
     });
     this.clearSpectacleEffects({ clearTrails: false });
@@ -3389,6 +3404,56 @@ class MarbleRace {
     });
   }
 
+  createMarbleNumberLabel(index, color) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    const label = String(index + 1);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.beginPath();
+    ctx.arc(64, 64, 47, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(8, 10, 18, 0.82)';
+    ctx.fill();
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = `#${color.toString(16).padStart(6, '0')}`;
+    ctx.stroke();
+    ctx.font = '800 58px Inter, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+    ctx.strokeText(label, 64, 66);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(label, 64, 66);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
+    const sprite = new THREE.Sprite(material);
+    sprite.name = `marble-number-label-${label}`;
+    sprite.renderOrder = 80;
+    sprite.frustumCulled = false;
+    sprite.scale.set(1.18, 1.18, 1);
+    this.scene.add(sprite);
+    return sprite;
+  }
+
+  updateMarbleNumberLabels() {
+    this.marbleData.forEach((data) => {
+      if (!data.labelSprite) return;
+      data.labelSprite.position.copy(data.mesh.position).add(new THREE.Vector3(0, data.radius + 0.82, 0));
+      const cameraDistance = data.labelSprite.position.distanceTo(this.camera.position);
+      const scale = clamp(cameraDistance * 0.07, 1.05, 2.65);
+      data.labelSprite.scale.set(scale, scale, 1);
+      data.labelSprite.visible = !data.pendingFallRespawn || this.elapsed - (data.pendingFallRespawn.detectedAt ?? this.elapsed) < 1.1;
+    });
+  }
+
   clearSpectacleEffects({ clearTrails = true } = {}) {
     this.spectacleEffects?.forEach((effect) => {
       effect.meshes?.forEach((mesh) => this.scene?.remove(mesh));
@@ -3689,6 +3754,7 @@ class MarbleRace {
       const identity = this.createMarbleIdentity(i, count);
       const { color, radius } = identity;
       const mesh = this.makeMarbleMesh(radius, color, i, identity.patternKey);
+      const labelSprite = this.createMarbleNumberLabel(i, color);
       const col = i % cols;
       const row = Math.floor(i / cols);
       const lane = (col - (cols - 1) / 2) * laneGap;
@@ -3740,6 +3806,7 @@ class MarbleRace {
         startFrozenUntilGateOpen: Boolean(START_GATE_DESIGN.freezeMarblesUntilGateOpen),
         startOnChuteSurface: true,
         mesh,
+        labelSprite,
         body,
         finished: false, finishTime: null, progress: 0, distance: 0,
         lastDistance: 0, lastMovementTime: 0, stuckResets: 0, lastResetTime: -Infinity,
@@ -5008,6 +5075,7 @@ class MarbleRace {
 
       data.mesh.position.copy(nextPos);
       data.mesh.quaternion.copy(data.visualQuaternion);
+      if (data.labelSprite) data.labelSprite.position.copy(nextPos).add(new THREE.Vector3(0, data.radius + 0.82, 0));
       data.lastVisualPosition = nextPos;
       const closest = this.findClosestProgress(data.body.position);
       if (!data.pendingFallRespawn && closest.lateralSq <= (this.trackWidth * this.trackWidth * 0.9)) {
@@ -5063,6 +5131,7 @@ class MarbleRace {
         data.body.mass = 0;
         data.body.updateMassProperties();
         data.mesh.position.copy(data.body.position);
+        if (data.labelSprite) data.labelSprite.position.copy(data.mesh.position).add(new THREE.Vector3(0, data.radius + 0.82, 0));
         if (data.visualQuaternion) data.mesh.quaternion.copy(data.visualQuaternion);
         data.finished = true;
         data.body.sleep();
@@ -5725,8 +5794,15 @@ class MarbleRace {
       raceCompleteCameraMove: BROADCAST_CAMERA.podium360.label,
       podium360Camera: BROADCAST_CAMERA.podium360,
       leadPackCloseCamera: true,
+      leadBattleCloseCamera: BROADCAST_CAMERA.leadBattle,
+      leadBattleState: this.leadBattleState,
+      marbleNumberLabels: {
+        enabled: true,
+        count: this.marbleData.filter((data) => Boolean(data.labelSprite)).length,
+        label: 'number sprite floats above every marble and follows mesh/body position',
+      },
       birdEyeCameraAngle: BROADCAST_CAMERA.birdEyeCameraAngle,
-      cameraAngleStyle: 'high-angle overhead broadcast follow; shorter rear offset, taller Y offset',
+      cameraAngleStyle: 'high-angle overhead broadcast follow; lead battle switches to lower closer two-marble shot',
       leadPackSize: this.getLeadPackTarget()?.size ?? 0,
     };
     window.__MARBLE_RACE_DEBUG__ = debug;
@@ -5928,6 +6004,21 @@ class MarbleRace {
     return { center, avgDistance, leaderDistance, size: group.length, leader: pack[0] };
   }
 
+  getLeadBattleTarget() {
+    const cfg = BROADCAST_CAMERA.leadBattle;
+    if (!cfg?.enabled || this.state !== 'running' || this.finishers.length > 0) return null;
+    const ranking = this.getAutoCameraRanking({ includeFinished: false });
+    if (ranking.length < 2) return null;
+    const [leader, chaser] = ranking;
+    const gap = (leader.distance || 0) - (chaser.distance || 0);
+    const leaderProgress = this.trackLength ? (leader.distance || 0) / this.trackLength : 0;
+    if (gap < 0 || gap > cfg.maxGap || leaderProgress < cfg.minProgress) return null;
+    const center = leader.mesh.position.clone().add(chaser.mesh.position).multiplyScalar(0.5);
+    center.y += cfg.targetLift;
+    const avgDistance = ((leader.distance || 0) + (chaser.distance || 0)) / 2;
+    return { center, avgDistance, leaderDistance: leader.distance || 0, size: 2, leader, chaser, gap };
+  }
+
   getMouseOrbitAdjustedCamera(autoDesired, target) {
     if (!this.enableAllCameraMouseOrbit || this.cameraMode === 'orbit') return autoDesired;
     const userOffset = this.camera.position.clone().sub(this.controls.target);
@@ -5946,6 +6037,7 @@ class MarbleRace {
       if (this.elapsed < (this.defaultCameraPhaseUntil || 0)) return 'finish';
       return 'unfinishedOrder';
     }
+    if (this.getLeadBattleTarget()) return 'leadBattle';
     const cycle = (this.elapsed || 0) % 24;
     if (cycle < 18) return 'leadPack';
     if (cycle < 22) return 'leader';
@@ -5974,10 +6066,35 @@ class MarbleRace {
     const selected = selectedCandidate && !this.isMarbleIgnoredByAutoCamera(selectedCandidate) ? selectedCandidate : leader;
     const unfinishedTarget = this.getNextUnfinishedTarget();
     const leadPack = this.getLeadPackTarget();
+    const leadBattle = activeCameraMode === 'leadBattle' ? this.getLeadBattleTarget() : null;
     let target = new THREE.Vector3(0, 0, -this.trackLength / 2);
     let desired = new THREE.Vector3(0, 52, 56);
 
-    if (activeCameraMode === 'leadPack' && leadPack) {
+    if (activeCameraMode === 'leadBattle' && leadBattle) {
+      const cfg = BROADCAST_CAMERA.leadBattle;
+      const dt = Math.max(0.001, Math.min(delta, 0.05));
+      const ease = 1 - Math.exp(-dt * 2.6);
+      if (!this.leadBattleInitialized) {
+        this.cameraTargetSmoothed.copy(leadBattle.center);
+        this.leadPackDistanceSmoothed = leadBattle.avgDistance;
+        this.leadBattleInitialized = true;
+      } else {
+        this.cameraTargetSmoothed.lerp(leadBattle.center, ease);
+        this.leadPackDistanceSmoothed = lerp(this.leadPackDistanceSmoothed, leadBattle.avgDistance, ease);
+      }
+      this.leadBattleState = {
+        leader: leadBattle.leader?.name || null,
+        chaser: leadBattle.chaser?.name || null,
+        gap: leadBattle.gap,
+        active: true,
+      };
+      const frame = this.getTrackFrameAt(this.leadPackDistanceSmoothed);
+      target.copy(this.cameraTargetSmoothed);
+      desired.copy(target)
+        .add(frame.tangent.clone().multiplyScalar(cfg.back))
+        .add(frame.right.clone().multiplyScalar(cfg.side))
+        .add(new THREE.Vector3(0, cfg.height, 0));
+    } else if (activeCameraMode === 'leadPack' && leadPack) {
       const cfg = BROADCAST_CAMERA.leadPack;
       const dt = Math.max(0.001, Math.min(delta, 0.05));
       const distanceEase = 1 - Math.exp(-dt * 1.25);
@@ -6053,13 +6170,20 @@ class MarbleRace {
         collector?.yaw || 0,
       ));
     } else {
+      this.leadBattleState = this.leadBattleState ? { ...this.leadBattleState, active: false } : null;
       return;
     }
 
+    if (activeCameraMode !== 'leadBattle') {
+      this.leadBattleInitialized = false;
+      this.leadBattleState = this.leadBattleState ? { ...this.leadBattleState, active: false } : null;
+    }
+    this.updateMarbleNumberLabels();
     desired.copy(this.getMouseOrbitAdjustedCamera(desired, target));
-    const positionSmooth = activeCameraMode === 'leadPack' ? 1 - Math.exp(-delta * 2.1) : 1 - Math.pow(0.001, delta);
-    const targetSmooth = activeCameraMode === 'leadPack' ? 1 - Math.exp(-delta * 2.8) : 1 - Math.pow(0.001, delta);
-    this.camera.position.lerp(desired, positionSmooth * (activeCameraMode === 'leadPack' ? 0.62 : 0.72));
+    const isLeadCloseMode = activeCameraMode === 'leadPack' || activeCameraMode === 'leadBattle';
+    const positionSmooth = isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 3.2 : 2.1)) : 1 - Math.pow(0.001, delta);
+    const targetSmooth = isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 4.2 : 2.8)) : 1 - Math.pow(0.001, delta);
+    this.camera.position.lerp(desired, positionSmooth * (activeCameraMode === 'leadBattle' ? 0.78 : activeCameraMode === 'leadPack' ? 0.62 : 0.72));
     this.controls.target.lerp(target, targetSmooth);
     this.camera.lookAt(this.controls.target);
   }
