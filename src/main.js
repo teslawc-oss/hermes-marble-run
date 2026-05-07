@@ -284,13 +284,13 @@ const BROADCAST_CAMERA = {
 const FINISH_SLOW_MOTION = {
   enabled: true,
   trigger: 'leader-enters-final-pre-line-window',
-  preFinishDistance: 22,
-  duration: 6.6,
+  preFinishDistance: 5,
+  duration: 3,
   minTimeScale: 0.24,
-  easeInSeconds: 0.3,
-  holdSeconds: 4.4,
-  easeOutSeconds: 1.6,
-  label: 'leader triggers replay-style slow motion before crossing the line; confetti cannons still fire on actual finish',
+  easeInSeconds: 0.25,
+  holdSeconds: 1.75,
+  easeOutSeconds: 1.0,
+  label: 'leader triggers replay-style slow motion shortly before crossing the line; confetti cannons still fire on actual finish',
 };
 
 const PERFORMANCE_TUNING = {
