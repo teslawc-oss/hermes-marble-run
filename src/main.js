@@ -283,13 +283,14 @@ const BROADCAST_CAMERA = {
 
 const FINISH_SLOW_MOTION = {
   enabled: true,
-  trigger: 'first-finisher-crosses-single-line',
-  duration: 4.8,
-  minTimeScale: 0.28,
-  easeInSeconds: 0.42,
-  holdSeconds: 2.65,
-  easeOutSeconds: 1.35,
-  label: 'first finisher triggers replay-style slow motion while finish confetti cannons fire',
+  trigger: 'leader-enters-final-pre-line-window',
+  preFinishDistance: 22,
+  duration: 6.6,
+  minTimeScale: 0.24,
+  easeInSeconds: 0.3,
+  holdSeconds: 4.4,
+  easeOutSeconds: 1.6,
+  label: 'leader triggers replay-style slow motion before crossing the line; confetti cannons still fire on actual finish',
 };
 
 const PERFORMANCE_TUNING = {
@@ -616,6 +617,8 @@ class MarbleRace {
       triggerWinner: null,
       triggerRank: null,
       triggeredAt: null,
+      triggerReason: null,
+      preFinishDistance: null,
       startedAtMs: 0,
       endedAt: null,
     };
@@ -3543,6 +3546,8 @@ class MarbleRace {
       triggerWinner: null,
       triggerRank: null,
       triggeredAt: null,
+      triggerReason: null,
+      preFinishDistance: null,
       startedAtMs: 0,
       endedAt: null,
     };
@@ -3571,7 +3576,7 @@ class MarbleRace {
     return lerp(minScale, 1, t * t * (3 - 2 * t));
   }
 
-  triggerFinishSlowMotion(winner) {
+  triggerFinishSlowMotion(winner, { reason = FINISH_SLOW_MOTION.trigger, crossed = false } = {}) {
     if (!FINISH_SLOW_MOTION.enabled || this.finishSlowMotion?.triggered) return;
     this.finishSlowMotion = {
       active: true,
@@ -3580,11 +3585,30 @@ class MarbleRace {
       timeScale: FINISH_SLOW_MOTION.minTimeScale,
       triggerWinner: winner?.name || null,
       triggerRank: winner?.rank || 1,
+      triggerReason: reason,
+      preFinishDistance: crossed ? 0 : Math.max(0, this.trackLength - (winner?.distance || 0)),
       triggeredAt: this.elapsed,
       startedAtMs: performance.now(),
       endedAt: null,
     };
-    this.pushBroadcastEvent('Slow Motion Finish', `${winner?.name || 'Leader'} breaks the line — confetti cannons firing`, { kind: 'winner', force: true });
+    const detail = crossed
+      ? `${winner?.name || 'Leader'} breaks the line — confetti cannons firing`
+      : `${winner?.name || 'Leader'} is ${this.finishSlowMotion.preFinishDistance.toFixed(1)}m from the line — slow-mo engaged`;
+    this.pushBroadcastEvent(crossed ? 'Slow Motion Finish' : 'Final Slow-Mo', detail, { kind: 'winner', force: true });
+  }
+
+  updatePreFinishSlowMotionTrigger() {
+    if (!FINISH_SLOW_MOTION.enabled || this.finishSlowMotion?.triggered || this.state !== 'running') return;
+    if (this.finishers.length > 0 || !this.marbleData.length) return;
+    const finishThreshold = FINISH_LINE_RULE.threshold ?? 0.08;
+    const triggerDistance = Math.max(finishThreshold + 0.4, FINISH_SLOW_MOTION.preFinishDistance ?? 8);
+    const leader = this.getRanking({ force: false }).find((data) => !data.finished);
+    if (!leader) return;
+    const remaining = this.trackLength - (leader.distance || 0);
+    if (remaining <= triggerDistance && remaining > finishThreshold) {
+      this.defaultCameraPhaseUntil = Math.max(this.defaultCameraPhaseUntil || 0, this.elapsed + 3.2);
+      this.triggerFinishSlowMotion(leader, { reason: 'pre-finish-window', crossed: false });
+    }
   }
 
   spawnFinishConfetti(origin, count = 42, { cannon = false } = {}) {
@@ -4129,6 +4153,7 @@ class MarbleRace {
       this.applyMarbleDrive();
       this.world.step(1 / 60, delta, PERFORMANCE_TUNING.runningMaxSubSteps);
       this.syncMarbles();
+      this.updatePreFinishSlowMotionTrigger();
       this.checkFinishers();
       this.updateBroadcastDirector();
     } else if (this.state === 'ready') {
@@ -5050,7 +5075,7 @@ class MarbleRace {
           this.ui.winner.textContent = `🏆 ${data.name} wins! ${data.finishTime.toFixed(2)}s`;
           this.ui.winner.classList.remove('hidden');
           this.pushBroadcastEvent('Winner Crowned', `${data.name} takes the flag in ${data.finishTime.toFixed(2)}s`, { kind: 'winner', force: true });
-          this.triggerFinishSlowMotion(data);
+          this.triggerFinishSlowMotion(data, { reason: 'finish-line-crossed-fallback', crossed: true });
           this.playFinishSound(true);
           this.spawnImpactEffect(collectPos, 0xffd166, 'burst');
           this.spawnFinishConfetti(collectPos, 132, { cannon: true });
@@ -5551,6 +5576,8 @@ class MarbleRace {
         triggered: Boolean(this.finishSlowMotion?.triggered),
         timeScale: Number((this.finishSlowMotion?.timeScale ?? 1).toFixed(3)),
         triggerWinner: this.finishSlowMotion?.triggerWinner || null,
+        triggerReason: this.finishSlowMotion?.triggerReason || null,
+        preFinishDistance: this.finishSlowMotion?.preFinishDistance ?? null,
         triggeredAt: this.finishSlowMotion?.triggeredAt ?? null,
         wallAgeSeconds: this.finishSlowMotion?.startedAtMs ? Number(((performance.now() - this.finishSlowMotion.startedAtMs) / 1000).toFixed(2)) : null,
         endedAt: this.finishSlowMotion?.endedAt ?? null,
