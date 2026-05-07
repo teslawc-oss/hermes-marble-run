@@ -3404,52 +3404,42 @@ class MarbleRace {
     });
   }
 
-  createMarbleNumberLabel(index, color) {
+  createMarbleNameLabel(name) {
     const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 128;
+    canvas.width = 384;
+    canvas.height = 96;
     const ctx = canvas.getContext('2d');
-    const label = String(index + 1);
+    const label = String(name || '').replace(/\s+/g, ' ').trim();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.beginPath();
-    ctx.arc(64, 64, 47, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(8, 10, 18, 0.82)';
-    ctx.fill();
-    ctx.lineWidth = 8;
-    ctx.strokeStyle = '#ffffff';
-    ctx.stroke();
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = `#${color.toString(16).padStart(6, '0')}`;
-    ctx.stroke();
-    ctx.font = '800 58px Inter, Arial, sans-serif';
+    ctx.font = '700 34px Inter, Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.lineWidth = 8;
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
-    ctx.strokeText(label, 64, 66);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(label, 64, 66);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.28)';
+    ctx.strokeText(label, canvas.width / 2, canvas.height / 2 + 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
+    ctx.fillText(label, canvas.width / 2, canvas.height / 2 + 2);
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.needsUpdate = true;
-    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.78, depthTest: false, depthWrite: false });
     const sprite = new THREE.Sprite(material);
-    sprite.name = `marble-number-label-${label}`;
+    sprite.name = `marble-name-label-${label}`;
     sprite.renderOrder = 80;
     sprite.frustumCulled = false;
-    sprite.scale.set(1.18, 1.18, 1);
+    sprite.scale.set(1.8, 0.45, 1);
     this.scene.add(sprite);
     return sprite;
   }
 
-  updateMarbleNumberLabels() {
+  updateMarbleNameLabels() {
     this.marbleData.forEach((data) => {
       if (!data.labelSprite) return;
-      data.labelSprite.position.copy(data.mesh.position).add(new THREE.Vector3(0, data.radius + 0.82, 0));
+      data.labelSprite.position.copy(data.mesh.position).add(new THREE.Vector3(0, data.radius + 0.72, 0));
       const cameraDistance = data.labelSprite.position.distanceTo(this.camera.position);
-      const scale = clamp(cameraDistance * 0.07, 1.05, 2.65);
-      data.labelSprite.scale.set(scale, scale, 1);
+      const scale = clamp(cameraDistance * 0.035, 0.62, 1.25);
+      data.labelSprite.scale.set(scale * 3.8, scale * 0.95, 1);
       data.labelSprite.visible = !data.pendingFallRespawn || this.elapsed - (data.pendingFallRespawn.detectedAt ?? this.elapsed) < 1.1;
     });
   }
@@ -3754,7 +3744,7 @@ class MarbleRace {
       const identity = this.createMarbleIdentity(i, count);
       const { color, radius } = identity;
       const mesh = this.makeMarbleMesh(radius, color, i, identity.patternKey);
-      const labelSprite = this.createMarbleNumberLabel(i, color);
+      const labelSprite = this.createMarbleNameLabel(identity.name);
       const col = i % cols;
       const row = Math.floor(i / cols);
       const lane = (col - (cols - 1) / 2) * laneGap;
@@ -5796,10 +5786,11 @@ class MarbleRace {
       leadPackCloseCamera: true,
       leadBattleCloseCamera: BROADCAST_CAMERA.leadBattle,
       leadBattleState: this.leadBattleState,
-      marbleNumberLabels: {
+      marbleNameLabels: {
         enabled: true,
         count: this.marbleData.filter((data) => Boolean(data.labelSprite)).length,
-        label: 'number sprite floats above every marble and follows mesh/body position',
+        style: 'small semi-transparent white names with no frame or background',
+        label: 'name sprite floats above every marble and follows mesh/body position',
       },
       birdEyeCameraAngle: BROADCAST_CAMERA.birdEyeCameraAngle,
       cameraAngleStyle: 'high-angle overhead broadcast follow; lead battle switches to lower closer two-marble shot',
@@ -6178,7 +6169,7 @@ class MarbleRace {
       this.leadBattleInitialized = false;
       this.leadBattleState = this.leadBattleState ? { ...this.leadBattleState, active: false } : null;
     }
-    this.updateMarbleNumberLabels();
+    this.updateMarbleNameLabels();
     desired.copy(this.getMouseOrbitAdjustedCamera(desired, target));
     const isLeadCloseMode = activeCameraMode === 'leadPack' || activeCameraMode === 'leadBattle';
     const positionSmooth = isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 3.2 : 2.1)) : 1 - Math.pow(0.001, delta);
