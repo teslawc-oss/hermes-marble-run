@@ -281,6 +281,17 @@ const BROADCAST_CAMERA = {
   sequence: ['highAngleLeader', 'highAngleLeadPack', 'finishLineHighShot', 'unfinishedOrderHighTrack', 'raceCompletePodium360Orbit'],
 };
 
+const FINISH_SLOW_MOTION = {
+  enabled: true,
+  trigger: 'first-finisher-crosses-single-line',
+  duration: 4.8,
+  minTimeScale: 0.28,
+  easeInSeconds: 0.42,
+  holdSeconds: 2.65,
+  easeOutSeconds: 1.35,
+  label: 'first finisher triggers replay-style slow motion while finish confetti cannons fire',
+};
+
 const PERFORMANCE_TUNING = {
   label: 'fps-balanced',
   maxPixelRatio: 1.35,
@@ -597,6 +608,17 @@ class MarbleRace {
     this.activeCaption = null;
     this.spectacleEffects = [];
     this.confettiPieces = [];
+    this.finishSlowMotion = {
+      active: false,
+      triggered: false,
+      startElapsed: 0,
+      timeScale: 1,
+      triggerWinner: null,
+      triggerRank: null,
+      triggeredAt: null,
+      startedAtMs: 0,
+      endedAt: null,
+    };
     this.showcaseStats = null;
 
     this.ui = {
@@ -964,6 +986,7 @@ class MarbleRace {
     this.defaultCameraPhaseUntil = 0;
     this.defaultCameraFocusId = null;
     this.firstFinishTime = 0;
+    this.resetFinishSlowMotion();
 
     const rawSeedInput = this.ui.seed.value.trim() || `${Date.now()}-${Math.random()}`;
     const normalizedSeed = normalizeSeedInput(rawSeedInput);
@@ -3511,15 +3534,81 @@ class MarbleRace {
     }
   }
 
-  spawnFinishConfetti(origin, count = 42) {
+  resetFinishSlowMotion() {
+    this.finishSlowMotion = {
+      active: false,
+      triggered: false,
+      startElapsed: 0,
+      timeScale: 1,
+      triggerWinner: null,
+      triggerRank: null,
+      triggeredAt: null,
+      startedAtMs: 0,
+      endedAt: null,
+    };
+  }
+
+  getFinishSlowMotionTimeScale() {
+    const state = this.finishSlowMotion;
+    if (!FINISH_SLOW_MOTION.enabled || !state?.active) return 1;
+    const age = Math.max(0, (performance.now() - (state.startedAtMs || performance.now())) / 1000);
+    const easeIn = Math.max(0.001, FINISH_SLOW_MOTION.easeInSeconds);
+    const hold = Math.max(0, FINISH_SLOW_MOTION.holdSeconds);
+    const easeOut = Math.max(0.001, FINISH_SLOW_MOTION.easeOutSeconds);
+    const minScale = clamp(FINISH_SLOW_MOTION.minTimeScale, 0.05, 1);
+    if (age >= FINISH_SLOW_MOTION.duration) {
+      state.active = false;
+      state.timeScale = 1;
+      state.endedAt = this.elapsed;
+      return 1;
+    }
+    if (age < easeIn) {
+      const t = 1 - Math.pow(1 - age / easeIn, 3);
+      return lerp(1, minScale, t);
+    }
+    if (age < easeIn + hold) return minScale;
+    const t = clamp((age - easeIn - hold) / easeOut, 0, 1);
+    return lerp(minScale, 1, t * t * (3 - 2 * t));
+  }
+
+  triggerFinishSlowMotion(winner) {
+    if (!FINISH_SLOW_MOTION.enabled || this.finishSlowMotion?.triggered) return;
+    this.finishSlowMotion = {
+      active: true,
+      triggered: true,
+      startElapsed: this.elapsed,
+      timeScale: FINISH_SLOW_MOTION.minTimeScale,
+      triggerWinner: winner?.name || null,
+      triggerRank: winner?.rank || 1,
+      triggeredAt: this.elapsed,
+      startedAtMs: performance.now(),
+      endedAt: null,
+    };
+    this.pushBroadcastEvent('Slow Motion Finish', `${winner?.name || 'Leader'} breaks the line — confetti cannons firing`, { kind: 'winner', force: true });
+  }
+
+  spawnFinishConfetti(origin, count = 42, { cannon = false } = {}) {
+    const colors = [0xffd166, 0xff77b7, 0x7cf7d4, 0xffffff, 0x8cff66, 0x66a6ff];
+    const finishFrame = this.getTrackFrameAt?.(this.trackLength);
+    const cannonOffsets = cannon && finishFrame
+      ? [
+        finishFrame.right.clone().multiplyScalar(-3.6).add(new THREE.Vector3(0, 0.5, 0)),
+        finishFrame.right.clone().multiplyScalar(3.6).add(new THREE.Vector3(0, 0.5, 0)),
+        finishFrame.tangent.clone().multiplyScalar(-1.3).add(new THREE.Vector3(0, 1.1, 0)),
+      ]
+      : [new THREE.Vector3()];
     for (let i = 0; i < count; i += 1) {
-      const color = [0xffd166, 0xff77b7, 0x7cf7d4, 0xffffff][i % 4];
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.035, 0.24), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 }));
-      mesh.position.copy(origin).add(new THREE.Vector3((this.rng() - 0.5) * 4, 1.5 + this.rng() * 2.5, (this.rng() - 0.5) * 4));
-      mesh.userData.velocity = new THREE.Vector3((this.rng() - 0.5) * 4, 2 + this.rng() * 3, (this.rng() - 0.5) * 4);
-      mesh.userData.spin = new THREE.Vector3(this.rng() * 4, this.rng() * 5, this.rng() * 3);
+      const color = colors[i % colors.length];
+      const shape = i % 5 === 0 ? new THREE.PlaneGeometry(0.16, 0.28) : new THREE.BoxGeometry(0.12, 0.035, 0.24);
+      const mesh = new THREE.Mesh(shape, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.94, side: THREE.DoubleSide }));
+      const cannonOffset = cannonOffsets[i % cannonOffsets.length];
+      mesh.position.copy(origin).add(cannonOffset).add(new THREE.Vector3((this.rng() - 0.5) * 4.8, 1.2 + this.rng() * 2.9, (this.rng() - 0.5) * 4.8));
+      const sideBurst = finishFrame ? finishFrame.right.clone().multiplyScalar(((i % 2) ? 1 : -1) * (1.2 + this.rng() * 3.2)) : new THREE.Vector3((this.rng() - 0.5) * 4, 0, 0);
+      const forwardBurst = finishFrame ? finishFrame.tangent.clone().multiplyScalar((this.rng() - 0.2) * 2.2) : new THREE.Vector3(0, 0, (this.rng() - 0.5) * 4);
+      mesh.userData.velocity = sideBurst.add(forwardBurst).add(new THREE.Vector3(0, 2.6 + this.rng() * 4.8, 0));
+      mesh.userData.spin = new THREE.Vector3(this.rng() * 7, this.rng() * 8, this.rng() * 6);
       this.scene.add(mesh);
-      this.confettiPieces.push({ mesh, age: 0, life: 4.2 });
+      this.confettiPieces.push({ mesh, age: 0, life: cannon ? 6.2 : 4.2 });
     }
   }
 
@@ -4026,11 +4115,14 @@ class MarbleRace {
 
   animate() {
     requestAnimationFrame(() => this.animate());
-    const delta = Math.min(this.clock.getDelta(), 0.05);
-    this.updateStartGateAnimation(delta);
-    this.updateFinishSpinner(delta);
+    const rawDelta = Math.min(this.clock.getDelta(), 0.05);
+    const timeScale = this.getFinishSlowMotionTimeScale();
+    if (this.finishSlowMotion) this.finishSlowMotion.timeScale = timeScale;
+    const delta = rawDelta * timeScale;
+    this.updateStartGateAnimation(rawDelta);
+    this.updateFinishSpinner(rawDelta);
     this.updatePinballObstacles(delta);
-    this.updateSpectacleEffects(delta);
+    this.updateSpectacleEffects(rawDelta);
     this.updateMarbleTrails(delta);
     if (this.state === 'running') {
       this.elapsed += delta;
@@ -4958,8 +5050,10 @@ class MarbleRace {
           this.ui.winner.textContent = `🏆 ${data.name} wins! ${data.finishTime.toFixed(2)}s`;
           this.ui.winner.classList.remove('hidden');
           this.pushBroadcastEvent('Winner Crowned', `${data.name} takes the flag in ${data.finishTime.toFixed(2)}s`, { kind: 'winner', force: true });
+          this.triggerFinishSlowMotion(data);
           this.playFinishSound(true);
-          this.spawnFinishConfetti(collectPos, 54);
+          this.spawnImpactEffect(collectPos, 0xffd166, 'burst');
+          this.spawnFinishConfetti(collectPos, 132, { cannon: true });
         }
       }
     });
@@ -5444,13 +5538,23 @@ class MarbleRace {
       pinballObstacleTypes: this.pinballObstacleTypes,
       pinballInteractions: this.pinballInteractions,
       activePinballObstacles: this.pinballObstacles.length,
-      spectacleFeatures: ['broadcast-event-captions', 'impact-rings-and-sparks', 'marble-speed-trails', 'finish-confetti', 'winner-showcase-awards', 'themed-sector-signage'],
+      spectacleFeatures: ['broadcast-event-captions', 'impact-rings-and-sparks', 'marble-speed-trails', 'finish-slow-motion', 'finish-confetti-cannons', 'winner-showcase-awards', 'themed-sector-signage'],
       broadcastStageMarkers: this.trackStats.broadcastStageMarkers || 0,
       broadcastEvents: this.broadcastEvents,
       activeBroadcastCaption: this.activeCaption,
       spectacleEffectCount: this.spectacleEffects.length,
       marbleTrailCount: this.marbleData.filter((data) => Boolean(data.trail?.line)).length,
       confettiCount: this.confettiPieces.length,
+      finishSlowMotion: {
+        config: FINISH_SLOW_MOTION,
+        active: Boolean(this.finishSlowMotion?.active),
+        triggered: Boolean(this.finishSlowMotion?.triggered),
+        timeScale: Number((this.finishSlowMotion?.timeScale ?? 1).toFixed(3)),
+        triggerWinner: this.finishSlowMotion?.triggerWinner || null,
+        triggeredAt: this.finishSlowMotion?.triggeredAt ?? null,
+        wallAgeSeconds: this.finishSlowMotion?.startedAtMs ? Number(((performance.now() - this.finishSlowMotion.startedAtMs) / 1000).toFixed(2)) : null,
+        endedAt: this.finishSlowMotion?.endedAt ?? null,
+      },
       winnerShowcase: this.showcaseStats,
       obstacleForcePolicy: 'only pinball obstacle handlers may call applyImpulse/applyForce during racing',
       functionalPinballObstacles: ['popBumper impulse', 'slingshot kick', 'spinnerGate spin impulse', 'rolloverLane boost', 'dropTarget knockdown'],
@@ -5525,7 +5629,7 @@ class MarbleRace {
       debugConsoleOverlay: {
         enabled: Boolean(this.ui.debugConsole),
         location: 'left-overlay',
-        fields: ['state', 'elapsed', 'leader', 'cameraMode', 'activeDefaultCameraShot', 'fps', 'physicsSteps', 'finishedCount', 'startGateOpen'],
+        fields: ['state', 'elapsed', 'leader', 'cameraMode', 'activeDefaultCameraShot', 'fps', 'physicsSteps', 'finishedCount', 'finishSlowMotion', 'confettiCount', 'startGateOpen'],
       },
       debugConsoleCopy: {
         enabled: Boolean(this.ui.debugConsoleCopy),
@@ -5613,6 +5717,8 @@ class MarbleRace {
       fps: debug.measuredFps,
       physicsSteps: debug.physicsSteps,
       finishedCount: debug.finishedCount,
+      finishSlowMotion: debug.finishSlowMotion,
+      confettiCount: debug.confettiCount,
       startGateOpen: debug.startGateOpen,
       trackLength: debug.trackLength,
       marbleCount: debug.marbleCount,
@@ -5709,6 +5815,8 @@ class MarbleRace {
         fps: payload.measuredFps,
         physicsSteps: payload.physicsSteps,
         finishedCount: payload.finishedCount,
+        finishSlowMotion: payload.finishSlowMotion,
+        confettiCount: payload.confettiCount,
         startGateOpen: payload.startGateOpen,
         trackLength: payload.trackLength,
         marbleCount: payload.marbleCount,
