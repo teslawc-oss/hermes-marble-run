@@ -382,10 +382,11 @@ button.recording {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  max-height: min(62vh, 720px);
+  max-height: min(42vh, 360px);
   overflow: auto;
-  padding: 0 4px 0 25px;
+  padding: 0 4px 0 0;
   margin: 0;
+  list-style: none;
 }
 
 #leaderboard li {
@@ -393,13 +394,36 @@ button.recording {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.065);
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+#leaderboard li.leader {
+  border-color: rgba(255, 209, 102, 0.58);
+  background: linear-gradient(135deg, rgba(255, 209, 102, 0.18), rgba(124, 247, 212, 0.08));
+}
+
+#leaderboard li.rank-up {
+  animation: rank-pop 0.42s ease-out;
 }
 
 .racer-row {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  grid-template-columns: 36px 18px minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
+}
+
+.rank-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  color: #09111d;
+  background: var(--gold);
+  font-size: 11px;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
 }
 
 .swatch {
@@ -430,7 +454,21 @@ button.recording {
 }
 .racer-name { font-weight: 850; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .racer-progress { color: var(--muted); font-variant-numeric: tabular-nums; }
+.racer-gap {
+  min-width: 58px;
+  color: #7cf7d4;
+  font-size: 11px;
+  font-weight: 900;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .finished .racer-progress { color: var(--accent); font-weight: 900; }
+
+@keyframes rank-pop {
+  0% { transform: translateX(0) scale(1); border-color: var(--line); }
+  35% { transform: translateX(-6px) scale(1.035); border-color: rgba(124, 247, 212, 0.82); }
+  100% { transform: translateX(0) scale(1); }
+}
 
 .winner-banner {
   position: fixed;

@@ -589,6 +589,10 @@ class MarbleRace {
     this.lastBroadcastAt = -Infinity;
     this.lastBroadcastLeaderId = null;
     this.lastCloseBattleAt = -Infinity;
+    this.lastNeckAndNeckAt = -Infinity;
+    this.lastOvertakeAt = -Infinity;
+    this.previousTopFiveIds = [];
+    this.topFiveSnapshot = [];
     this.lastFinalStretchAt = -Infinity;
     this.activeCaption = null;
     this.spectacleEffects = [];
@@ -936,6 +940,10 @@ class MarbleRace {
     this.lastBroadcastAt = -Infinity;
     this.lastBroadcastLeaderId = null;
     this.lastCloseBattleAt = -Infinity;
+    this.lastNeckAndNeckAt = -Infinity;
+    this.lastOvertakeAt = -Infinity;
+    this.previousTopFiveIds = [];
+    this.topFiveSnapshot = [];
     this.lastFinalStretchAt = -Infinity;
     this.activeCaption = null;
     this.hideBroadcastCaption();
@@ -3431,12 +3439,61 @@ class MarbleRace {
     this.ui?.caption?.classList.add('hidden');
   }
 
+  updateRaceStorylines(ranking) {
+    if (this.state !== 'running' || !ranking.length || this.elapsed < 1.2) return;
+    const topFive = ranking.slice(0, 5);
+    const currentIds = topFive.map((data) => data.id);
+    const previousIds = this.previousTopFiveIds || [];
+
+    if (previousIds.length) {
+      const overtakes = topFive
+        .map((data, index) => {
+          const previousIndex = previousIds.indexOf(data.id);
+          return { data, index, previousIndex };
+        })
+        .filter(({ index, previousIndex }) => previousIndex > index);
+      const frontOvertake = overtakes.sort((a, b) => (a.index - b.index) || (b.previousIndex - a.previousIndex))[0];
+      if (frontOvertake && this.elapsed - (this.lastOvertakeAt || -Infinity) > 3.6) {
+        const passed = topFive[frontOvertake.index + 1] || ranking.find((data) => data.id === previousIds[frontOvertake.index]);
+        this.lastOvertakeAt = this.elapsed;
+        const position = `P${frontOvertake.index + 1}`;
+        const detail = passed && passed.id !== frontOvertake.data.id
+          ? `${frontOvertake.data.name} slips past ${passed.name} for ${position}`
+          : `${frontOvertake.data.name} jumps up into ${position}`;
+        this.pushBroadcastEvent('Overtake!', detail, { kind: 'overtake', force: true });
+      }
+    }
+
+    const livePair = topFive.find((data, index) => {
+      const next = topFive[index + 1];
+      return next && !data.finished && !next.finished && Math.abs((data.distance || 0) - (next.distance || 0)) <= 2.8;
+    });
+    if (livePair && this.elapsed - (this.lastNeckAndNeckAt || -Infinity) > 6.5) {
+      const index = topFive.indexOf(livePair);
+      const rival = topFive[index + 1];
+      this.lastNeckAndNeckAt = this.elapsed;
+      const gap = Math.abs((livePair.distance || 0) - (rival.distance || 0));
+      this.pushBroadcastEvent('Neck and Neck', `${livePair.name} vs ${rival.name} — only ${gap.toFixed(1)}m apart`, { kind: 'battle' });
+    }
+
+    this.previousTopFiveIds = currentIds;
+    this.topFiveSnapshot = topFive.map((data, index) => ({
+      rank: index + 1,
+      id: data.id,
+      name: data.name,
+      progress: data.progress || 0,
+      distance: data.distance || 0,
+      finished: Boolean(data.finished),
+    }));
+  }
+
   updateBroadcastDirector() {
     if (this.activeCaption && this.elapsed > this.activeCaption.expiresAt) {
       this.activeCaption = null;
       this.hideBroadcastCaption();
     }
     const ranking = this.getRanking({ force: false });
+    this.updateRaceStorylines(ranking);
     const leader = ranking[0];
     if (!leader) return;
     if (leader.id !== this.lastBroadcastLeaderId && this.elapsed > 2.0) {
@@ -5014,14 +5071,21 @@ class MarbleRace {
     const ranking = this.getRanking({ force: true });
     this.ui.leaderboard.innerHTML = '';
     const fragment = document.createDocumentFragment();
-    ranking.slice(0, 32).forEach((data) => {
+    ranking.slice(0, 5).forEach((data, index) => {
       const li = document.createElement('li');
       if (data.finished) li.classList.add('finished');
+      if (index === 0) li.classList.add('leader');
+      const previousTopIndex = (this.previousTopFiveIds || []).indexOf(data.id);
+      if (previousTopIndex > index) li.classList.add('rank-up');
       const color = `#${data.color.toString(16).padStart(6, '0')}`;
+      const gapToLeader = ranking[0] && ranking[0].id !== data.id ? Math.max(0, (ranking[0].distance || 0) - (data.distance || 0)) : 0;
       const label = data.finished
         ? `${data.finishTime.toFixed(2)}s${data.timePenalty ? ` (+${data.timePenalty}s)` : ''}`
         : `${Math.round(data.progress * 100)}%${data.timePenalty ? ` +${data.timePenalty}s` : ''}`;
-      li.innerHTML = `<div class="racer-row"><span class="swatch" style="background:${color};color:${color}"></span><span class="racer-name">${data.name}</span><span class="racer-progress">${label}</span></div>`;
+      const gapLabel = index === 0
+        ? 'Leader'
+        : (data.finished ? `#${index + 1}` : `+${gapToLeader.toFixed(1)}m`);
+      li.innerHTML = `<div class="racer-row"><span class="rank-badge">#${index + 1}</span><span class="swatch" style="background:${color};color:${color}"></span><span class="racer-name">${data.name}</span><span class="racer-progress">${label}</span><span class="racer-gap">${gapLabel}</span></div>`;
       li.addEventListener('click', () => {
         this.selectedIndex = data.id;
         this.ui.select.value = String(data.id);
@@ -5070,6 +5134,21 @@ class MarbleRace {
         colors: MARBLE_COLOR_STYLES,
         patterns: MARBLE_PATTERN_STYLES,
         sizes: MARBLE_SIZE_STYLES,
+      },
+      topFiveLeaderboard: this.topFiveSnapshot || this.getRanking({ force: true }).slice(0, 5).map((data, index) => ({
+        rank: index + 1,
+        id: data.id,
+        name: data.name,
+        progress: data.progress || 0,
+        distance: data.distance || 0,
+        finished: Boolean(data.finished),
+      })),
+      broadcastStorylines: {
+        eventCount: this.broadcastEvents.length,
+        lastEvent: this.broadcastEvents[0] || null,
+        previousTopFiveIds: this.previousTopFiveIds || [],
+        lastOvertakeAt: Number.isFinite(this.lastOvertakeAt) ? this.lastOvertakeAt : null,
+        lastNeckAndNeckAt: Number.isFinite(this.lastNeckAndNeckAt) ? this.lastNeckAndNeckAt : null,
       },
       centerAssist: false,
       forwardDrive: 'disabled: only world gravity, passive collision physics, and explicit obstacle impulses remain',
