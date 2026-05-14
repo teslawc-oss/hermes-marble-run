@@ -9,8 +9,8 @@
   <body>
     <div id="app">
       <div id="canvas-container" aria-label="3D marble racing simulation"></div>
-      <button id="ui-toggle-btn" class="ui-toggle left-ui-toggle" type="button" aria-controls="left-hud" aria-expanded="true" title="Hide left UI">Hide UI</button>
-      <button id="right-ui-toggle-btn" class="ui-toggle right-ui-toggle" type="button" aria-controls="right-hud" aria-expanded="true" title="Hide right UI">Hide Right UI</button>
+      <button id="ui-toggle-btn" class="ui-toggle left-ui-toggle" type="button" aria-controls="left-hud" aria-expanded="true" title="Hide left UI">Like ＆ Subscribe</button>
+      <button id="right-ui-toggle-btn" class="ui-toggle right-ui-toggle" type="button" aria-controls="right-hud" aria-expanded="true" title="Hide right UI">＠VibeGameCreator</button>
 
       <aside id="left-hud" class="hud hud-left">
         <div class="brand">
@@ -31,6 +31,25 @@
             <label>
               Marble Count
               <input id="marble-count" type="number" min="1" value="12" />
+            </label>
+            <label>
+              Race Mode
+              <select id="race-mode-select">
+                <option value="single" selected>Single Race</option>
+                <option value="cup">Cup Mode</option>
+              </select>
+            </label>
+            <label>
+              Cup Size
+              <select id="cup-size-select">
+                <option value="16" selected>16 marbles</option>
+                <option value="24">24 marbles</option>
+                <option value="32">32 marbles</option>
+              </select>
+            </label>
+            <label class="span-2">
+              Cup Overlay Name
+              <input id="cup-name-input" type="text" value="Speed X Cup" maxlength="36" placeholder="Speed X Cup" />
             </label>
             <label>
               Track Length
@@ -100,7 +119,34 @@
           </div>
           <div class="record-row">
             <button id="record-btn" type="button">Start Recording</button>
+            <button id="auto-cup-record-btn" type="button">Auto Record Cup</button>
             <span id="record-status" aria-live="polite">Not recording</span>
+          </div>
+          <div class="broadcast-audio-controls" aria-label="Broadcast audio controls">
+            <label><span>BGM</span><input id="bgm-toggle" type="checkbox" checked /></label>
+            <label><span>Commentary</span><input id="commentary-toggle" type="checkbox" checked /></label>
+            <label><span>Voice</span><input id="commentary-voice-toggle" type="checkbox" checked /></label>
+          </div>
+          <div class="tts-voice-row">
+            <label for="tts-voice-select">TTS Voice</label>
+            <select id="tts-voice-select" aria-label="TTS voice">
+              <option value="Rishi">Rishi</option>
+              <option value="Tom (Enhanced)">Tom (Enhanced)</option>
+              <option value="Samantha">Samantha</option>
+              <option value="Alex" selected>Alex</option>
+              <option value="Daniel">Daniel</option>
+              <option value="Moira">Moira</option>
+              <option value="Karen">Karen</option>
+              <option value="Tessa">Tessa</option>
+            </select>
+          </div>
+          <div class="tts-test-row">
+            <button id="test-tts-btn" type="button">Test TTS</button>
+            <span id="tts-test-status" aria-live="polite">Voice ready</span>
+          </div>
+          <div id="commentary-status" class="commentary-status" aria-live="polite">
+            <span class="commentary-kicker">COMMENTATOR</span>
+            <strong id="commentary-line">Race commentary ready</strong>
           </div>
         </section>
 
@@ -129,12 +175,10 @@
           <div class="panel-body">
             <div class="button-grid">
               <button data-camera="default">Default Auto</button>
-              <button data-camera="leadPack">Follow Lead Pack</button>
+              <button data-camera="leadPack">Lead Pack</button>
               <button data-camera="orbit">Free Orbit</button>
-              <button data-camera="leader">Follow Leader</button>
               <button data-camera="selected">Follow Selected</button>
               <button data-camera="cinematicLeader">Cinematic Leader</button>
-              <button data-camera="finish">Finish View</button>
             </div>
             <label>
               Follow Marble
@@ -143,7 +187,7 @@
           </div>
         </section>
 
-        <section id="debug-panel" class="panel debug-panel">
+        <section id="debug-panel" class="panel debug-panel hidden" aria-hidden="true">
           <div class="panel-header">
             <h2>Debug Console</h2>
             <div class="panel-header-actions">
@@ -199,6 +243,9 @@
         <strong id="caption-title">Race ready</strong>
         <small id="caption-detail">Waiting for gate</small>
       </div>
+      <div id="commentary-caption" class="commentary-caption hidden" aria-hidden="true"></div>
+      <div id="match-card" class="match-card hidden" aria-live="polite"></div>
+      <div id="replay-highlight-overlay" class="replay-highlight-overlay hidden" aria-live="polite"></div>
       <div id="countdown-overlay" class="countdown-overlay hidden" aria-live="assertive"></div>
       <div id="final-showcase" class="final-showcase hidden" aria-live="polite"></div>
     </div>

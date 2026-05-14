@@ -32,5 +32,9 @@ coverage/
 .playwright/
 test-results/
 
+# Generated local media/cache
+.cache/
+recordings/
+
 # Hermes / local agent files
 .hermes/

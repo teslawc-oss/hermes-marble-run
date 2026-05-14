@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
+    "dashboard": "node scripts/render-dashboard-server.js",
+    "render:auto-cup": "node scripts/render-auto-cup-playwright.js",
+    "render:auto-cup:smoke": "node scripts/render-auto-cup-playwright.js --smoke-seconds=4 --output=recordings/smoke-auto-cup.webm --format=webm",
     "check:track-code": "node scripts/check-track-debug-code.js",
     "check:speed-sustain": "node scripts/check-speed-sustain.js",
     "preview": "vite preview --host 0.0.0.0"
@@ -16,5 +19,7 @@
     "three": "^0.160.1",
     "vite": "^5.4.21"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "playwright": "^1.59.1"
+  }
 }

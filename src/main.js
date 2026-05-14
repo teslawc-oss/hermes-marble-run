@@ -8,8 +8,73 @@ const TRACK_PRESETS = {
   short: { label: 'Short', base: 240, variation: 56, segment: 9, branches: 1 },
   medium: { label: 'Standard', base: 380, variation: 90, segment: 10, branches: 2 },
   long: { label: 'Long', base: 560, variation: 140, segment: 11, branches: 3 },
-  epic: { label: 'Endurance', base: 840, variation: 190, segment: 12, branches: 4 },
+  epic: { label: 'Epic', base: 820, variation: 220, segment: 13, branches: 4 },
 };
+
+const CUP_VIDEO_TIMING = {
+  enabled: true,
+  targetSeconds: 600,
+  targetMinutes: 10,
+  introSeconds: 5,
+  gateDelaySeconds: 5,
+  nextRaceDelaySeconds: 10,
+  postRaceHoldSeconds: 5,
+  postReplayPodiumHoldSeconds: 8,
+  nextGateAfterRaceSeconds: 5,
+  replayHighlightSeconds: 35,
+  finalPodiumSeconds: 10.8,
+  endCardSeconds: 0,
+  recordingStopGraceSeconds: 4.2,
+  replayHighlightMaxEvents: 3,
+  replayClipSeconds: 7,
+  replayHighlightOutroSeconds: 0.6,
+  replayHistorySampleSeconds: 0.1,
+  replayHistoryBeforeSeconds: 2.2,
+  replayHistoryAfterSeconds: 3.8,
+  replayFocusLeadSeconds: 1.4,
+  replayCameraBack: -7.5,
+  replayCameraSide: 0.8,
+  replayCameraHeight: 10,
+  replayMarbleSpacing: 2.2,
+  replayHighlightTitles: {
+    overtake: 'Replay: Big Overtake',
+    leader: 'Replay: Lead Change',
+    battle: 'Replay: Close Battle',
+    obstacle: 'Replay: Biggest Collision',
+    finish: 'Replay: Final Push',
+    winner: 'Replay: Winner',
+    complete: 'Replay: Round Result',
+    general: 'Replay',
+  },
+  stageTargetSeconds: {
+    'quarter-final': 130,
+    'semi-final': 130,
+    final: 176,
+  },
+  stageTrackLengths: {
+    'quarter-final': 600,
+    'semi-final': 700,
+    final: 800,
+  },
+  stageLengthPreset: 'custom',
+  label: '10-minute cup video pacing: intro + three races + replay/highlight gaps + final podium/end card',
+};
+
+const estimateCupVideoSeconds = (timing = CUP_VIDEO_TIMING) => {
+  const raceSeconds = Object.values(timing.stageTargetSeconds || {}).reduce((sum, value) => sum + (Number(value) || 0), 0);
+  const interRaceCount = Math.max(0, Object.keys(timing.stageTargetSeconds || {}).length - 1);
+  return (Number(timing.introSeconds) || 0)
+    + raceSeconds
+    + interRaceCount * ((Number(timing.postRaceHoldSeconds) || 0) + getReplayHighlightHoldSeconds(timing) + (Number(timing.postReplayPodiumHoldSeconds) || 0) + (Number(timing.nextRaceDelaySeconds) || 0) + (Number(timing.nextGateAfterRaceSeconds) || 0))
+    + (Number(timing.finalPodiumSeconds) || 0)
+    + (Number(timing.endCardSeconds) || 0)
+    + (Number(timing.recordingStopGraceSeconds) || 0);
+};
+
+const getReplayHighlightHoldSeconds = (timing = CUP_VIDEO_TIMING) => (
+  (Number(timing.replayClipSeconds) || 0) * Math.max(1, Number(timing.replayHighlightMaxEvents) || 1)
+  + (Number(timing.replayHighlightOutroSeconds) || 0)
+);
 
 const START_RAMP = {
   enabled: true,
@@ -32,6 +97,7 @@ const START_GATE_DESIGN = {
   sideWallHeight: 1.65,
   sideWallThickness: 0.52,
   backWallHeight: 1.35,
+  surroundingWallsEnabled: false,
   gateBackDistance: 0.72,
   gateHeight: 1.72,
   gateThickness: 0.34,
@@ -45,6 +111,20 @@ const START_GATE_DESIGN = {
   freezeMarblesUntilGateOpen: false,
   allowPreGateSlideToGate: true,
   slotFillMode: 'fill-all-lane-slots-before-starting-next-row',
+  highCountStaging: {
+    enabled: true,
+    maxRowsBeforeHoldingPattern: 3,
+    rowSpacing: 1.18,
+    lateralSpacing: 1.12,
+    holdingPatternDepthGap: 1.18,
+    holdingPatternSideGap: 1.12,
+    label: 'for 50-100 marbles, keep only the first few rows inside gate lanes and place extra marbles in a non-overlapping waiting grid behind the chute',
+  },
+  transparentVisuals: true,
+  startFloorOpacity: 0.34,
+  startRailOpacity: 0.34,
+  startGateOpacity: 0.38,
+  startMarkingOpacity: 0.48,
   label: 'track-aligned open-front start: marbles stay dynamic and may slide down the staging chute until they rest against the closed gate; no hidden drive force before gate opens',
 };
 
@@ -194,9 +274,22 @@ const AIRBORNE_GUIDE_POLICY = {
 };
 
 const STUCK_RESET = {
-  delaySeconds: 5.0,
+  delaySeconds: 10.0,
   penaltyDistance: 5.5,
-  label: '卡死 / no-forward-progress reset 固定 5 秒，避免波子撞欄長時間停住',
+  label: '卡死 / no-forward-progress elimination: if a marble has no forward progress for 10 seconds, it is defeated and removed from the race',
+};
+
+const STALL_ELIMINATION = {
+  enabled: true,
+  baseDelaySeconds: 10.0,
+  longTrackDelaySeconds: 24.0,
+  longTrackReferenceMeters: 760,
+  finalStageDelayMultiplier: 1.65,
+  minForwardProgressMeters: 0.18,
+  minForwardProgressPercentPerWindow: 0.0012,
+  requireObservedMotionBeforeElimination: true,
+  finishPlacement: 'defeated-after-active-finishers',
+  label: 'DNF waits longer on long tracks/finals: timeout scales from 10s toward 24s by track length, final stage gets extra grace, and a marble must first make real forward progress before no-forward-progress elimination can fire',
 };
 
 const GUIDE_POINT_POLICY = {
@@ -262,34 +355,92 @@ const PINBALL_OBSTACLE_TYPES = [
 const BROADCAST_CAMERA = {
   defaultMode: 'default',
   angleStyle: 'high-angle-broadcast-auto-director',
+  highAngleBattleEnabled: false,
   birdEyeCameraAngle: true,
+  initialVerticalAxisRotationDegrees: 150,
+  defaultCameraPitchUpDegrees: 72,
+  defaultPitchModes: ['leadPack', 'leadBattle', 'unfinishedOrder'],
   outOfBoundsIgnoreAfterSeconds: 1.0,
   outOfBoundsIgnoreLabel: 'auto camera: if a marble is outside the track for more than 1 second, stop targeting it until it respawns/returns',
-  leader: { back: -7.2, side: 3.2, height: 24.5 },
-  leadPack: { back: -7.6, side: 1.8, height: 22.8, packHeightStep: 1.25 },
+  cinematicLeaderFromProgress: 0.6,
+  leader: {
+    back: -3.8,
+    side: 0.75,
+    height: 56,
+    lookAhead: 12,
+    targetLookAheadScale: 0.22,
+    targetGuideBlend: 0.35,
+    targetLift: 1.4,
+    dynamicLookAheadBySpeed: 7,
+    maxSideWave: 0.22,
+    sideWaveSpeed: 0.35,
+    positionSmoothing: 0.035,
+    targetSmoothing: 0.075,
+    fov: 16,
+    obstacleAwareDistance: 35,
+    obstaclePullback: 1.2,
+    obstacleHeightBoost: 14,
+    obstacleLookAheadBoost: 6,
+    label: 'cinematic leader lower late-race hero shot: starts from 60% progress with a lower camera height, tight zoom, top-down track-direction chase cam, speed lookahead, restrained side drift, obstacle-aware height boost, and narrower FOV',
+  },
+  leadPack: {
+    back: -8.5,
+    side: 0.9,
+    height: 70,
+    packHeightStep: 1.45,
+    lookAhead: 11,
+    targetLookAheadScale: 0.2,
+    targetGuideBlend: 0.28,
+    targetLift: 1.7,
+    dynamicLookAheadBySpeed: 5,
+    maxSideWave: 0.28,
+    sideWaveSpeed: 0.28,
+    positionSmoothing: 0.035,
+    targetSmoothing: 0.08,
+    fov: 28,
+    obstacleAwareDistance: 38,
+    obstaclePullback: 3.5,
+    obstacleHeightBoost: 9,
+    obstacleLookAheadBoost: 5,
+    label: 'cinematic lead-pack hero shot: follows the pack center while using track direction, small guide blend, obstacle-aware height/pullback, and gentle side drift',
+  },
   leadBattle: {
     enabled: true,
     label: 'auto close-up when top two marbles are neck-and-neck',
     maxGap: 3.2,
     minProgress: 0.04,
-    back: -2.8,
-    side: 0.65,
-    height: 6.2,
-    targetLift: 0.58,
+    back: -2.4,
+    side: 0.55,
+    height: 22.0,
+    targetLift: 0.9,
   },
-  selected: { back: -7.0, side: -3.2, height: 22.0 },
-  unfinished: { back: -6.8, side: 2.8, height: 21.6 },
-  finish: { forward: 8.5, height: 25.5 },
+  selected: { back: -2.6, side: -0.7, height: 26.0 },
+  unfinished: { back: -2.6, side: 0.8, height: 27.0 },
+  finish: { forward: 3.3, height: 27.5 },
   podium360: {
     enabled: true,
     label: 'race-complete-360-degree-podium-orbit',
-    radius: 14.5,
-    height: 7.2,
-    heightBob: 1.1,
+    radius: 10.5,
+    height: 10.8,
+    heightBob: 1.6,
     angularSpeed: 0.46,
+    championLabel: 'final-cup-ceremony-slow-vertical-axis-orbit',
+    championRadius: 11.8,
+    championHeight: 11.4,
+    championHeightBob: 0.65,
+    championAngularSpeed: 0.16,
   },
   sequence: ['highAngleLeader', 'highAngleLeadPack', 'finishLineHighShot', 'unfinishedOrderHighTrack', 'raceCompletePodium360Orbit'],
 };
+
+function makeStartTransparentMaterial(baseMaterial, opacity = 0.35) {
+  const material = baseMaterial?.clone ? baseMaterial.clone() : new THREE.MeshStandardMaterial({ color: 0x7cf7d4, roughness: 0.32 });
+  material.transparent = true;
+  material.opacity = clamp(opacity, 0.05, 1);
+  material.depthWrite = false;
+  material.side = THREE.DoubleSide;
+  return material;
+}
 
 const FINISH_SLOW_MOTION = {
   enabled: true,
@@ -301,6 +452,22 @@ const FINISH_SLOW_MOTION = {
   holdSeconds: 1.75,
   easeOutSeconds: 1.0,
   label: 'leader triggers replay-style slow motion shortly before crossing the line; confetti cannons still fire on actual finish',
+};
+
+const PODIUM_CEREMONY = {
+  enabled: true,
+  confettiEverySeconds: 1.15,
+  championConfettiEverySeconds: 0.45,
+  duration: 9,
+  championDuration: Infinity,
+  label: 'race-complete podium ceremony with medal overlay, spotlight pulses, and confetti bursts',
+};
+
+const MARBLE_LABEL_POLICY = {
+  showOnlyAfterRaceStart: true,
+  visibleTopRankCount: 5,
+  hidePendingFallAfterSeconds: 1.1,
+  label: 'name labels are hidden before the race starts; once racing/finished, only the current top 5 ranked marbles show labels',
 };
 
 const PERFORMANCE_TUNING = {
@@ -317,14 +484,15 @@ const PERFORMANCE_TUNING = {
   railTubeSegmentMultiplier: 1.35,
   railTubeRadialSegments: 8,
   lowerRailTubeRadialSegments: 6,
-  physicalRailBodyBudget: 340,
-  guardRailInterval: 2.25,
-  guardRailOverlap: 3.85,
+  physicalRailBodyBudget: 460,
+  guardRailInterval: 1.65,
+  guardRailOverlap: 4.6,
   uiUpdateMs: 500,
   debugUpdateMs: 1200,
   leaderboardUpdateMs: 800,
   rankingCacheMs: 220,
   trailSampleEvery: 0.085,
+  trailStartTrackDistance: 0.75,
   trailPoints: 7,
   marbleSegments: 20,
   marbleRings: 14,
@@ -411,24 +579,61 @@ function normalizeSeedInput(rawSeed) {
   return { seed: value, importedTrackDebug: null, wasTrackDebugCode: false };
 }
 
-const nameAdjectives = ['Thunder', 'Phantom', 'Crystal', 'Blaze', 'Silver', 'Rapid', 'Violet', 'Stellar', 'Aurora', 'Rose', 'Frost', 'Comet', 'Night', 'Golden', 'Emerald', 'Scarlet'];
-const nameNouns = ['Bolt', 'Racer', 'Spinner', 'Flash', 'Rocket', 'Marble', 'Surge', 'Pearl', 'Bandit', 'Drifter', 'Chaser', 'Nova', 'Lucky', 'Dash', 'Champion', 'Whisker'];
-const nameTitles = ['Mk.I', 'Turbo', 'Omega', 'DX', 'Zero', 'No.7', 'Neo', 'Pro', 'Prime', 'Infinity'];
+const nameAdjectives = [
+  'Thunder', 'Phantom', 'Crystal', 'Blaze', 'Silver', 'Rapid', 'Violet', 'Stellar',
+  'Aurora', 'Rose', 'Frost', 'Comet', 'Night', 'Golden', 'Emerald', 'Scarlet',
+  'Solar', 'Lunar', 'Cosmic', 'Turbo', 'Radiant', 'Shadow', 'Arctic', 'Jade',
+  'Copper', 'Velvet', 'Neon', 'Ivory', 'Obsidian', 'Sapphire', 'Ruby', 'Amber',
+  'Cobalt', 'Prism', 'Meteor', 'Mirage', 'Nimbus', 'Vector', 'Glacier', 'Wild',
+  'Electric', 'Royal', 'Mighty', 'Swift', 'Daring', 'Brave', 'Silent', 'Lucky',
+];
+const nameNouns = [
+  'Bolt', 'Racer', 'Spinner', 'Flash', 'Rocket', 'Marble', 'Surge', 'Pearl',
+  'Bandit', 'Drifter', 'Chaser', 'Nova', 'Dash', 'Champion', 'Whisker', 'Falcon',
+  'Comet', 'Vortex', 'Voyager', 'Meteor', 'Orbit', 'Pulse', 'Spark', 'Jet',
+  'Arrow', 'Storm', 'River', 'Flare', 'Phoenix', 'Dragon', 'Panther', 'Tiger',
+  'Cyclone', 'Ranger', 'Runner', 'Glider', 'Striker', 'Pioneer', 'Ace', 'Maverick',
+  'Cruiser', 'Breaker', 'Sprinter', 'Blazer', 'Seeker', 'Raider', 'Knight', 'Pilot',
+];
+const nameTitles = [
+  'Turbo', 'Omega', 'Zero', 'Neo', 'Pro', 'Prime', 'Infinity', 'Velocity',
+  'Legend', 'Apex', 'Blitz', 'Fusion', 'Nitro', 'Quantum', 'Orbit', 'Zenith',
+  'Eclipse', 'Vertex', 'Momentum', 'Radiance', 'Catalyst', 'Overdrive', 'Miracle', 'Vanguard',
+];
 
 const MARBLE_COLOR_STYLES = [
-  { label: 'Crimson Pulse', hex: '#ff3864', color: 0xff3864 },
-  { label: 'Aqua Neon', hex: '#35e0ff', color: 0x35e0ff },
-  { label: 'Sunlit Gold', hex: '#ffd166', color: 0xffd166 },
-  { label: 'Lime Comet', hex: '#75ff8a', color: 0x75ff8a },
-  { label: 'Violet Haze', hex: '#ae7cff', color: 0xae7cff },
-  { label: 'Orange Flare', hex: '#ff8f3d', color: 0xff8f3d },
-  { label: 'Pearl White', hex: '#f7f7ff', color: 0xf7f7ff },
-  { label: 'Blue Nova', hex: '#4d96ff', color: 0x4d96ff },
-  { label: 'Rose Candy', hex: '#ff70a6', color: 0xff70a6 },
-  { label: 'Mint Circuit', hex: '#00f5d4', color: 0x00f5d4 },
-  { label: 'Acid Glow', hex: '#c8ff00', color: 0xc8ff00 },
-  { label: 'Amber Spark', hex: '#ffbe0b', color: 0xffbe0b },
+  { label: 'Crimson Pulse', hex: '#ff3864', color: 0xff3864, palette: ['#ff3864', '#ffd166'], material: 'glass' },
+  { label: 'Aqua Neon', hex: '#35e0ff', color: 0x35e0ff, palette: ['#35e0ff', '#7cf7d4', '#0f172a'], material: 'neon' },
+  { label: 'Sunlit Gold', hex: '#ffd166', color: 0xffd166, palette: ['#ffd166', '#ff8f3d', '#ffffff'], material: 'metallic' },
+  { label: 'Lime Comet', hex: '#75ff8a', color: 0x75ff8a, palette: ['#75ff8a', '#c8ff00'], material: 'gloss' },
+  { label: 'Violet Haze', hex: '#ae7cff', color: 0xae7cff, palette: ['#ae7cff', '#ff70a6', '#4d96ff'], material: 'pearl' },
+  { label: 'Orange Flare', hex: '#ff8f3d', color: 0xff8f3d, palette: ['#ff8f3d', '#ff3864', '#ffd166'], material: 'gloss' },
+  { label: 'Pearl White', hex: '#f7f7ff', color: 0xf7f7ff, palette: ['#f7f7ff', '#c7d2fe', '#35e0ff'], material: 'pearl' },
+  { label: 'Blue Nova', hex: '#4d96ff', color: 0x4d96ff, palette: ['#4d96ff', '#35e0ff', '#0f172a'], material: 'glass' },
+  { label: 'Rose Candy', hex: '#ff70a6', color: 0xff70a6, palette: ['#ff70a6', '#ffd1dc', '#ae7cff'], material: 'candy' },
+  { label: 'Mint Circuit', hex: '#00f5d4', color: 0x00f5d4, palette: ['#00f5d4', '#75ff8a', '#081020'], material: 'neon' },
+  { label: 'Acid Glow', hex: '#c8ff00', color: 0xc8ff00, palette: ['#c8ff00', '#00f5d4', '#050a18'], material: 'neon' },
+  { label: 'Amber Spark', hex: '#ffbe0b', color: 0xffbe0b, palette: ['#ffbe0b', '#ff3864', '#2b1300'], material: 'metallic' },
+  { label: 'Ruby Sapphire Duo', hex: '#e11d48', color: 0xe11d48, palette: ['#e11d48', '#2563eb'], material: 'glass' },
+  { label: 'Emerald Amethyst Duo', hex: '#10b981', color: 0x10b981, palette: ['#10b981', '#8b5cf6'], material: 'pearl' },
+  { label: 'Fire Ice Trio', hex: '#f97316', color: 0xf97316, palette: ['#f97316', '#38bdf8', '#f8fafc'], material: 'glass' },
+  { label: 'Galaxy Opal Trio', hex: '#111827', color: 0x111827, palette: ['#111827', '#7c3aed', '#22d3ee', '#f8fafc'], material: 'opal' },
+  { label: 'Oil Slick Chrome', hex: '#334155', color: 0x334155, palette: ['#334155', '#ec4899', '#22c55e', '#eab308'], material: 'chrome' },
+  { label: 'Tiger Jade', hex: '#f59e0b', color: 0xf59e0b, palette: ['#f59e0b', '#064e3b', '#fef3c7'], material: 'stone' },
+  { label: 'Cotton Candy Split', hex: '#f9a8d4', color: 0xf9a8d4, palette: ['#f9a8d4', '#93c5fd', '#ffffff'], material: 'candy' },
+  { label: 'Lava Obsidian', hex: '#7f1d1d', color: 0x7f1d1d, palette: ['#111111', '#7f1d1d', '#fb923c'], material: 'stone' },
 ];
+
+const MARBLE_MATERIAL_STYLES = {
+  glass: { label: 'Glass', roughness: 0.12, metalness: 0.02, emissiveIntensity: 0.05 },
+  neon: { label: 'Neon Glow', roughness: 0.18, metalness: 0.02, emissiveIntensity: 0.28 },
+  metallic: { label: 'Metallic', roughness: 0.2, metalness: 0.42, emissiveIntensity: 0.06 },
+  pearl: { label: 'Pearlescent', roughness: 0.16, metalness: 0.12, emissiveIntensity: 0.1 },
+  candy: { label: 'Candy Gloss', roughness: 0.1, metalness: 0.03, emissiveIntensity: 0.08 },
+  opal: { label: 'Opal', roughness: 0.22, metalness: 0.18, emissiveIntensity: 0.16 },
+  chrome: { label: 'Chrome', roughness: 0.14, metalness: 0.68, emissiveIntensity: 0.08 },
+  stone: { label: 'Polished Stone', roughness: 0.36, metalness: 0.06, emissiveIntensity: 0.03 },
+};
 
 const MARBLE_PATTERN_STYLES = [
   { key: 'rings', label: 'Layered Rings' },
@@ -437,6 +642,14 @@ const MARBLE_PATTERN_STYLES = [
   { key: 'speckle', label: 'Speckled Pearl' },
   { key: 'comet', label: 'Comet Trails' },
   { key: 'storm', label: 'Storm Veins' },
+  { key: 'split', label: 'Two-Tone Split' },
+  { key: 'triad', label: 'Tri-Color Panels' },
+  { key: 'chevron', label: 'Chevron Bands' },
+  { key: 'circuit', label: 'Circuit Lines' },
+  { key: 'flame', label: 'Flame Licks' },
+  { key: 'marble-vein', label: 'Natural Marble Veins' },
+  { key: 'checker', label: 'Checker Pop' },
+  { key: 'starfield', label: 'Starfield Glitter' },
 ];
 
 const MARBLE_SIZE_STYLES = [
@@ -462,6 +675,7 @@ class MarbleRace {
     this.cameraTargetSmoothed = new THREE.Vector3();
     this.leadPackDistanceSmoothed = 0;
     this.leadPackInitialized = false;
+    this.initialCameraRotationApplied = false;
     this.leadBattleInitialized = false;
     this.leadBattleState = null;
     this.defaultCameraPhaseUntil = 0;
@@ -474,7 +688,28 @@ class MarbleRace {
     this.countdownLastAnnouncedSecond = null;
     this.audioContext = null;
     this.audioMasterGain = null;
+    this.audioMasterGainConnected = false;
     this.audioUnlocked = false;
+    this.bgmGain = null;
+    this.bgmNodes = [];
+    this.bgmTimer = null;
+    this.bgmMode = 'idle';
+    this.bgmStepIndex = 0;
+    this.bgmGainConnected = false;
+    this.bgmEnabled = true;
+    this.commentaryEnabled = true;
+    this.commentaryVoiceEnabled = true;
+    this.commentaryHistory = [];
+    this.activeCommentary = null;
+    this.lastCommentaryAt = -Infinity;
+    this.lastObstacleCommentaryAt = -Infinity;
+    this.lastFinishCommentaryAt = -Infinity;
+    this.lastCommentaryVoiceLine = null;
+    this.commentaryVoiceQueue = [];
+    this.commentaryVoiceSpeaking = false;
+    this.commentaryVoiceCurrentLine = null;
+    this.commentaryVoiceStartedAt = 0;
+    this.commentaryVoiceLastError = null;
     this.lastObstacleSfxAt = -Infinity;
     this.trackLength = 190;
     this.trackWidth = 16;
@@ -539,9 +774,12 @@ class MarbleRace {
     };
     this.trackStats = { ribbonMeshes: 0, visibleDecks: 0, physicsDecks: 0, railTubes: 0, branchJoinDecks: 0, physicalRailBodies: 0, smoothRailJoinBodies: 0, optimizedRailBodies: 0, broadcastStageMarkers: 0 };
     this.stuckResetPenalty = STUCK_RESET.penaltyDistance;
-    this.stuckResetDelay = STUCK_RESET.delaySeconds;
+    this.stuckResetDelay = this.getStallEliminationDelaySeconds();
+    this.stallElimination = { ...STALL_ELIMINATION, delaySeconds: this.stuckResetDelay };
     this.fallRespawnDelay = 2;
     this.stuckResetCount = 0;
+    this.stallEliminationCount = 0;
+    this.defeatedMarbles = [];
     this.midTrackSpeedAssist = MID_TRACK_SPEED_ASSIST;
     this.finalApproachAssist = FINAL_APPROACH_ASSIST;
     this.minForwardSpeedAssist = MIN_FORWARD_SPEED_ASSIST;
@@ -573,6 +811,53 @@ class MarbleRace {
     this.recordedChunks = [];
     this.recordingStartedAt = 0;
     this.recordingSource = null;
+    this.recordingSettings = null;
+    this.lastRecordingRequest = null;
+    this.recordingAudioDestination = null;
+    this.recordingAudioDestinationConnected = false;
+    this.recordingMixSourceNodes = [];
+    this.recordingVoiceBridgeStream = null;
+    this.recordingVoiceBridgeLastError = null;
+    this.localTtsBridge = {
+      enabled: true,
+      available: null,
+      status: 'unknown',
+      engine: null,
+      voice: 'Alex',
+      lastUrl: null,
+      lastLine: null,
+      lastError: null,
+      audioElement: null,
+      sourceNode: null,
+      cachedAudio: new Map(),
+    };
+    this.commentaryBrowserVoiceName = '';
+    this.countdownStarterLines = [
+      'The field is set',
+      'Ready for the rush',
+      'All eyes on the gate',
+      'The lanes are loaded',
+      'Brace for the break',
+      'Here comes the launch',
+    ];
+    this.countdownVoiceLine = this.countdownStarterLines[0];
+    this.countdownVoiceWarmupPromise = null;
+    this.countdownVoiceWarmupUrl = null;
+    this.countdownVoicePlayStartedAt = 0;
+    this.autoCupRecording = {
+      active: false,
+      phase: 'idle',
+      startedAt: 0,
+      currentStage: null,
+      racesCompleted: 0,
+      nextActionAt: null,
+      pendingTimer: null,
+      nextGateAfterRaceSeconds: CUP_VIDEO_TIMING.nextGateAfterRaceSeconds,
+      stopAfterFinalSeconds: CUP_VIDEO_TIMING.finalPodiumSeconds + CUP_VIDEO_TIMING.endCardSeconds + CUP_VIDEO_TIMING.recordingStopGraceSeconds,
+      nextRaceDelaySeconds: CUP_VIDEO_TIMING.nextRaceDelaySeconds,
+      gateDelaySeconds: CUP_VIDEO_TIMING.introSeconds,
+      lastError: null,
+    };
     this.leftUICollapsed = false;
     this.rightUICollapsed = false;
     this.enableAllCameraMouseOrbit = true;
@@ -615,10 +900,18 @@ class MarbleRace {
     this.lastCloseBattleAt = -Infinity;
     this.lastNeckAndNeckAt = -Infinity;
     this.lastOvertakeAt = -Infinity;
+    this.lastProgressCommentaryAt = -Infinity;
+    this.lastSpeedCommentaryAt = -Infinity;
+    this.lastProgressMilestone = 0;
+    this.lastPaceBand = null;
     this.previousTopFiveIds = [];
     this.topFiveSnapshot = [];
     this.lastFinalStretchAt = -Infinity;
     this.activeCaption = null;
+    this.replayHighlight = { active: false, stage: null, events: [], startedAt: 0, startedAtMs: 0, duration: 0, playback: null };
+    this.raceHistoryBuffer = [];
+    this.lastRaceHistorySampleAt = -Infinity;
+    this.replayOriginalSnapshots = null;
     this.spectacleEffects = [];
     this.confettiPieces = [];
     this.finishSlowMotion = {
@@ -635,14 +928,34 @@ class MarbleRace {
       endedAt: null,
     };
     this.showcaseStats = null;
-
+    this.podiumCeremony = { active: false, startedAt: 0, lastConfettiAt: -Infinity, medalists: [], spotlightPhase: 0 };
+    this.cupMode = {
+      active: false,
+      status: 'idle',
+      size: 16,
+      stageIndex: 0,
+      stages: ['quarter-final', 'semi-final', 'final'],
+      entrants: [],
+      currentEntrants: [],
+      results: [],
+      lastQualified: [],
+      champion: null,
+      podium: [],
+    };
     this.ui = {
       leftHud: document.querySelector('#left-hud'),
       rightHud: document.querySelector('#right-hud'),
       uiToggle: document.querySelector('#ui-toggle-btn'),
       rightUiToggle: document.querySelector('#right-ui-toggle-btn'),
       record: document.querySelector('#record-btn'),
+      autoCupRecord: document.querySelector('#auto-cup-record-btn'),
       recordStatus: document.querySelector('#record-status'),
+      bgmToggle: document.querySelector('#bgm-toggle'),
+      commentaryToggle: document.querySelector('#commentary-toggle'),
+      commentaryVoiceToggle: document.querySelector('#commentary-voice-toggle'),
+      ttsVoiceSelect: document.querySelector('#tts-voice-select'),
+      testTts: document.querySelector('#test-tts-btn'),
+      ttsTestStatus: document.querySelector('#tts-test-status'),
       controlsPanel: document.querySelector('#controls-panel'),
       controlsToggle: document.querySelector('#controls-toggle-btn'),
       cameraPanel: document.querySelector('#camera-panel'),
@@ -662,6 +975,9 @@ class MarbleRace {
       importTrackCode: document.querySelector('#import-track-code-btn'),
       trackCodeImportStatus: document.querySelector('#track-code-import-status'),
       count: document.querySelector('#marble-count'),
+      raceMode: document.querySelector('#race-mode-select'),
+      cupSize: document.querySelector('#cup-size-select'),
+      cupName: document.querySelector('#cup-name-input'),
       seed: document.querySelector('#seed-input'),
       lengthSelect: document.querySelector('#length-select'),
       customLength: document.querySelector('#custom-length-input'),
@@ -690,10 +1006,18 @@ class MarbleRace {
       caption: document.querySelector('#broadcast-caption'),
       captionTitle: document.querySelector('#caption-title'),
       captionDetail: document.querySelector('#caption-detail'),
+      commentaryCaption: document.querySelector('#commentary-caption'),
+      commentaryLine: document.querySelector('#commentary-line'),
       countdown: document.querySelector('#countdown-overlay'),
+      matchCard: document.querySelector('#match-card'),
+      replayHighlight: document.querySelector('#replay-highlight-overlay'),
       finalShowcase: document.querySelector('#final-showcase'),
     };
 
+    this.leftUICollapsed = true;
+    this.applyLeftUIState();
+    this.applyRightUIState();
+    this.initTtsVoiceSelector();
     this.initThree();
     this.initPhysics();
     this.bindEvents();
@@ -770,6 +1094,8 @@ class MarbleRace {
     window.addEventListener('keydown', unlockAudio, { once: true });
     this.ui.start.addEventListener('click', () => {
       if (this.state === 'ready' || this.state === 'idle') this.startCountdownAndGateOpen();
+      else if (this.cupMode?.active && this.cupMode.status === 'awaiting-next') this.advanceCupMatch();
+      else if (this.cupMode?.active && this.cupMode.status === 'complete') this.startCupMode(this.cupMode.size);
       else this.newRace({ regenerateTrack: false });
     });
     this.ui.regen.addEventListener('click', () => this.newRace({ regenerateTrack: true }));
@@ -783,10 +1109,27 @@ class MarbleRace {
       toggle.addEventListener('change', () => this.updateObstacleTypeToggles({ regenerateTrack: true }));
     });
     this.ui.debugToggle?.addEventListener('click', () => this.togglePanel(this.ui.debugPanel, this.ui.debugToggle));
+    this.ui.debugPanel?.classList.add('hidden');
+    this.ui.debugPanel?.setAttribute('aria-hidden', 'true');
+    this.ui.debugToggle?.setAttribute('aria-expanded', 'false');
     this.ui.debugConsoleCopy?.addEventListener('click', () => this.copyDebugConsole());
-    this.ui.record.addEventListener('click', () => this.toggleRecording());
+    this.ui.record.addEventListener('click', () => this.toggleRecording({ includeAudio: true }));
+    this.ui.autoCupRecord?.addEventListener('click', () => this.toggleAutoCupRecording());
+    this.ui.bgmToggle?.addEventListener('change', () => this.setBgmEnabled(this.ui.bgmToggle.checked));
+    this.ui.commentaryToggle?.addEventListener('change', () => this.setCommentaryEnabled(this.ui.commentaryToggle.checked));
+    this.ui.commentaryVoiceToggle?.addEventListener('change', () => this.setCommentaryVoiceEnabled(this.ui.commentaryVoiceToggle.checked));
+    this.ui.ttsVoiceSelect?.addEventListener('change', () => this.setTtsVoice(this.ui.ttsVoiceSelect.value));
+    this.ui.testTts?.addEventListener('click', () => this.testCommentaryTts());
     this.ui.copyTrackCode?.addEventListener('click', () => this.copyTrackDebugCode());
     this.ui.importTrackCode?.addEventListener('click', () => this.importTrackDebugCode());
+    this.ui.raceMode?.addEventListener('change', () => this.updateRaceMode());
+    this.ui.cupSize?.addEventListener('change', () => {
+      if (this.ui.raceMode?.value === 'cup') this.startCupMode(Number(this.ui.cupSize.value) || 16);
+    });
+    this.ui.cupName?.addEventListener('input', () => {
+      if (this.cupMode?.active) this.showMatchCard();
+      this.updateUI();
+    });
     this.ui.lengthSelect.addEventListener('change', () => this.newRace({ regenerateTrack: true }));
     this.ui.customLength?.addEventListener('change', () => {
       this.ui.lengthSelect.value = 'custom';
@@ -809,20 +1152,164 @@ class MarbleRace {
       button.addEventListener('click', () => { this.cameraMode = button.dataset.camera; });
     });
     window.addEventListener('keydown', (event) => {
-      if (event.code === 'Space') {
-        event.preventDefault();
-        if (this.state === 'ready') this.startCountdownAndGateOpen();
-        else this.togglePause();
-      }
+      if (event.code === 'Space') return;
       if (event.key.toLowerCase() === 'r') this.newRace({ regenerateTrack: false });
       const target = event.target;
       const isTyping = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
       if (!isTyping && event.key.toLowerCase() === 'h') this.toggleLeftUI();
       if (!isTyping && event.key.toLowerCase() === 'j') this.toggleRightUI();
-      if (!isTyping && event.key.toLowerCase() === 'v') this.toggleRecording();
-      const map = { '1': 'default', '2': 'leader', '3': 'leadPack', '4': 'selected', '5': 'finish', '6': 'orbit' };
+      if (!isTyping && event.key.toLowerCase() === 'v') this.toggleRecording({ includeAudio: true });
+      const map = { '1': 'default', '2': 'leadPack', '3': 'selected', '4': 'cinematicLeader', '5': 'orbit' };
       if (map[event.key]) this.cameraMode = map[event.key];
     });
+  }
+
+  updateRaceMode() {
+    const mode = this.ui.raceMode?.value || 'single';
+    if (mode === 'cup') this.startCupMode(Number(this.ui.cupSize?.value) || 16);
+    else {
+      this.cupMode = { ...this.cupMode, active: false, status: 'idle', stageIndex: 0, currentEntrants: [], results: [], lastQualified: [], champion: null, podium: [] };
+      this.hideMatchCard();
+      this.ui.count.disabled = false;
+      this.newRace({ regenerateTrack: true });
+    }
+  }
+
+  applyCupVideoStageTrackSettings(stage = this.getCupStage()) {
+    if (!this.cupMode?.active || !CUP_VIDEO_TIMING.enabled) return;
+    const targetLength = CUP_VIDEO_TIMING.stageTrackLengths?.[stage];
+    if (!targetLength || !this.ui.lengthSelect || !this.ui.customLength) return;
+    this.ui.lengthSelect.value = CUP_VIDEO_TIMING.stageLengthPreset || 'custom';
+    this.ui.customLength.value = String(targetLength);
+  }
+
+  getCupVideoTimingEstimate() {
+    const estimatedSeconds = estimateCupVideoSeconds(CUP_VIDEO_TIMING);
+    return {
+      ...CUP_VIDEO_TIMING,
+      estimatedSeconds,
+      estimatedMinutes: Number((estimatedSeconds / 60).toFixed(2)),
+      targetDeltaSeconds: Number((estimatedSeconds - CUP_VIDEO_TIMING.targetSeconds).toFixed(1)),
+    };
+  }
+
+  startCupMode(size = 16, { preserveCurrentSettings = true } = {}) {
+    const cupSize = [16, 24, 32].includes(Number(size)) ? Number(size) : 16;
+    if (this.ui.raceMode) this.ui.raceMode.value = 'cup';
+    if (this.ui.cupSize) this.ui.cupSize.value = String(cupSize);
+    if (this.ui.count) {
+      this.ui.count.value = String(cupSize);
+      this.ui.count.disabled = true;
+    }
+    const entrants = Array.from({ length: cupSize }, (_, index) => this.createMarbleIdentity(index, cupSize));
+    this.cupMode = {
+      active: true,
+      status: 'ready',
+      size: cupSize,
+      stageIndex: 0,
+      stages: ['quarter-final', 'semi-final', 'final'],
+      entrants,
+      currentEntrants: entrants,
+      results: [],
+      lastQualified: [],
+      champion: null,
+      podium: [],
+    };
+    this.applyCupVideoStageTrackSettings('quarter-final');
+    this.newRace({ regenerateTrack: true });
+  }
+
+  resetDefaultAutoCameraForRace({ preservePhase = false } = {}) {
+    this.cameraMode = 'default';
+    this.leadPackInitialized = false;
+    this.leadBattleInitialized = false;
+    this.leadBattleState = null;
+    this.defaultCameraFocusId = null;
+    if (!preservePhase) this.defaultCameraPhaseUntil = 0;
+    if (this.state === 'finished' && !this.replayHighlight?.active) this.activeCameraMode = this.getDefaultCameraMode();
+  }
+
+  getCupDisplayName() {
+    const rawName = this.ui.cupName?.value?.trim() || 'Speed X Cup';
+    return rawName.slice(0, 36);
+  }
+
+  getCupStage() {
+    return this.cupMode?.stages?.[this.cupMode.stageIndex] || 'single';
+  }
+
+  getCupStageTitle(stage = this.getCupStage()) {
+    return {
+      'quarter-final': 'Quarter Final',
+      'semi-final': 'Semi Final',
+      final: 'Final',
+    }[stage] || 'Single Race';
+  }
+
+  getCupQualifierCount(stage = this.getCupStage()) {
+    if (!this.cupMode?.active) return 0;
+    if (stage === 'quarter-final') return Math.max(1, Math.floor(this.cupMode.size / 2));
+    if (stage === 'semi-final') return Math.max(1, Math.floor(this.cupMode.size / 4));
+    return 3;
+  }
+
+  showMatchCard() {
+    if (!this.ui.matchCard) return;
+    if (!this.cupMode?.active) {
+      this.ui.matchCard.classList.add('hidden');
+      return;
+    }
+    const stage = this.getCupStage();
+    const title = this.getCupStageTitle(stage);
+    const cupName = this.getCupDisplayName();
+    const entrants = this.cupMode.currentEntrants || [];
+    const qualifierCount = this.getCupQualifierCount(stage);
+    const rule = stage === 'final'
+      ? 'Top 3 enter the Cup Champion Ceremony'
+      : `Top ${qualifierCount} qualify for the next round`;
+    const entrantsHtml = entrants.slice(0, 8).map((entry) => `<li><span class="swatch" style="background:${entry.colorHex};color:${entry.colorHex}"></span>${entry.name}</li>`).join('');
+    const more = entrants.length > 8 ? `<li class="more">+${entrants.length - 8} more contenders</li>` : '';
+    this.ui.matchCard.innerHTML = `<span class="match-kicker">${cupName}</span><h2>${title}</h2><p>${entrants.length} marbles racing · ${rule}</p><ol>${entrantsHtml}${more}</ol>`;
+    this.ui.matchCard.classList.remove('hidden');
+  }
+
+  hideMatchCard() {
+    if (this.ui.matchCard) this.ui.matchCard.classList.add('hidden');
+  }
+
+  advanceCupMatch() {
+    if (!this.cupMode?.active || this.cupMode.status !== 'awaiting-next') return;
+    this.cupMode.stageIndex = Math.min(this.cupMode.stageIndex + 1, this.cupMode.stages.length - 1);
+    this.cupMode.currentEntrants = this.cupMode.lastQualified || [];
+    this.cupMode.lastQualified = [];
+    this.cupMode.status = 'ready';
+    this.applyCupVideoStageTrackSettings(this.getCupStage());
+    this.newRace({ regenerateTrack: true });
+  }
+
+  handleCupRaceComplete(ranking) {
+    if (!this.cupMode?.active) return;
+    const stage = this.getCupStage();
+    const podiumRanking = this.getPodiumRanking({ force: true });
+    const result = {
+      stage,
+      title: this.getCupStageTitle(stage),
+      entrants: (this.cupMode.currentEntrants || []).map((entry) => entry.name),
+      ranking: podiumRanking.map((data, index) => ({ rank: index + 1, name: data.name, code: data.code, finishTime: data.finishTime, colorHex: data.colorHex })),
+      dnf: ranking.filter((data) => data.defeated).map((data) => ({ name: data.name, code: data.code, progress: data.progress, defeatReason: data.defeatReason })),
+    };
+    this.cupMode.results.push(result);
+    if (stage === 'final') {
+      this.cupMode.podium = podiumRanking.slice(0, 3).map((data, index) => ({ rank: index + 1, name: data.name, code: data.code, finishTime: data.finishTime, colorHex: data.colorHex }));
+      this.cupMode.champion = this.cupMode.podium[0] || null;
+      this.cupMode.status = 'complete';
+      this.pushBroadcastEvent('Cup Champion Ceremony', this.buildPodiumResultLine(podiumRanking), { kind: 'complete', force: true, lines: [this.buildPodiumResultLine(podiumRanking)] });
+    } else {
+      const qualifierCount = this.getCupQualifierCount(stage);
+      this.cupMode.lastQualified = podiumRanking.slice(0, qualifierCount).map((data) => data.reusableIdentity || this.createMarbleIdentity(data.id, qualifierCount));
+      this.cupMode.status = 'awaiting-next';
+      this.pushBroadcastEvent('Qualified', `${this.cupMode.lastQualified.length} advance`, { kind: 'complete', force: true });
+    }
   }
 
   updateSpeedPreset() {
@@ -948,6 +1435,7 @@ class MarbleRace {
   }
 
   newRace({ regenerateTrack }) {
+    const voiceWasEnabled = this.commentaryVoiceEnabled || this.ui?.commentaryVoiceToggle?.checked;
     this.state = 'ready';
     this.elapsed = 0;
     this.finishers = [];
@@ -956,6 +1444,8 @@ class MarbleRace {
     this.cachedLeaderId = null;
     this.physicsSteps = 0;
     this.stuckResetCount = 0;
+    this.stallEliminationCount = 0;
+    this.defeatedMarbles = [];
     this.midTrackSpeedAssistCount = 0;
     this.finalApproachAssistCount = 0;
     this.slopeDriveForceCount = 0;
@@ -968,6 +1458,7 @@ class MarbleRace {
     this.countdownLastAnnouncedSecond = null;
     clearTimeout(this.countdownOverlayTimer);
     this.hideCountdownOverlay();
+    if (this.ui.matchCard) this.ui.matchCard.classList.add('hidden');
     if (this.ui.finalShowcase) {
       this.ui.finalShowcase.innerHTML = '';
       this.ui.finalShowcase.classList.add('hidden');
@@ -979,16 +1470,29 @@ class MarbleRace {
     this.lastCloseBattleAt = -Infinity;
     this.lastNeckAndNeckAt = -Infinity;
     this.lastOvertakeAt = -Infinity;
+    this.lastProgressCommentaryAt = -Infinity;
+    this.lastSpeedCommentaryAt = -Infinity;
+    this.lastProgressMilestone = 0;
+    this.lastPaceBand = null;
     this.previousTopFiveIds = [];
     this.topFiveSnapshot = [];
     this.lastFinalStretchAt = -Infinity;
+    this.raceHistoryBuffer = [];
+    this.lastRaceHistorySampleAt = -Infinity;
     this.activeCaption = null;
     this.hideBroadcastCaption();
+    this.activeCommentary = null;
+    this.commentaryHistory = [];
+    this.resetCommentaryVoiceQueue({ cancelCurrent: true, clearLastLine: true });
+    this.hideCommentaryCaption();
+    this.setBgmMode('intro');
+    this.hideReplayHighlightOverlay();
     this.clearSpectacleEffects({ clearTrails: false });
     this.showcaseStats = null;
+    this.resetPodiumCeremony();
     this.ui.pause.textContent = 'Pause';
     this.ui.start.textContent = 'Open Gate';
-    this.ui.regen.textContent = 'Generate New Track';
+    this.ui.regen.textContent = this.cupMode?.active ? 'Regenerate Cup Track' : 'Generate New Track';
     this.updateSpeedPreset();
     this.updateGuideBias();
     this.updateObstacleTypeToggles({ regenerateTrack: false });
@@ -996,12 +1500,9 @@ class MarbleRace {
     this.updateObstaclePreset({ regenerateTrack: false });
     this.updateCatchupAssist();
     this.updateCurveStyle();
-    this.cameraMode = 'default';
-    this.leadPackInitialized = false;
-    this.leadBattleInitialized = false;
-    this.leadBattleState = null;
-    this.defaultCameraPhaseUntil = 0;
-    this.defaultCameraFocusId = null;
+    this.refreshStallEliminationPolicy();
+    this.resetDefaultAutoCameraForRace();
+    this.initialCameraRotationApplied = false;
     this.firstFinishTime = 0;
     this.resetFinishSlowMotion();
 
@@ -1026,16 +1527,55 @@ class MarbleRace {
       this.rng = mulberry32(cyrb128(`${this.seed}-${this.trackPresetKey}-${this.customTrackLength || 'preset'}-${this.widthPresetKey}-${this.curveStyleKey}-${this.obstacleIndex}`)[0]);
       this.clearTrack();
       this.createTrack();
+      this.refreshStallEliminationPolicy();
       this.buildGuidePointMarkers();
       this.guidePointGroup.visible = this.showGuidePoints;
       this.updateTrackDebugCode();
     }
 
-    const requestedCount = Math.max(1, Math.floor(Number(this.ui.count.value) || 12));
+    const requestedCount = this.cupMode?.active
+      ? Math.max(1, this.cupMode.currentEntrants?.length || this.cupMode.size || 16)
+      : Math.max(1, Math.floor(Number(this.ui.count.value) || 12));
+    if (this.cupMode?.active && this.ui.count) this.ui.count.value = String(requestedCount);
     this.createMarbles(requestedCount);
+    this.applyInitialCameraVerticalAxisRotation();
+    this.showMatchCard();
     this.updateLeaderboard(true);
     this.updateTrackDebugCode();
+    if (voiceWasEnabled) this.setCommentaryVoiceEnabled(true);
     this.updateUI();
+  }
+
+  getStallEliminationDelaySeconds(stage = this.getCupStage?.()) {
+    const cfg = STALL_ELIMINATION;
+    const base = cfg.baseDelaySeconds ?? cfg.delaySeconds ?? 10;
+    const longDelay = cfg.longTrackDelaySeconds ?? base;
+    const reference = Math.max(1, cfg.longTrackReferenceMeters ?? 760);
+    const trackRatio = clamp((this.trackLength || 0) / reference, 0, 1);
+    const scaled = base + (longDelay - base) * trackRatio;
+    const stageMultiplier = stage === 'final' ? (cfg.finalStageDelayMultiplier ?? 1) : 1;
+    return Number((scaled * stageMultiplier).toFixed(2));
+  }
+
+  getStallEliminationMinForwardProgressMeters() {
+    const cfg = STALL_ELIMINATION;
+    const percentWindow = (this.trackLength || 0) * (cfg.minForwardProgressPercentPerWindow ?? 0);
+    return Math.max(cfg.minForwardProgressMeters ?? 0.18, percentWindow);
+  }
+
+  refreshStallEliminationPolicy() {
+    const delaySeconds = this.getStallEliminationDelaySeconds();
+    const minForwardProgressMeters = this.getStallEliminationMinForwardProgressMeters();
+    this.stuckResetDelay = delaySeconds;
+    this.stallElimination = {
+      ...STALL_ELIMINATION,
+      delaySeconds,
+      minForwardProgressMeters,
+      trackLengthMeters: Number((this.trackLength || 0).toFixed(2)),
+      trackScaleRatio: Number(clamp((this.trackLength || 0) / Math.max(1, STALL_ELIMINATION.longTrackReferenceMeters ?? 760), 0, 1).toFixed(3)),
+      cupStage: this.cupMode?.active ? this.getCupStage() : null,
+    };
+    return this.stallElimination;
   }
 
   getCustomTrackLength() {
@@ -1228,6 +1768,8 @@ class MarbleRace {
     this.finishSpinner = null;
     this.trackStats = { ribbonMeshes: 0, visibleDecks: 0, physicsDecks: 0, railTubes: 0, branchJoinDecks: 0, physicalRailBodies: 0, smoothRailJoinBodies: 0, optimizedRailBodies: 0, broadcastStageMarkers: 0 };
     this.stuckResetCount = 0;
+    this.stallEliminationCount = 0;
+    this.defeatedMarbles = [];
     this.midTrackSpeedAssistCount = 0;
     this.finalApproachAssistCount = 0;
     this.slopeDriveForceCount = 0;
@@ -1896,17 +2438,19 @@ class MarbleRace {
 
   addPhysicalGuardRails(points, width) {
     // TubeGeometry 只係視覺，Cannon 唔會撞到；要另外沿住護欄加 invisible static boxes。
-    // Invisible rail boxes should act like low side lips, not tall invisible guide walls.
-    // If a marble jumps higher than the rail, it should be able to leave the track naturally.
-    const wallHeight = 0.92;
-    const wallThickness = 0.58;
-    const wallBaseOffset = -0.02;
+    // Keep the collision lip thick and close to the visible tube so fast cornering marbles
+    // cannot squeeze between short/chorded rail bodies on tight bends.
+    // If a marble jumps clearly above the rail, it can still leave the track naturally.
+    const wallHeight = 1.12;
+    const wallThickness = 0.98;
+    const wallBaseOffset = -0.06;
+    const railCenterOffset = 0.58;
     const targetBodyBudget = this.performanceProfile?.maxPhysicalRailBodies || 520;
     const budgetInterval = this.trackLength > 0 ? (this.trackLength * 2) / targetBodyBudget : 1.65;
     const interval = clamp(
       Math.max(this.performanceProfile?.guardRailInterval || 1.65, budgetInterval),
-      1.8,
-      3.2
+      1.35,
+      2.45
     );
     const overlap = this.performanceProfile?.guardRailOverlap || 3.35;
     let railBodies = 0;
@@ -1921,8 +2465,8 @@ class MarbleRace {
         const frameB = this.getTrackFrameAt(bD);
         const widthA = this.getTrackWidthAt(aD);
         const widthB = this.getTrackWidthAt(bD);
-        const offsetA = widthA / 2 + 0.42;
-        const offsetB = widthB / 2 + 0.42;
+        const offsetA = widthA / 2 + railCenterOffset;
+        const offsetB = widthB / 2 + railCenterOffset;
         const aa = {
           ...a,
           x: a.x + frameA.right.x * offsetA * side,
@@ -1940,6 +2484,7 @@ class MarbleRace {
           thickness: wallHeight,
           overlap,
           physicsMaterial: this.railMaterial,
+          userData: { type: 'guard-rail', railSide: side, railSampleDistance: Number(d.toFixed(2)) },
         });
         railBodies += 1;
         smoothJoinBodies += 1;
@@ -1952,11 +2497,14 @@ class MarbleRace {
     this.trackStats.physicalRailInterval = interval;
     this.trackStats.physicalRailOverlap = overlap;
     this.trackStats.physicalRailThickness = wallThickness;
+    this.trackStats.physicalRailCenterOffset = railCenterOffset;
+    this.trackStats.physicalRailInnerLipFromTrackEdge = Number((railCenterOffset - wallThickness / 2).toFixed(3));
+    this.trackStats.physicalRailOuterLipFromTrackEdge = Number((railCenterOffset + wallThickness / 2).toFixed(3));
     this.trackStats.physicalRailHeight = wallHeight;
     this.trackStats.physicalRailTopAboveTrack = wallHeight + wallBaseOffset;
-    this.trackStats.physicalRailEscapeStyle = 'low-side-lip-allows-jumped-marbles-to-leave-track';
+    this.trackStats.physicalRailEscapeStyle = 'thicker-low-side-lip-catches-fast-cornering-marbles-but-allows-clear-jumps';
     this.trackStats.physicalRailBodyBudget = targetBodyBudget;
-    this.trackStats.railOptimization = 'lower-fewer-overlapped-side-lip-bodies';
+    this.trackStats.railOptimization = 'denser-thicker-overlapped-side-lip-bodies';
   }
 
   addTrackSegment(a, b, width, material, addPhysics, options = {}) {
@@ -1983,9 +2531,10 @@ class MarbleRace {
     body.addShape(new CANNON.Box(new CANNON.Vec3(width / 2, thickness / 2, (length + extraLength) / 2)));
     body.position.copy(center);
     body.quaternion.setFromEuler(pitch, yaw, 0, 'YXZ');
+    if (options.userData) body.userData = { ...(body.userData || {}), ...options.userData };
     this.world.addBody(body);
     this.trackBodies.push(body);
-    return mesh;
+    return mesh ? mesh : body;
   }
 
   addRails(a, b, material, width) {
@@ -2205,9 +2754,21 @@ class MarbleRace {
     group.rotation.y = yaw;
     this.trackGroup.add(group);
 
+    const transparentStartVisuals = Boolean(START_GATE_DESIGN.transparentVisuals);
+    const floorMat = transparentStartVisuals
+      ? makeStartTransparentMaterial(accentMat, START_GATE_DESIGN.startFloorOpacity)
+      : accentMat;
+    const railVisualMat = transparentStartVisuals
+      ? makeStartTransparentMaterial(railMat, START_GATE_DESIGN.startRailOpacity)
+      : railMat;
+    const markingMat = (color, emissive, opacity = START_GATE_DESIGN.startMarkingOpacity) => {
+      const material = new THREE.MeshStandardMaterial({ color, roughness: 0.24, emissive, emissiveIntensity: 0.28 });
+      return transparentStartVisuals ? makeStartTransparentMaterial(material, opacity) : material;
+    };
+
     const drop = (START_RAMP.prepTrayBackOffset - START_RAMP.prepTrayFrontOffset) * START_RAMP.prepTrayDropPerMeter;
     const pitch = Math.atan2(drop, depth);
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(width, 0.20, depth), accentMat);
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(width, 0.20, depth), floorMat);
     floor.position.set(0, -0.12, 0);
     floor.rotation.x = pitch;
     floor.receiveShadow = PERFORMANCE_TUNING.shadows;
@@ -2219,59 +2780,70 @@ class MarbleRace {
     this.world.addBody(floorBody);
     this.trackBodies.push(floorBody);
 
-    const sideSpecs = [
-      { x: -width / 2 - START_GATE_DESIGN.sideWallThickness / 2, z: 0, sx: START_GATE_DESIGN.sideWallThickness, sz: depth + 0.8 },
-      { x: width / 2 + START_GATE_DESIGN.sideWallThickness / 2, z: 0, sx: START_GATE_DESIGN.sideWallThickness, sz: depth + 0.8 },
-    ];
-    sideSpecs.forEach((spec) => {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(spec.sx, START_GATE_DESIGN.sideWallHeight, spec.sz), railMat);
-      wall.position.set(spec.x, START_GATE_DESIGN.sideWallHeight / 2 - 0.02, spec.z);
-      wall.castShadow = PERFORMANCE_TUNING.shadows;
-      wall.receiveShadow = PERFORMANCE_TUNING.shadows;
-      group.add(wall);
-      const pos = center.clone().add(this.localToWorldOffset(spec.x, START_GATE_DESIGN.sideWallHeight / 2 - 0.02, spec.z, yaw));
-      this.addStaticBox(pos, new THREE.Vector3(spec.sx / 2, START_GATE_DESIGN.sideWallHeight / 2, spec.sz / 2), yaw, this.railMaterial || this.obstacleMaterial);
-    });
+    if (START_GATE_DESIGN.surroundingWallsEnabled) {
+      const sideSpecs = [
+        { x: -width / 2 - START_GATE_DESIGN.sideWallThickness / 2, z: 0, sx: START_GATE_DESIGN.sideWallThickness, sz: depth + 0.8 },
+        { x: width / 2 + START_GATE_DESIGN.sideWallThickness / 2, z: 0, sx: START_GATE_DESIGN.sideWallThickness, sz: depth + 0.8 },
+      ];
+      sideSpecs.forEach((spec) => {
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(spec.sx, START_GATE_DESIGN.sideWallHeight, spec.sz), railVisualMat);
+        wall.name = 'START_SURROUNDING_SIDE_WALL';
+        wall.position.set(spec.x, START_GATE_DESIGN.sideWallHeight / 2 - 0.02, spec.z);
+        wall.castShadow = PERFORMANCE_TUNING.shadows;
+        wall.receiveShadow = PERFORMANCE_TUNING.shadows;
+        group.add(wall);
+        const pos = center.clone().add(this.localToWorldOffset(spec.x, START_GATE_DESIGN.sideWallHeight / 2 - 0.02, spec.z, yaw));
+        const body = this.addStaticBox(pos, new THREE.Vector3(spec.sx / 2, START_GATE_DESIGN.sideWallHeight / 2, spec.sz / 2), yaw, this.railMaterial || this.obstacleMaterial);
+        if (body) body.userData = { ...(body.userData || {}), name: wall.name, startSurroundingWall: true };
+      });
 
-    const backWall = new THREE.Mesh(new THREE.BoxGeometry(width + 0.8, START_GATE_DESIGN.backWallHeight, START_GATE_DESIGN.sideWallThickness), railMat);
-    backWall.position.set(0, START_GATE_DESIGN.backWallHeight / 2, -depth / 2 - START_GATE_DESIGN.sideWallThickness / 2);
-    backWall.castShadow = PERFORMANCE_TUNING.shadows;
-    backWall.receiveShadow = PERFORMANCE_TUNING.shadows;
-    group.add(backWall);
-    this.addStaticBox(
-      center.clone().add(this.localToWorldOffset(0, START_GATE_DESIGN.backWallHeight / 2, -depth / 2 - START_GATE_DESIGN.sideWallThickness / 2, yaw)),
-      new THREE.Vector3((width + 0.8) / 2, START_GATE_DESIGN.backWallHeight / 2, START_GATE_DESIGN.sideWallThickness / 2),
-      yaw,
-      this.obstacleMaterial
-    );
+      const backWall = new THREE.Mesh(new THREE.BoxGeometry(width + 0.8, START_GATE_DESIGN.backWallHeight, START_GATE_DESIGN.sideWallThickness), railVisualMat);
+      backWall.name = 'START_SURROUNDING_BACK_WALL';
+      backWall.position.set(0, START_GATE_DESIGN.backWallHeight / 2, -depth / 2 - START_GATE_DESIGN.sideWallThickness / 2);
+      backWall.castShadow = PERFORMANCE_TUNING.shadows;
+      backWall.receiveShadow = PERFORMANCE_TUNING.shadows;
+      group.add(backWall);
+      const backBody = this.addStaticBox(
+        center.clone().add(this.localToWorldOffset(0, START_GATE_DESIGN.backWallHeight / 2, -depth / 2 - START_GATE_DESIGN.sideWallThickness / 2, yaw)),
+        new THREE.Vector3((width + 0.8) / 2, START_GATE_DESIGN.backWallHeight / 2, START_GATE_DESIGN.sideWallThickness / 2),
+        yaw,
+        this.obstacleMaterial
+      );
+      if (backBody) backBody.userData = { ...(backBody.userData || {}), name: backWall.name, startSurroundingWall: true };
+    }
 
     const requestedCount = Math.max(1, Math.floor(Number(this.ui.count.value) || 12));
     const gateLayout = this.getStartGateLayout(requestedCount);
     const stallCount = gateLayout.stallCount;
     const laneGap = gateLayout.stallWidth;
     const gateWidth = gateLayout.gateWidth;
-    for (let i = 1; i < stallCount; i += 1) {
+    for (let i = 0; i <= stallCount; i += 1) {
+      const isOuterLaneBoard = i === 0 || i === stallCount;
       const x = -gateWidth / 2 + i * laneGap;
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(START_GATE_DESIGN.laneRailThickness, START_GATE_DESIGN.laneRailHeight, depth - 1.2), railMat);
-      rail.position.set(x, START_GATE_DESIGN.laneRailHeight / 2 + 0.08, -0.25);
+      const railHeight = isOuterLaneBoard ? Math.max(START_GATE_DESIGN.laneRailHeight, 1.05) : START_GATE_DESIGN.laneRailHeight;
+      const railThickness = isOuterLaneBoard ? Math.max(START_GATE_DESIGN.laneRailThickness, 0.18) : START_GATE_DESIGN.laneRailThickness;
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(railThickness, railHeight, depth - 1.2), railVisualMat);
+      rail.name = isOuterLaneBoard ? `START_OUTER_LANE_BOARD_${i === 0 ? 'LEFT' : 'RIGHT'}` : `START_LANE_DIVIDER_${i}`;
+      rail.position.set(x, railHeight / 2 + 0.08, -0.25);
       rail.rotation.x = pitch;
       rail.castShadow = PERFORMANCE_TUNING.shadows;
       rail.receiveShadow = PERFORMANCE_TUNING.shadows;
       group.add(rail);
       const body = new CANNON.Body({ mass: 0, material: this.railMaterial || this.obstacleMaterial });
-      body.addShape(new CANNON.Box(new CANNON.Vec3(START_GATE_DESIGN.laneRailThickness / 2, START_GATE_DESIGN.laneRailHeight / 2, (depth - 1.2) / 2)));
-      body.position.copy(center.clone().add(this.localToWorldOffset(x, START_GATE_DESIGN.laneRailHeight / 2 + 0.08, -0.25, yaw)));
+      body.addShape(new CANNON.Box(new CANNON.Vec3(railThickness / 2, railHeight / 2, (depth - 1.2) / 2)));
+      body.position.copy(center.clone().add(this.localToWorldOffset(x, railHeight / 2 + 0.08, -0.25, yaw)));
       body.quaternion.setFromEuler(pitch, yaw, 0, 'YXZ');
+      body.userData = { name: rail.name, startLaneBoard: true, outerLaneBoard: isOuterLaneBoard };
       this.world.addBody(body);
       this.trackBodies.push(body);
     }
 
-    const gateLine = new THREE.Mesh(new THREE.BoxGeometry(width * 0.82, 0.075, 0.34), new THREE.MeshStandardMaterial({ color: labelColor, roughness: 0.24, emissive: labelColor, emissiveIntensity: 0.36 }));
+    const gateLine = new THREE.Mesh(new THREE.BoxGeometry(width * 0.82, 0.075, 0.34), markingMat(labelColor, labelColor, START_GATE_DESIGN.startMarkingOpacity));
     gateLine.position.set(0, 0.11, depth / 2 - 0.62);
     gateLine.rotation.x = pitch;
     group.add(gateLine);
 
-    const startText = new THREE.Mesh(new THREE.BoxGeometry(width * 0.42, 0.08, 0.5), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.28, emissive: 0x153a34, emissiveIntensity: 0.18 }));
+    const startText = new THREE.Mesh(new THREE.BoxGeometry(width * 0.42, 0.08, 0.5), markingMat(0xffffff, 0x153a34, START_GATE_DESIGN.startMarkingOpacity));
     startText.position.set(0, 0.16, -depth * 0.16);
     startText.rotation.x = pitch;
     group.add(startText);
@@ -2292,7 +2864,17 @@ class MarbleRace {
       frontLocalZ: depth / 2,
       backLocalZ: -depth / 2,
       design: START_GATE_DESIGN.style,
+      surroundingWallsEnabled: Boolean(START_GATE_DESIGN.surroundingWallsEnabled),
+      surroundingWallsRemoved: !START_GATE_DESIGN.surroundingWallsEnabled,
       trackConnection: 'frontLocalZ-positive-aligns-with-frame-tangent-and-track-d0',
+      startLaneBoards: stallCount + 1,
+      outerLaneBoards: 2,
+      transparentVisuals: transparentStartVisuals,
+      visualOpacity: {
+        floor: START_GATE_DESIGN.startFloorOpacity,
+        rails: START_GATE_DESIGN.startRailOpacity,
+        markings: START_GATE_DESIGN.startMarkingOpacity,
+      },
     };
   }
 
@@ -2389,9 +2971,18 @@ class MarbleRace {
     group.rotation.y = yaw;
     this.trackGroup.add(group);
 
-    const gateMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.38, metalness: 0.55 });
-    const barMat = new THREE.MeshStandardMaterial({ color: 0x7cf7d4, roughness: 0.24, metalness: 0.28, emissive: 0x00483d, emissiveIntensity: 0.42 });
-    const warningMat = new THREE.MeshStandardMaterial({ color: 0xffd166, roughness: 0.3, metalness: 0.15, emissive: 0x3d2500, emissiveIntensity: 0.28 });
+    const gateMat = makeStartTransparentMaterial(
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.38, metalness: 0.55 }),
+      START_GATE_DESIGN.startGateOpacity
+    );
+    const barMat = makeStartTransparentMaterial(
+      new THREE.MeshStandardMaterial({ color: 0x7cf7d4, roughness: 0.24, metalness: 0.28, emissive: 0x00483d, emissiveIntensity: 0.42 }),
+      START_GATE_DESIGN.startGateOpacity
+    );
+    const warningMat = makeStartTransparentMaterial(
+      new THREE.MeshStandardMaterial({ color: 0xffd166, roughness: 0.3, metalness: 0.15, emissive: 0x3d2500, emissiveIntensity: 0.28 }),
+      START_GATE_DESIGN.startMarkingOpacity
+    );
     const gateLayout = this.getStartGateLayout(this.ui.count?.value);
     const stallCount = this.startCatcher?.laneCount || gateLayout.stallCount;
     const gateWidth = this.startCatcher?.gateWidth || gateLayout.gateWidth;
@@ -2531,12 +3122,17 @@ class MarbleRace {
 
   addRankingCollector({ frame, width, racerCount, mat, accentMat }) {
     const yaw = Math.atan2(frame.tangent.x, frame.tangent.z);
-    const slotGap = 1.35;
+    const slotGap = 1.45;
     const lowerCount = Math.max(0, racerCount - 3);
-    const lowerCols = Math.max(4, Math.min(10, Math.ceil(Math.sqrt(Math.max(1, lowerCount)) + 1)));
+    const lowerCols = lowerCount > 0
+      ? Math.max(4, Math.ceil(Math.sqrt(lowerCount * 1.28)))
+      : 4;
     const lowerRows = Math.max(1, Math.ceil(Math.max(1, lowerCount) / lowerCols));
-    const containerWidth = Math.max(width, lowerCols * slotGap + 4.8, 12);
-    const depth = Math.max(11.5, lowerRows * slotGap + 7.2);
+    const lowerSlotOriginZ = 2.35;
+    const lowerSlotBackZ = lowerSlotOriginZ + Math.max(0, lowerRows - 1) * slotGap;
+    const lowerSlotRightX = ((lowerCols - 1) / 2) * slotGap;
+    const containerWidth = Math.max(width, lowerSlotRightX * 2 + 4.8, 12);
+    const depth = Math.max(11.5, (Math.max(lowerSlotBackZ, 1.8) + 2.25) * 2);
     const center = new THREE.Vector3(frame.p.x, frame.p.y + 0.2, frame.p.z)
       .add(frame.tangent.clone().multiplyScalar(depth / 2 + 3.2));
     const group = new THREE.Group();
@@ -2596,7 +3192,7 @@ class MarbleRace {
       const row = Math.floor(lowerIndex / lowerCols);
       const col = lowerIndex % lowerCols;
       const x = (col - (lowerCols - 1) / 2) * slotGap;
-      const z = 2.35 + row * slotGap;
+      const z = lowerSlotOriginZ + row * slotGap;
       const plate = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.06, 1.0), lowerSlotMat);
       plate.position.set(x, 0.04, z);
       plate.receiveShadow = PERFORMANCE_TUNING.shadows;
@@ -2620,7 +3216,14 @@ class MarbleRace {
       name: 'PODIUM_COLLECTOR',
       podiumStyle: 'top-3-on-podium-rest-below',
       podiumSlots: podiumSpecs,
-      lowerSlots: { cols: lowerCols, rows: lowerRows, count: lowerCount },
+      lowerSlots: {
+        cols: lowerCols,
+        rows: lowerRows,
+        count: lowerCount,
+        originZ: lowerSlotOriginZ,
+        maxX: lowerSlotRightX,
+        maxZ: lowerSlotBackZ,
+      },
     };
   }
 
@@ -3186,7 +3789,7 @@ class MarbleRace {
     obstacle.pulse = 1;
     this.pinballInteractions.popBumper += 1;
     this.spawnImpactEffect(obstacle.center, 0xff77b7, 'ring');
-    this.pushBroadcastEvent('Bumper Blast', `${data.name} ricochets off a pop bumper`, { kind: 'obstacle' });
+    this.pushBroadcastEvent('Bumper Blast', `${data.name} bumper hit`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} bumper hit`, `${data.name} bounces wide`, `${data.name} rebounds`] });
   }
 
   applySlingshotImpulse(obstacle, data, dx, dz) {
@@ -3203,7 +3806,7 @@ class MarbleRace {
     obstacle.pulse = 1;
     this.pinballInteractions.slingshot += 1;
     this.spawnImpactEffect(obstacle.center, 0x7cf7d4, 'spark');
-    this.pushBroadcastEvent('Slingshot Kick', `${data.name} gets fired across the lane`, { kind: 'obstacle' });
+    this.pushBroadcastEvent('Slingshot Kick', `${data.name} slingshot`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} slingshot`, `${data.name} shoots across`, `${data.name} kicks out`] });
   }
 
   applySpinnerGateImpulse(obstacle, data, dx, dz) {
@@ -3224,7 +3827,7 @@ class MarbleRace {
     obstacle.cooldown.set(data.id, this.elapsed);
     this.pinballInteractions.spinnerGate += 1;
     this.spawnImpactEffect(obstacle.center, 0xffd166, 'ring');
-    this.pushBroadcastEvent('Spinner Snap', `${data.name} catches a spinning gate boost`, { kind: 'obstacle' });
+    this.pushBroadcastEvent('Spinner Snap', `${data.name} spinner boost`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} spinner boost`, `${data.name} catches spin`, `${data.name} snaps forward`] });
   }
 
   applyRolloverLaneBoost(obstacle, data) {
@@ -3242,7 +3845,7 @@ class MarbleRace {
     obstacle.pulse = 1;
     this.pinballInteractions.rolloverLane += 1;
     this.spawnImpactEffect(obstacle.center, 0x8cff66, 'spark');
-    this.pushBroadcastEvent('Lane Lit', `${data.name} triggers a rollover speed lane`, { kind: 'obstacle' });
+    this.pushBroadcastEvent('Lane Lit', `${data.name} lane boost`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} lane boost`, `${data.name} lights lane`, `${data.name} gains speed`] });
   }
 
   applyDropTargetHit(obstacle, data) {
@@ -3278,7 +3881,7 @@ class MarbleRace {
     data.dropTargetBounceCount = (data.dropTargetBounceCount || 0) + 1;
     this.pinballInteractions.dropTarget += 1;
     this.spawnImpactEffect(obstacle.center, 0xff8844, 'burst');
-    this.pushBroadcastEvent('Target Rebound', `${data.name} gets bounced back by the drop targets`, { kind: 'obstacle' });
+    this.pushBroadcastEvent('Target Rebound', `${data.name} target hit`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} target hit`, `${data.name} bounces back`, `${data.name} clips targets`] });
   }
 
   createDecorations() {
@@ -3380,7 +3983,16 @@ class MarbleRace {
     const line = new THREE.Line(geometry, material);
     line.frustumCulled = false;
     this.scene.add(line);
-    return { line, points, cursor: 0, sampleEvery: PERFORMANCE_TUNING.trailSampleEvery, lastSample: -Infinity, radius };
+    return {
+      line,
+      points,
+      cursor: 0,
+      sampleEvery: PERFORMANCE_TUNING.trailSampleEvery,
+      lastSample: -Infinity,
+      radius,
+      started: false,
+      hiddenY: -1000,
+    };
   }
 
   updateMarbleTrails(delta) {
@@ -3389,7 +4001,35 @@ class MarbleRace {
     this.marbleData.forEach((data) => {
       if (!data.trail) return;
       const trail = data.trail;
-      if (this.state === 'running' && now - trail.lastSample >= trail.sampleEvery) {
+      const trailStartDistance = this.performanceProfile?.trailStartTrackDistance ?? PERFORMANCE_TUNING.trailStartTrackDistance ?? 0.75;
+      const onTrack = this.state === 'running'
+        && !data.pendingFallRespawn
+        && !data.defeated
+        && !data.removedFromRace
+        && ((data.driveDistance ?? data.distance ?? 0) >= trailStartDistance)
+        && Number.isFinite(data.lastTrackContactTime)
+        && now - data.lastTrackContactTime <= 0.35;
+
+      if (!trail.started && !onTrack) {
+        trail.line.visible = false;
+        trail.points.forEach((point) => point.set(0, trail.hiddenY ?? -1000, 0));
+        trail.line.geometry.setFromPoints(trail.points);
+        trail.line.material.opacity = 0;
+        data.trailStarted = false;
+        return;
+      }
+
+      if (!trail.started && onTrack) {
+        const startPoint = data.mesh.position.clone().add(new THREE.Vector3(0, data.radius * 0.25, 0));
+        trail.points.forEach((point) => point.copy(startPoint));
+        trail.cursor = 0;
+        trail.lastSample = now;
+        trail.started = true;
+        trail.line.visible = true;
+        data.trailStarted = true;
+      }
+
+      if (this.state === 'running' && trail.started && now - trail.lastSample >= trail.sampleEvery) {
         trail.lastSample = now;
         trail.cursor = (trail.cursor + 1) % trail.points.length;
         trail.points[trail.cursor].copy(data.mesh.position).add(new THREE.Vector3(0, data.radius * 0.25, 0));
@@ -3415,32 +4055,49 @@ class MarbleRace {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 4;
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.28)';
+    ctx.strokeStyle = 'rgba(35, 24, 0, 0.74)';
     ctx.strokeText(label, canvas.width / 2, canvas.height / 2 + 2);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
+    ctx.fillStyle = '#ffd84d';
     ctx.fillText(label, canvas.width / 2, canvas.height / 2 + 2);
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.needsUpdate = true;
-    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.78, depthTest: false, depthWrite: false });
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false });
     const sprite = new THREE.Sprite(material);
     sprite.name = `marble-name-label-${label}`;
     sprite.renderOrder = 80;
     sprite.frustumCulled = false;
     sprite.scale.set(1.8, 0.45, 1);
+    sprite.visible = false;
     this.scene.add(sprite);
     return sprite;
   }
 
   updateMarbleNameLabels() {
+    const labelsAllowed = !MARBLE_LABEL_POLICY.showOnlyAfterRaceStart
+      || this.state === 'running'
+      || this.state === 'finished';
+    const topLabelIds = new Set(
+      labelsAllowed
+        ? this.getRanking({ force: true })
+          .slice(0, Math.max(0, MARBLE_LABEL_POLICY.visibleTopRankCount || 5))
+          .map((data) => data.id)
+        : []
+    );
+    this.visibleLabelCount = 0;
     this.marbleData.forEach((data) => {
       if (!data.labelSprite) return;
       data.labelSprite.position.copy(data.mesh.position).add(new THREE.Vector3(0, data.radius + 0.72, 0));
       const cameraDistance = data.labelSprite.position.distanceTo(this.camera.position);
       const scale = clamp(cameraDistance * 0.035, 0.62, 1.25);
       data.labelSprite.scale.set(scale * 3.8, scale * 0.95, 1);
-      data.labelSprite.visible = !data.pendingFallRespawn || this.elapsed - (data.pendingFallRespawn.detectedAt ?? this.elapsed) < 1.1;
+      const fallLabelAllowed = !data.pendingFallRespawn
+        || this.elapsed - (data.pendingFallRespawn.detectedAt ?? this.elapsed) < MARBLE_LABEL_POLICY.hidePendingFallAfterSeconds;
+      const visible = topLabelIds.has(data.id) && fallLabelAllowed;
+      data.labelSprite.visible = visible;
+      data.labelVisible = visible;
+      if (visible) this.visibleLabelCount += 1;
     });
   }
 
@@ -3503,21 +4160,1033 @@ class MarbleRace {
     this.updateConfetti(delta);
   }
 
-  pushBroadcastEvent(title, detail = '', { kind = 'general', force = false } = {}) {
+  clearReplayGhosts() {
+    // Legacy no-op: replay now uses original marble meshes/materials from the race history buffer.
+  }
+
+  ensureReplayGhosts() {
+    // Legacy no-op kept for console compatibility; no glow/oversized ghost markers are created.
+    return [];
+  }
+
+  recordRaceHistorySample({ force = false } = {}) {
+    const interval = Math.max(0.04, CUP_VIDEO_TIMING.replayHistorySampleSeconds || 0.1);
+    if (!force && this.elapsed - (this.lastRaceHistorySampleAt || -Infinity) < interval) return;
+    if (!this.marbleData?.length) return;
+    this.lastRaceHistorySampleAt = this.elapsed;
+    const marbles = this.marbleData.map((data) => ({
+      id: data.id,
+      name: data.name,
+      visible: Boolean(data.mesh?.visible !== false && !data.removedFromRace),
+      defeated: Boolean(data.defeated),
+      finished: Boolean(data.finished),
+      distance: data.distance || 0,
+      progress: data.progress || 0,
+      position: {
+        x: Number((data.mesh?.position?.x ?? data.body?.position?.x ?? 0).toFixed(4)),
+        y: Number((data.mesh?.position?.y ?? data.body?.position?.y ?? 0).toFixed(4)),
+        z: Number((data.mesh?.position?.z ?? data.body?.position?.z ?? 0).toFixed(4)),
+      },
+      quaternion: {
+        x: Number((data.mesh?.quaternion?.x ?? 0).toFixed(5)),
+        y: Number((data.mesh?.quaternion?.y ?? 0).toFixed(5)),
+        z: Number((data.mesh?.quaternion?.z ?? 0).toFixed(5)),
+        w: Number((data.mesh?.quaternion?.w ?? 1).toFixed(5)),
+      },
+    }));
+    this.raceHistoryBuffer.push({ time: Number(this.elapsed.toFixed(3)), marbles });
+    const baseKeepSeconds = Math.max(18, (CUP_VIDEO_TIMING.replayClipSeconds || 7) * (CUP_VIDEO_TIMING.replayHighlightMaxEvents || 3) + 8);
+    const stageReplayKeepSeconds = this.cupMode?.active
+      ? Math.max(
+        baseKeepSeconds,
+        Number(CUP_VIDEO_TIMING.stageTargetSeconds?.[this.getCupStage?.()] || 0) + (CUP_VIDEO_TIMING.replayHistoryAfterSeconds || 3.8) + 8,
+        (this.elapsed || 0) + (CUP_VIDEO_TIMING.replayHistoryAfterSeconds || 3.8) + 2,
+      )
+      : baseKeepSeconds;
+    const keepSeconds = this.replayHighlight?.active ? Math.max(stageReplayKeepSeconds, (this.elapsed || 0) + 2) : stageReplayKeepSeconds;
+    const cutoff = this.elapsed - keepSeconds;
+    while (this.raceHistoryBuffer.length > 2 && this.raceHistoryBuffer[0].time < cutoff) this.raceHistoryBuffer.shift();
+  }
+
+  captureReplayOriginalSnapshots() {
+    this.replayOriginalSnapshots = this.marbleData.map((data) => ({
+      id: data.id,
+      position: data.mesh.position.clone(),
+      quaternion: data.mesh.quaternion.clone(),
+      scale: data.mesh.scale.clone(),
+      visible: data.mesh.visible,
+      labelVisible: data.labelSprite?.visible ?? true,
+      labelPosition: data.labelSprite?.position?.clone?.() || null,
+      bodyPosition: data.body?.position ? data.body.position.clone() : null,
+      bodyQuaternion: data.body?.quaternion ? data.body.quaternion.clone() : null,
+    }));
+  }
+
+  restoreReplayOriginalSnapshots() {
+    if (!this.replayOriginalSnapshots) return;
+    this.replayOriginalSnapshots.forEach((snapshot) => {
+      const data = this.marbleData.find((item) => item.id === snapshot.id);
+      if (!data?.mesh) return;
+      data.mesh.position.copy(snapshot.position);
+      data.mesh.quaternion.copy(snapshot.quaternion);
+      data.mesh.scale.copy(snapshot.scale);
+      data.mesh.visible = snapshot.visible;
+      if (data.labelSprite) {
+        data.labelSprite.visible = snapshot.labelVisible;
+        if (snapshot.labelPosition) data.labelSprite.position.copy(snapshot.labelPosition);
+      }
+      if (data.body && snapshot.bodyPosition) data.body.position.copy(snapshot.bodyPosition);
+      if (data.body && snapshot.bodyQuaternion) data.body.quaternion.copy(snapshot.bodyQuaternion);
+    });
+    this.replayOriginalSnapshots = null;
+  }
+
+  findRaceHistoryFrameAt(time) {
+    const buffer = this.raceHistoryBuffer || [];
+    if (!buffer.length) return null;
+    if (time <= buffer[0].time) return buffer[0];
+    if (time >= buffer[buffer.length - 1].time) return buffer[buffer.length - 1];
+    let lo = 0;
+    let hi = buffer.length - 1;
+    while (hi - lo > 1) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (buffer[mid].time <= time) lo = mid;
+      else hi = mid;
+    }
+    const a = buffer[lo];
+    const b = buffer[hi];
+    const t = clamp((time - a.time) / Math.max(0.001, b.time - a.time), 0, 1);
+    const marbles = a.marbles.map((ma) => {
+      const mb = b.marbles.find((entry) => entry.id === ma.id) || ma;
+      return {
+        id: ma.id,
+        name: ma.name,
+        visible: ma.visible || mb.visible,
+        defeated: ma.defeated || mb.defeated,
+        finished: ma.finished || mb.finished,
+        distance: lerp(ma.distance || 0, mb.distance || 0, t),
+        progress: lerp(ma.progress || 0, mb.progress || 0, t),
+        position: {
+          x: lerp(ma.position.x, mb.position.x, t),
+          y: lerp(ma.position.y, mb.position.y, t),
+          z: lerp(ma.position.z, mb.position.z, t),
+        },
+        quaternion: {
+          x: lerp(ma.quaternion.x, mb.quaternion.x, t),
+          y: lerp(ma.quaternion.y, mb.quaternion.y, t),
+          z: lerp(ma.quaternion.z, mb.quaternion.z, t),
+          w: lerp(ma.quaternion.w, mb.quaternion.w, t),
+        },
+      };
+    });
+    return { time, marbles, interpolated: true, from: a.time, to: b.time };
+  }
+
+  getReplayEventTime(event, index = 0) {
+    const buffer = this.raceHistoryBuffer || [];
+    if (Number.isFinite(event?.time)) return clamp(event.time, buffer[0]?.time ?? 0, buffer.at(-1)?.time ?? this.elapsed);
+    if (Number.isFinite(event?.distance) && this.trackLength) {
+      const match = buffer.find((frame) => frame.marbles.some((marble) => Math.abs((marble.distance || 0) - event.distance) <= 2.5));
+      if (match) return match.time;
+    }
+    const fallback = this.elapsed - (CUP_VIDEO_TIMING.replayHistoryBeforeSeconds || 2.2) - index * 1.2;
+    return clamp(fallback, buffer[0]?.time ?? 0, buffer.at(-1)?.time ?? this.elapsed);
+  }
+
+  buildReplayHighlightPlayback(events, duration = CUP_VIDEO_TIMING.replayHighlightSeconds) {
+    const replayClipCount = Math.max(1, Number(CUP_VIDEO_TIMING.replayHighlightMaxEvents) || Math.max(events.length, 1));
+    const clipSeconds = Math.max(2.5, CUP_VIDEO_TIMING.replayClipSeconds || (duration / replayClipCount));
+    const totalClipTime = clipSeconds * Math.max(events.length, 1);
+    const before = CUP_VIDEO_TIMING.replayHistoryBeforeSeconds || 2.2;
+    const after = CUP_VIDEO_TIMING.replayHistoryAfterSeconds || 3.8;
+    const clips = events.map((event, index) => {
+      const eventTime = this.getReplayEventTime(event, index);
+      const startTime = Math.max(this.raceHistoryBuffer?.[0]?.time ?? 0, eventTime - before);
+      const endTime = Math.min(this.raceHistoryBuffer?.at(-1)?.time ?? this.elapsed, eventTime + after);
+      return { index, eventTime, startTime, endTime, duration: Math.max(0.1, endTime - startTime), event };
+    });
+    return {
+      activeIndex: 0,
+      clipSeconds,
+      totalClipTime,
+      focusLeadSeconds: CUP_VIDEO_TIMING.replayFocusLeadSeconds,
+      cameraBack: CUP_VIDEO_TIMING.replayCameraBack,
+      cameraSide: CUP_VIDEO_TIMING.replayCameraSide,
+      cameraHeight: CUP_VIDEO_TIMING.replayCameraHeight,
+      clips,
+      sampleInterval: CUP_VIDEO_TIMING.replayHistorySampleSeconds || 0.1,
+      mode: 'history-buffer-replay',
+    };
+  }
+
+  getReplayEventDistance(event, index = 0) {
+    const candidates = [
+      event?.distance,
+      event?.leaderDistance,
+      event?.progress != null && this.trackLength ? event.progress * this.trackLength : null,
+      event?.time != null && this.elapsed > 0 && this.trackLength ? (event.time / Math.max(this.elapsed, 1)) * this.trackLength : null,
+      this.getRanking({ force: true })[index]?.distance,
+      this.trackLength * (0.28 + index * 0.2),
+    ];
+    const value = candidates.find((entry) => Number.isFinite(entry));
+    return clamp(value || 0, 0, this.trackLength || 1);
+  }
+
+  getReplayHighlightState() {
+    const replay = this.replayHighlight;
+    if (!replay?.active || !replay.events?.length || !replay.playback) return null;
+    const elapsedReplay = replay.startedAtMs
+      ? Math.max(0, (performance.now() - replay.startedAtMs) / 1000)
+      : Math.max(0, this.elapsed - (replay.startedAt || 0));
+    const clipSeconds = replay.playback.clipSeconds || 7;
+    const totalClipTime = replay.playback.totalClipTime || (clipSeconds * replay.events.length);
+    if (elapsedReplay >= totalClipTime) {
+      return {
+        replay,
+        complete: true,
+        activeIndex: replay.events.length - 1,
+        clipProgress: 1,
+        motionProgress: 1,
+        distance: this.trackLength || 1,
+        primary: null,
+        secondary: null,
+        clip: replay.playback.clips?.at(-1) || null,
+        historyTime: this.raceHistoryBuffer?.at(-1)?.time ?? this.elapsed,
+        historyFrame: this.raceHistoryBuffer?.at(-1) || null,
+        focusMarble: null,
+        primarySnapshot: null,
+        secondarySnapshot: null,
+      };
+    }
+    const activeIndex = Math.min(replay.events.length - 1, Math.floor(elapsedReplay / clipSeconds));
+    const clipProgress = clamp((elapsedReplay - activeIndex * clipSeconds) / clipSeconds, 0, 1);
+    const event = replay.events[activeIndex];
+    const clip = replay.playback.clips?.[activeIndex];
+    const historyTime = clip
+      ? lerp(clip.startTime, clip.endTime, clipProgress)
+      : this.getReplayEventTime(event, activeIndex);
+    const historyFrame = this.findRaceHistoryFrameAt(historyTime);
+    const historyRanking = historyFrame?.marbles?.length
+      ? [...historyFrame.marbles].sort((a, b) => (b.distance || 0) - (a.distance || 0))
+      : [];
+    const liveRanking = this.getRanking({ force: true });
+    const primarySnapshot = event.marbleId
+      ? historyFrame?.marbles?.find((marble) => marble.id === event.marbleId)
+      : historyRanking[activeIndex] || historyRanking[0] || null;
+    const secondarySnapshot = event.rivalId
+      ? historyFrame?.marbles?.find((marble) => marble.id === event.rivalId)
+      : historyRanking.find((marble) => marble.id !== primarySnapshot?.id) || null;
+    const primary = primarySnapshot?.id != null
+      ? this.marbleData.find((data) => data.id === primarySnapshot.id)
+      : (event.marbleId ? this.marbleData.find((data) => data.id === event.marbleId) : liveRanking[activeIndex] || liveRanking[0] || this.marbleData[0]);
+    const secondary = secondarySnapshot?.id != null
+      ? this.marbleData.find((data) => data.id === secondarySnapshot.id)
+      : (event.rivalId ? this.marbleData.find((data) => data.id === event.rivalId) : liveRanking.find((data) => data.id !== primary?.id) || this.marbleData.find((data) => data.id !== primary?.id));
+    const focusMarble = primarySnapshot
+      || historyRanking[0]
+      || historyFrame?.marbles?.find((marble) => marble.id === primary?.id);
+    const distance = clamp(focusMarble?.distance ?? this.getReplayEventDistance(event, activeIndex), 0, this.trackLength || 1);
+    return { replay, event, activeIndex, clipProgress, motionProgress: clipProgress, distance, primary, secondary, clip, historyTime, historyFrame, focusMarble, primarySnapshot, secondarySnapshot };
+  }
+
+  applyReplayHighlightVirtualMarbles(state) {
+    const replayState = state || this.getReplayHighlightState();
+    if (!replayState?.historyFrame?.marbles?.length) return;
+    replayState.historyFrame.marbles.forEach((snapshot) => {
+      const data = this.marbleData.find((item) => item.id === snapshot.id);
+      if (!data?.mesh) return;
+      data.mesh.visible = snapshot.visible !== false;
+      data.mesh.position.set(snapshot.position.x, snapshot.position.y, snapshot.position.z);
+      data.mesh.quaternion.set(snapshot.quaternion.x, snapshot.quaternion.y, snapshot.quaternion.z, snapshot.quaternion.w).normalize();
+      data.mesh.scale.setScalar(1);
+      if (data.labelSprite) {
+        data.labelSprite.visible = data.mesh.visible;
+        data.labelSprite.position.copy(data.mesh.position).add(new THREE.Vector3(0, data.radius + 0.82, 0));
+      }
+      data.replayHighlightIndex = replayState.activeIndex;
+    });
+  }
+
+  updateReplayHighlightPlayback(delta = 0) {
+    const state = this.getReplayHighlightState();
+    if (!state) return;
+    this.replayHighlight.playback.activeIndex = state.activeIndex;
+    this.replayHighlight.playback.complete = Boolean(state.complete);
+    this.replayHighlight.playback.clipProgress = Number(state.clipProgress.toFixed(3));
+    this.replayHighlight.playback.motionProgress = Number((state.motionProgress || state.clipProgress).toFixed(3));
+    this.replayHighlight.playback.currentTitle = state.event?.title || 'Replay Complete';
+    this.replayHighlight.playback.currentReplayTitle = state.event?.replayTitle || null;
+    this.replayHighlight.playback.currentDistance = Number(state.distance.toFixed(2));
+    this.replayHighlight.playback.currentHistoryTime = Number((state.historyTime || 0).toFixed(2));
+    this.replayHighlight.playback.currentPrimary = state.primary?.name || null;
+    this.replayHighlight.playback.currentSecondary = state.secondary?.name || null;
+    this.replayHighlight.playback.focusSnapshot = state.focusMarble ? {
+      id: state.focusMarble.id,
+      distance: Number((state.focusMarble.distance || 0).toFixed(2)),
+      progress: Number((state.focusMarble.progress || 0).toFixed(3)),
+      x: Number(state.focusMarble.position.x.toFixed(2)),
+      y: Number(state.focusMarble.position.y.toFixed(2)),
+      z: Number(state.focusMarble.position.z.toFixed(2)),
+    } : null;
+    this.applyReplayHighlightVirtualMarbles(state);
+    this.replayHighlight.playback.visibleReplayMarbles = state.historyFrame?.marbles?.filter((marble) => marble.visible !== false).length || 0;
+    this.replayHighlight.playback.replayMarblePositions = state.historyFrame?.marbles?.slice(0, 4).map((marble) => ({
+      id: marble.id,
+      x: Number(marble.position.x.toFixed(2)),
+      y: Number(marble.position.y.toFixed(2)),
+      z: Number(marble.position.z.toFixed(2)),
+    })) || [];
+    this.showReplayLiveEventCaption(state);
+  }
+
+  updateReplayHighlightOverlayActiveCard(activeIndex = 0) {
+    // Dedicated replay overlay is retired; replay status lives in Live Event caption.
+  }
+
+  showReplayLiveEventCaption(state = this.getReplayHighlightState()) {
+    if (!state || !this.ui?.caption) return;
+    if (state.complete) {
+      const title = 'Replay Complete';
+      const detail = 'Back to podium';
+      this.activeCaption = { title, detail, kind: 'replay', expiresAt: this.elapsed + 9999 };
+      if (this.ui.captionTitle) this.ui.captionTitle.textContent = title;
+      if (this.ui.captionDetail) this.ui.captionDetail.textContent = detail;
+      this.ui.caption.classList.remove('hidden');
+      return;
+    }
+    const event = state.event || {};
+    const prefix = `Replay ${state.activeIndex + 1}/${this.replayHighlight.events.length}`;
+    const title = `${prefix}: ${event.title || 'Race Moment'}`;
+    const detail = this.buildReplayHighlightDetail(event, state);
+    const lines = this.buildReplayHighlightLines(event, state, detail);
+    this.activeCaption = { title, detail, kind: 'replay', expiresAt: this.elapsed + 9999 };
+    if (this.ui.captionTitle) this.ui.captionTitle.textContent = title;
+    if (this.ui.captionDetail) this.ui.captionDetail.textContent = this.activeCaption.detail;
+    this.ui.caption.classList.remove('hidden');
+    if (this.activeCommentary?.replayIndex !== state.activeIndex) {
+      this.queueCommentary({ ...event, kind: 'replay', detail, lines }, { force: true });
+      if (this.activeCommentary) this.activeCommentary.replayIndex = state.activeIndex;
+    }
+  }
+
+  getReplayHighlightName(event = {}, state = {}, key = 'primary') {
+    const explicitId = key === 'secondary' ? event.rivalId : event.marbleId;
+    const live = key === 'secondary' ? state.secondary : state.primary;
+    const snapshot = key === 'secondary' ? state.secondarySnapshot : state.primarySnapshot;
+    if (explicitId != null) {
+      const match = this.marbleData?.find?.((data) => data.id === explicitId)
+        || state.historyFrame?.marbles?.find?.((data) => data.id === explicitId);
+      if (match?.name) return match.name;
+    }
+    return live?.name || snapshot?.name || null;
+  }
+
+  buildReplayHighlightDetail(event = {}, state = {}) {
+    const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const primary = this.getReplayHighlightName(event, state, 'primary');
+    const secondary = this.getReplayHighlightName(event, state, 'secondary');
+    const existing = clean(event.detail);
+    if (existing) return existing;
+    const progressValue = state.focusMarble?.progress ?? event.progress;
+    const pct = Number.isFinite(progressValue) ? Math.round(clamp(progressValue, 0, 1) * 100) : null;
+    const progressSuffix = pct != null && pct > 0 ? ` at ${pct}%` : '';
+    switch (event.kind) {
+      case 'overtake':
+        return primary && secondary ? `${primary} passes ${secondary}${progressSuffix}` : `${primary || 'Racer'} gains position${progressSuffix}`;
+      case 'leader':
+        return `${primary || 'Leader'} takes P1${progressSuffix}`;
+      case 'battle':
+        return primary && secondary ? `${primary} battles ${secondary}${progressSuffix}` : `Close battle${progressSuffix}`;
+      case 'obstacle':
+        return `${primary || 'Racer'} hits trouble${progressSuffix}`;
+      case 'finish':
+        return `${primary || 'Leader'} in final sector`;
+      case 'winner':
+        return `${primary || 'Winner'} takes the flag`;
+      case 'complete':
+        return primary ? `${primary} result locked` : 'Round result locked';
+      default:
+        return clean(event.replayTitle) || (primary ? `${primary} race moment${progressSuffix}` : 'Race moment');
+    }
+  }
+
+  buildReplayHighlightLines(event = {}, state = {}, detail = '') {
+    const primary = this.getReplayHighlightName(event, state, 'primary') || 'Racer';
+    const secondary = this.getReplayHighlightName(event, state, 'secondary') || 'the chase';
+    const base = String(detail || event.detail || event.title || 'Race moment').replace(/\s+/g, ' ').trim();
+    const progressValue = state.focusMarble?.progress ?? event.progress;
+    const pct = Number.isFinite(progressValue) ? Math.round(clamp(progressValue, 0, 1) * 100) : null;
+    const at = pct != null && pct > 0 ? ` at ${pct}%` : '';
+    const templates = {
+      overtake: [base, `${primary} clears ${secondary}`, `${primary} moves up${at}`, `${primary} makes the pass`],
+      leader: [base, `${primary} grabs P1`, `${primary} leads${at}`, `${primary} sets the pace`],
+      battle: [base, `${primary} versus ${secondary}`, `${secondary} stays close`, `Pressure on ${primary}`],
+      obstacle: [base, `${primary} bounces wide`, `${primary} recovers${at}`, `${primary} takes contact`],
+      finish: [base, `${primary} closes in`, `${primary} final push`, `${primary} near the line`],
+      winner: [base, `${primary} takes the flag`, `${primary} wins it`, `${primary} seals the race`],
+      complete: [base, `${primary} locks the result`, `Result confirmed`, `Podium picture set`],
+      general: [base, `${primary} race moment`, `Key moment${at}`, `One more look`],
+    };
+    return [...new Set((templates[event.kind] || templates.general).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean))].slice(0, 4);
+  }
+
+  selectReplayHighlightEvents(stage = this.getCupStage()) {
+    const priority = { overtake: 100, leader: 90, battle: 82, obstacle: 74, finish: 68, winner: 62, complete: 55, general: 30 };
+    const seen = new Set();
+    const maxEvents = Math.max(1, CUP_VIDEO_TIMING.replayHighlightMaxEvents || 3);
+    const events = (this.broadcastEvents || [])
+      .filter((event) => event?.title && !/record/i.test(`${event.title} ${event.detail || ''}`))
+      .map((event, index) => ({
+        ...event,
+        replayTitle: CUP_VIDEO_TIMING.replayHighlightTitles[event.kind] || CUP_VIDEO_TIMING.replayHighlightTitles.general,
+        distance: this.getReplayEventDistance(event, index),
+        progress: this.trackLength ? clamp(this.getReplayEventDistance(event, index) / this.trackLength, 0, 1) : 0,
+        score: (priority[event.kind] || priority.general) + Math.max(0, 12 - index) + (event.time || 0) * 0.01,
+      }))
+      .sort((a, b) => b.score - a.score)
+      .filter((event) => {
+        const key = `${event.kind}:${event.title}:${event.detail}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    const selected = [];
+    ['overtake', 'obstacle', 'leader', 'battle', 'finish', 'winner', 'complete'].forEach((kind) => {
+      if (selected.length >= maxEvents) return;
+      const event = events.find((candidate) => candidate.kind === kind && !selected.includes(candidate));
+      if (event) selected.push(event);
+    });
+    events.forEach((event) => {
+      if (selected.length < maxEvents && !selected.includes(event)) selected.push(event);
+    });
+    selected.sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
+    const ranking = this.getRanking({ force: true }).slice(0, maxEvents);
+    const fallbackEvents = ranking.map((data, index) => ({
+      title: index === 0 ? 'Winner' : `P${index + 1}`,
+      detail: index === 0 ? `${data.name} wins` : `${data.name} P${index + 1}`,
+      kind: index === 0 ? 'winner' : 'complete',
+      time: this.elapsed,
+      distance: clamp(data.distance || this.trackLength * (0.72 + index * 0.06), 0, this.trackLength),
+      progress: this.trackLength ? clamp((data.distance || this.trackLength * (0.72 + index * 0.06)) / this.trackLength, 0, 1) : 0,
+      marbleId: data.id,
+      replayTitle: index === 0 ? 'Replay: Winner' : 'Replay: Result',
+      fallback: true,
+    }));
+    const combined = [...selected];
+    fallbackEvents.forEach((event) => {
+      if (combined.length >= maxEvents) return;
+      const duplicate = combined.some((existing) => existing.marbleId && existing.marbleId === event.marbleId);
+      if (!duplicate) combined.push(event);
+    });
+    return (combined.length ? combined : fallbackEvents).slice(0, maxEvents);
+  }
+
+  showReplayHighlightOverlay({ stage = this.getCupStage(), duration = CUP_VIDEO_TIMING.replayHighlightSeconds } = {}) {
+    this.recordRaceHistorySample({ force: true });
+    const events = this.selectReplayHighlightEvents(stage);
+    this.captureReplayOriginalSnapshots();
+    this.setBgmMode('podium');
+    this.replayHighlight = { active: true, stage, events, startedAt: this.elapsed, startedAtMs: performance.now(), duration, playback: this.buildReplayHighlightPlayback(events, duration) };
+    if (this.ui?.replayHighlight) this.ui.replayHighlight.classList.add('hidden');
+    this.updateReplayHighlightPlayback(0);
+    return events;
+  }
+
+  restoreFinishPodiumPositions() {
+    const collector = this.finishRankingContainer;
+    if (!collector || !this.marbleData?.length) return 0;
+    const ranking = this.getPodiumRanking({ force: true })
+      .filter((data) => data?.finished && !data.defeated && !data.removedFromRace)
+      .sort((a, b) => (a.finishTime ?? Infinity) - (b.finishTime ?? Infinity));
+    ranking.forEach((data, index) => {
+      if (!data?.mesh || !data?.finished || data.defeated || data.removedFromRace) return;
+      const rank = index + 1;
+      data.rank = rank;
+      const target = this.getRankingSlotPosition(index, collector, data.radius, rank);
+      data.mesh.position.copy(target);
+      if (data.body) {
+        data.body.position.copy(target);
+        data.body.velocity.set(0, 0, 0);
+        data.body.angularVelocity.set(0, 0, 0);
+        data.body.type = CANNON.Body.KINEMATIC;
+        data.body.mass = 0;
+        data.body.updateMassProperties();
+        data.body.sleep();
+      }
+      data.mesh.visible = true;
+      data.mesh.scale.setScalar(1);
+      if (data.labelSprite) {
+        data.labelSprite.visible = data.mesh.visible;
+        data.labelSprite.position.copy(data.mesh.position).add(new THREE.Vector3(0, data.radius + 0.82, 0));
+        data.labelSprite.scale.setScalar(1);
+      }
+    });
+    return ranking.length;
+  }
+
+  hideReplayHighlightOverlay({ restorePodium = false } = {}) {
+    if (this.ui?.replayHighlight) this.ui.replayHighlight.classList.add('hidden');
+    this.restoreReplayOriginalSnapshots();
+    if (restorePodium) {
+      this.restoreFinishPodiumPositions();
+      this.cameraMode = 'default';
+      this.resetPodiumCeremony();
+      this.startPodiumCeremony();
+    }
+    if (this.activeCaption?.kind === 'replay') this.hideBroadcastCaption();
+    if (this.replayHighlight) {
+      this.replayHighlight.active = false;
+      this.replayHighlight.playback = null;
+    }
+  }
+
+  getBroadcastRankForMarble(marbleId = null) {
+    if (marbleId == null) return null;
+    const ranking = this.getRanking({ force: false });
+    const index = ranking.findIndex((data) => data.id === marbleId);
+    return index >= 0 ? index + 1 : null;
+  }
+
+  shouldOmitBroadcastAction({ kind = 'general', marbleId = null } = {}) {
+    if (kind === 'dnf') return false;
+    const rank = this.getBroadcastRankForMarble(marbleId);
+    return Number.isFinite(rank) && rank > 5;
+  }
+
+  pickShortActionLine(lines = [], fallback = '', seed = 0) {
+    const cleanLines = (Array.isArray(lines) ? lines : [lines])
+      .map((line) => String(line || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    if (!cleanLines.length) return String(fallback || '').replace(/\s+/g, ' ').trim();
+    const rawSeed = Number.isFinite(seed) ? seed : performance.now();
+    return cleanLines[Math.abs(Math.round(rawSeed * 997)) % cleanLines.length];
+  }
+
+  buildPodiumResultLine(ranking = this.getPodiumRanking({ force: true })) {
+    const podium = (ranking || []).filter((data) => data && !data.defeated).slice(0, 3);
+    const first = podium[0]?.name || 'TBD';
+    const second = podium[1]?.name || 'TBD';
+    const third = podium[2]?.name || 'TBD';
+    return `1st ${first}, 2nd ${second}, 3rd ${third}`;
+  }
+
+  pushBroadcastEvent(title, detail = '', { kind = 'general', force = false, marbleId = null, rivalId = null, distance = null, progress = null, lines = null, preparedAudio = null } = {}) {
+    if (this.shouldOmitBroadcastAction({ kind, marbleId })) return;
     if (!force && this.elapsed - (this.lastBroadcastAt || -Infinity) < 2.2) return;
     this.lastBroadcastAt = this.elapsed;
     if (this.activeCaption && !force) this.hideBroadcastCaption();
-    const event = { title, detail, kind, time: this.elapsed };
+    const leader = this.getRanking({ force: false })[0];
+    const event = {
+      title,
+      detail,
+      kind,
+      time: this.elapsed,
+      marbleId: marbleId ?? leader?.id ?? null,
+      rivalId,
+      distance: distance ?? leader?.distance ?? null,
+      progress: progress ?? leader?.progress ?? null,
+      lines,
+      preparedAudio,
+    };
     this.broadcastEvents.unshift(event);
     this.broadcastEvents = this.broadcastEvents.slice(0, 10);
     this.activeCaption = { ...event, expiresAt: this.elapsed + 2.8 };
     if (this.ui.captionTitle) this.ui.captionTitle.textContent = title;
     if (this.ui.captionDetail) this.ui.captionDetail.textContent = detail;
     this.ui.caption?.classList.remove('hidden');
+    this.queueCommentary(event, { force });
   }
 
   hideBroadcastCaption() {
     this.ui?.caption?.classList.add('hidden');
+  }
+
+
+  getAvailableTtsVoiceNames() {
+    const optionVoices = Array.from(this.ui?.ttsVoiceSelect?.options || []).map((option) => option.value).filter(Boolean);
+    const browserVoices = typeof window !== 'undefined' && window.speechSynthesis
+      ? window.speechSynthesis.getVoices().map((voice) => voice.name).filter(Boolean)
+      : [];
+    return [...new Set([...optionVoices, ...browserVoices])];
+  }
+
+  initTtsVoiceSelector() {
+    const select = this.ui?.ttsVoiceSelect;
+    if (!select) return;
+    const populate = () => {
+      const current = this.localTtsBridge?.voice || select.value || 'Alex';
+      const names = this.getAvailableTtsVoiceNames();
+      names.forEach((name) => {
+        if (!Array.from(select.options).some((option) => option.value === name)) {
+          select.add(new Option(name, name));
+        }
+      });
+      select.value = Array.from(select.options).some((option) => option.value === current) ? current : 'Alex';
+      this.setTtsVoice(select.value, { resetQueue: false, updateStatus: false });
+    };
+    populate();
+    if (window.speechSynthesis) {
+      window.speechSynthesis.addEventListener?.('voiceschanged', populate);
+      window.speechSynthesis.onvoiceschanged = populate;
+    }
+  }
+
+  setTtsVoice(voice = 'Alex', { resetQueue = true, updateStatus = true } = {}) {
+    const clean = String(voice || 'Alex').replace(/[^\w .'-]/g, '').trim().slice(0, 48) || 'Alex';
+    if (this.localTtsBridge) {
+      this.localTtsBridge.voice = clean;
+      this.localTtsBridge.available = null;
+      this.localTtsBridge.status = 'unknown';
+      this.localTtsBridge.cachedAudio?.clear?.();
+    }
+    const select = this.ui?.ttsVoiceSelect;
+    if (select) {
+      if (!Array.from(select.options).some((option) => option.value === clean)) select.add(new Option(clean, clean));
+      select.value = clean;
+    }
+    this.commentaryBrowserVoiceName = clean;
+    if (resetQueue) this.resetCommentaryVoiceQueue({ cancelCurrent: true, clearLastLine: false });
+    if (updateStatus && this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = `Voice: ${clean}`;
+    return clean;
+  }
+
+  setCommentaryEnabled(enabled = true) {
+    this.commentaryEnabled = Boolean(enabled);
+    if (this.ui?.commentaryToggle) this.ui.commentaryToggle.checked = this.commentaryEnabled;
+    if (!this.commentaryEnabled) this.hideCommentaryCaption();
+    return this.commentaryEnabled;
+  }
+
+  setCommentaryVoiceEnabled(enabled = true) {
+    this.commentaryVoiceEnabled = Boolean(enabled);
+    if (this.ui?.commentaryVoiceToggle) this.ui.commentaryVoiceToggle.checked = this.commentaryVoiceEnabled;
+    if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = this.commentaryVoiceEnabled ? 'Voice ready' : 'Voice off';
+    if (!this.commentaryVoiceEnabled) this.stopCommentaryVoice();
+    return this.commentaryVoiceEnabled;
+  }
+
+  resetCommentaryVoiceQueue({ cancelCurrent = false, clearLastLine = false } = {}) {
+    this.lastCommentaryAt = -Infinity;
+    this.lastObstacleCommentaryAt = -Infinity;
+    this.lastFinishCommentaryAt = -Infinity;
+    if (clearLastLine) this.lastCommentaryVoiceLine = null;
+    this.commentaryVoiceQueue = [];
+    this.commentaryVoiceSpeaking = false;
+    this.commentaryVoiceCurrentLine = null;
+    this.commentaryVoiceStartedAt = 0;
+    this.commentaryVoiceLastError = null;
+    if (cancelCurrent && window.speechSynthesis) window.speechSynthesis.cancel();
+    try { this.localTtsBridge?.audioElement?.pause?.(); } catch {}
+    if (this.localTtsBridge?.sourceNode) {
+      try { this.localTtsBridge.sourceNode.disconnect(); } catch {}
+      this.localTtsBridge.sourceNode = null;
+    }
+    if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = this.commentaryVoiceEnabled ? 'Voice ready' : 'Voice off';
+  }
+
+  stopCommentaryVoice() {
+    this.resetCommentaryVoiceQueue({ cancelCurrent: true, clearLastLine: false });
+  }
+
+  getTtsRecordingPolicy() {
+    const ttsSupported = Boolean(window.speechSynthesis && typeof SpeechSynthesisUtterance !== 'undefined');
+    const captureStreamAvailable = typeof Audio !== 'undefined' && typeof Audio.prototype?.captureStream === 'function';
+    return {
+      ttsSupported,
+      engine: this.localTtsBridge?.available ? 'mac-local-tts-bridge' : 'browser-speechSynthesis',
+      localBridgeEnabled: Boolean(this.localTtsBridge?.enabled),
+      localBridgeAvailable: this.localTtsBridge?.available,
+      localBridgeStatus: this.localTtsBridge?.status || 'unknown',
+      localBridgeVoice: this.localTtsBridge?.voice || null,
+      pageAudioMixed: Boolean(this.recordingAudioDestination),
+      captureStreamAvailable,
+      directPageMixRecordable: Boolean(this.localTtsBridge?.available),
+      tabAudioRequired: !this.localTtsBridge?.available,
+      macChromeInstruction: this.localTtsBridge?.available
+        ? 'Local macOS say TTS is played through an <audio> element and WebAudio, so it records into WebM without OBS or Share tab audio.'
+        : 'For browser speechSynthesis in WebM on macOS, choose This Tab / Current Tab and enable Share tab audio. Browser speechSynthesis does not enter the WebAudio page mix.',
+      recommendedFallback: 'Start the Vite dev server so /api/tts can run macOS say + ffmpeg; browser speechSynthesis remains a fallback only.',
+      lastBridgeError: this.localTtsBridge?.lastError || this.recordingVoiceBridgeLastError,
+    };
+  }
+
+  updateTtsRecordingNotice() {
+    if (!this.commentaryVoiceEnabled || !this.ui?.ttsTestStatus) return;
+    const policy = this.getTtsRecordingPolicy();
+    if (this.mediaRecorder?.state === 'recording' && policy.directPageMixRecordable) {
+      this.ui.ttsTestStatus.textContent = 'Voice records in page mix';
+    } else if (this.mediaRecorder?.state === 'recording' && this.recordingSettings?.audioGranted && !this.recordingSettings?.displayAudioGranted) {
+      this.ui.ttsTestStatus.textContent = 'Voice needs Share tab audio';
+    } else if (this.mediaRecorder?.state === 'recording' && policy.tabAudioRequired) {
+      this.ui.ttsTestStatus.textContent = 'Voice records only with Share tab audio';
+    }
+  }
+
+  testCommentaryTts() {
+    const line = 'TTS test: Marble Rush commentator voice is ready.';
+    this.setCommentaryEnabled(true);
+    this.setCommentaryVoiceEnabled(true);
+    if (this.ui?.commentaryLine) this.ui.commentaryLine.textContent = line;
+    const spoken = this.speakCommentary(line, {
+      forceNow: true,
+      onend: () => {
+        if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = 'Voice ready';
+      },
+      onerror: () => {
+        if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = 'TTS blocked';
+      },
+    });
+    if (!spoken && this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = 'TTS blocked';
+    this.updateTtsRecordingNotice();
+    return spoken;
+  }
+
+  getCountdownStarterLine(seed = performance.now()) {
+    const fallbackLines = ['The field is set', 'Ready for the rush', 'All eyes on the gate'];
+    return this.pickShortActionLine(this.countdownStarterLines || fallbackLines, fallbackLines[0], seed);
+  }
+
+  buildCommentaryLine(event = {}) {
+    const detail = event.detail || '';
+    if (event.countdownLine) return event.countdownLine;
+    if (event.lines?.length) return this.pickShortActionLine(event.lines, detail || event.title, event.time || performance.now());
+    const templates = {
+      start: this.countdownStarterLines || ['The field is set', 'Ready for the rush', 'All eyes on the gate'],
+      leader: [detail || event.title || 'New leader', detail || 'Lead changes', detail || 'New P1'],
+      overtake: [detail || 'Overtake', detail || 'Move made', detail || 'Position gained'],
+      battle: [detail || 'Side by side', detail || 'Close fight', detail || 'Tight gap'],
+      obstacle: [detail || event.title || 'Contact', detail || 'Big bounce', detail || 'Track hit'],
+      progress: [detail || 'Race progress', detail || 'Progress update', detail || 'Distance check'],
+      speed: [detail || 'Speed check', detail || 'Pace shift', detail || 'Momentum change'],
+      finish: [detail || 'Final sector', detail || 'Closing in', detail || 'Near the line'],
+      winner: [detail || 'Winner', detail || 'Race won', detail || 'Flag taken'],
+      complete: [detail || event.title || 'Round settled', detail || 'Result set', detail || 'Podium set'],
+      replay: [detail || 'Replay', detail || 'Again', detail || 'One more look'],
+      dnf: [detail || 'DNF', detail || 'Out of race', detail || 'No progress'],
+      general: [detail || event.title || 'Race update', detail || 'Update', detail || 'Track update'],
+    };
+    const list = templates[event.kind] || templates.general;
+    const index = Math.abs(Math.round((event.time || performance.now()) * 10)) % list.length;
+    return list[index].replace(/\s+/g, ' ').trim();
+  }
+
+  queueCommentary(event = {}, { force = false } = {}) {
+    if (!this.commentaryEnabled) return null;
+    if (!force && this.elapsed - (this.lastCommentaryAt || -Infinity) < 2.8) return null;
+    if (event.kind === 'obstacle' && !force && this.elapsed - (this.lastObstacleCommentaryAt || -Infinity) < 4.8) return null;
+    const line = this.buildCommentaryLine(event);
+    this.lastCommentaryAt = this.elapsed;
+    if (event.kind === 'obstacle') this.lastObstacleCommentaryAt = this.elapsed;
+    const commentary = { line, kind: event.kind || 'general', eventTitle: event.title || '', time: this.elapsed, expiresAt: this.elapsed + 4.2 };
+    this.activeCommentary = commentary;
+    this.commentaryHistory.unshift(commentary);
+    this.commentaryHistory = this.commentaryHistory.slice(0, 12);
+    if (this.ui.commentaryLine) this.ui.commentaryLine.textContent = line;
+    this.ui.commentaryCaption?.classList.add('hidden');
+    this.speakCommentary(line, { preparedAudio: event.preparedAudio || null });
+    return commentary;
+  }
+
+  speakCommentary(line, options = {}) {
+    if (!this.commentaryVoiceEnabled || !line) return false;
+    const normalized = String(line).replace(/\s+/g, ' ').trim();
+    if (!normalized) return false;
+    const item = { line: normalized, handlers: options || {}, queuedAt: performance.now(), preparedAudio: options.preparedAudio || null };
+    if (options.forceNow) {
+      this.commentaryVoiceQueue = [item];
+      this.commentaryVoiceSpeaking = false;
+      this.commentaryVoiceCurrentLine = null;
+      window.speechSynthesis?.cancel?.();
+      try { this.localTtsBridge?.audioElement?.pause?.(); } catch {}
+    } else {
+      const queueLimit = 3;
+      const alreadyQueued = this.commentaryVoiceQueue.some((queued) => queued.line === normalized)
+        || this.commentaryVoiceCurrentLine === normalized;
+      if (alreadyQueued) return true;
+      if (this.commentaryVoiceQueue.length >= queueLimit) this.commentaryVoiceQueue.shift();
+      this.commentaryVoiceQueue.push(item);
+    }
+    this.playNextCommentaryVoice();
+    return true;
+  }
+
+  async checkLocalTtsBridge() {
+    if (!this.localTtsBridge?.enabled) return false;
+    if (this.localTtsBridge.available !== null) return this.localTtsBridge.available;
+    try {
+      const response = await fetch('/api/tts/status', { cache: 'no-store' });
+      const status = await response.json();
+      this.localTtsBridge.available = Boolean(response.ok && status?.ok);
+      this.localTtsBridge.status = this.localTtsBridge.available ? 'ready' : 'unavailable';
+      this.localTtsBridge.engine = status?.engine || null;
+      if (status?.voice && !this.localTtsBridge.voice) this.localTtsBridge.voice = status.voice;
+      this.localTtsBridge.lastError = this.localTtsBridge.available ? null : status?.error || 'local-tts-unavailable';
+      return this.localTtsBridge.available;
+    } catch (error) {
+      this.localTtsBridge.available = false;
+      this.localTtsBridge.status = 'unavailable';
+      this.localTtsBridge.lastError = error?.message || 'local-tts-status-failed';
+      return false;
+    }
+  }
+
+  async prepareLocalTtsAudio(line = this.countdownVoiceLine) {
+    if (!this.localTtsBridge?.enabled) return null;
+    const bridgeReady = await this.checkLocalTtsBridge();
+    if (!bridgeReady) return null;
+    const normalized = String(line || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) return null;
+    const voice = this.localTtsBridge.voice || 'Alex';
+    const url = `/api/tts?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(normalized)}`;
+    const cached = this.localTtsBridge.cachedAudio?.get(url);
+    if (cached?.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return { audio: cached, url, line: normalized, cached: true };
+    const audio = cached || new Audio(url);
+    audio.preload = 'auto';
+    audio.crossOrigin = 'anonymous';
+    audio.volume = 1;
+    this.localTtsBridge.cachedAudio?.set(url, audio);
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        audio.removeEventListener('canplaythrough', onReady);
+        audio.removeEventListener('canplay', onReady);
+        audio.removeEventListener('loadeddata', onReady);
+        audio.removeEventListener('error', onError);
+      };
+      const onReady = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error('local-audio-preload-error'));
+      };
+      audio.addEventListener('canplaythrough', onReady, { once: true });
+      audio.addEventListener('canplay', onReady, { once: true });
+      audio.addEventListener('loadeddata', onReady, { once: true });
+      audio.addEventListener('error', onError, { once: true });
+      if (audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) onReady();
+      else audio.load();
+      setTimeout(onReady, 900);
+    });
+    return { audio, url, line: normalized, cached: false };
+  }
+
+  async playLocalTtsLine(next) {
+    if (!this.localTtsBridge?.enabled) return false;
+    if (!this.ensureAudioReady() || !this.audioContext || !this.audioMasterGain) return false;
+    try {
+      const prepared = next.preparedAudio || await this.prepareLocalTtsAudio(next.line);
+      if (!prepared?.audio) return false;
+      const { url } = prepared;
+      const audio = prepared.audio.cloneNode ? prepared.audio.cloneNode(true) : prepared.audio;
+      audio.preload = 'auto';
+      audio.crossOrigin = 'anonymous';
+      audio.volume = 1;
+      try { audio.pause(); audio.currentTime = 0; } catch {}
+      const sourceNode = this.audioContext.createMediaElementSource(audio);
+      sourceNode.connect(this.audioMasterGain);
+      if (this.localTtsBridge.sourceNode) {
+        try { this.localTtsBridge.sourceNode.disconnect(); } catch {}
+      }
+      this.localTtsBridge.audioElement = audio;
+      this.localTtsBridge.sourceNode = sourceNode;
+      this.localTtsBridge.lastUrl = url;
+      this.localTtsBridge.lastLine = next.line;
+      this.localTtsBridge.status = 'playing';
+      this.localTtsBridge.lastError = null;
+      this.recordingVoiceBridgeLastError = null;
+      this.commentaryVoiceSpeaking = true;
+      this.commentaryVoiceCurrentLine = next.line;
+      this.commentaryVoiceStartedAt = performance.now();
+      if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = next.handlers?.forceNow ? 'Playing local voice…' : `Local voice… ${this.commentaryVoiceQueue.length ? `(+${this.commentaryVoiceQueue.length})` : ''}`;
+      audio.onended = () => {
+        this.commentaryVoiceSpeaking = false;
+        this.lastCommentaryVoiceLine = next.line;
+        this.commentaryVoiceCurrentLine = null;
+        this.localTtsBridge.status = 'ready';
+        try { sourceNode.disconnect(); } catch {}
+        if (this.localTtsBridge.sourceNode === sourceNode) this.localTtsBridge.sourceNode = null;
+        if (typeof next.handlers?.onend === 'function') next.handlers.onend();
+        else if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = this.commentaryVoiceQueue.length ? `Queued ${this.commentaryVoiceQueue.length}` : 'Voice ready';
+        this.playNextCommentaryVoice();
+      };
+      audio.onerror = () => {
+        this.commentaryVoiceSpeaking = false;
+        this.commentaryVoiceCurrentLine = null;
+        this.localTtsBridge.status = 'error';
+        this.localTtsBridge.lastError = 'local-audio-playback-error';
+        this.recordingVoiceBridgeLastError = this.localTtsBridge.lastError;
+        try { sourceNode.disconnect(); } catch {}
+        if (this.localTtsBridge.sourceNode === sourceNode) this.localTtsBridge.sourceNode = null;
+        if (typeof next.handlers?.onerror === 'function') next.handlers.onerror({ error: this.localTtsBridge.lastError });
+        else if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = 'Local voice error';
+        this.playBrowserSpeechLine(next);
+      };
+      await audio.play();
+      return true;
+    } catch (error) {
+      this.localTtsBridge.available = false;
+      this.localTtsBridge.status = 'error';
+      this.localTtsBridge.lastError = error?.message || 'local-tts-play-failed';
+      this.recordingVoiceBridgeLastError = this.localTtsBridge.lastError;
+      this.commentaryVoiceSpeaking = false;
+      this.commentaryVoiceCurrentLine = null;
+      return false;
+    }
+  }
+
+  playBrowserSpeechLine(next) {
+    if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') return false;
+    try {
+      const utterance = new SpeechSynthesisUtterance(next.line);
+      const desiredVoice = this.commentaryBrowserVoiceName || this.localTtsBridge?.voice || '';
+      const browserVoice = window.speechSynthesis.getVoices().find((voice) => voice.name === desiredVoice);
+      if (browserVoice) utterance.voice = browserVoice;
+      utterance.rate = 1.08;
+      utterance.pitch = 0.92;
+      utterance.volume = 0.86;
+      this.commentaryVoiceSpeaking = true;
+      this.commentaryVoiceCurrentLine = next.line;
+      this.commentaryVoiceStartedAt = performance.now();
+      this.commentaryVoiceLastError = null;
+      if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = next.handlers?.forceNow ? 'Playing browser voice…' : `Browser voice… ${this.commentaryVoiceQueue.length ? `(+${this.commentaryVoiceQueue.length})` : ''}`;
+      utterance.onend = () => {
+        this.commentaryVoiceSpeaking = false;
+        this.lastCommentaryVoiceLine = next.line;
+        this.commentaryVoiceCurrentLine = null;
+        if (typeof next.handlers?.onend === 'function') next.handlers.onend();
+        else if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = this.commentaryVoiceQueue.length ? `Queued ${this.commentaryVoiceQueue.length}` : 'Voice ready';
+        this.playNextCommentaryVoice();
+      };
+      utterance.onerror = (error) => {
+        this.commentaryVoiceSpeaking = false;
+        this.commentaryVoiceCurrentLine = null;
+        this.commentaryVoiceLastError = error?.error || 'speech-error';
+        if (typeof next.handlers?.onerror === 'function') next.handlers.onerror(error);
+        else if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = 'TTS error';
+        this.playNextCommentaryVoice();
+      };
+      window.speechSynthesis.speak(utterance);
+      return true;
+    } catch (error) {
+      console.warn('Commentary voice unavailable', error);
+      this.commentaryVoiceSpeaking = false;
+      this.commentaryVoiceCurrentLine = null;
+      this.commentaryVoiceLastError = error?.message || 'speech-exception';
+      if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = 'TTS error';
+      return false;
+    }
+  }
+
+  async playNextCommentaryVoice() {
+    if (!this.commentaryVoiceEnabled || this.commentaryVoiceSpeaking || !this.commentaryVoiceQueue.length) return false;
+    const next = this.commentaryVoiceQueue.shift();
+    const localPlayed = await this.playLocalTtsLine(next);
+    if (localPlayed) return true;
+    const browserPlayed = this.playBrowserSpeechLine(next);
+    if (!browserPlayed) {
+      this.commentaryVoiceLastError = this.localTtsBridge?.lastError || 'tts-unavailable';
+      if (typeof next.handlers?.onerror === 'function') next.handlers.onerror({ error: this.commentaryVoiceLastError });
+      else if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = 'TTS unavailable';
+    }
+    return browserPlayed;
+  }
+
+  hideCommentaryCaption() {
+    this.activeCommentary = null;
+    this.ui?.commentaryCaption?.classList.add('hidden');
+  }
+
+  getMarbleSpeed(data = null) {
+    const velocity = data?.body?.velocity;
+    if (!velocity) return 0;
+    if (typeof velocity.length === 'function') return velocity.length();
+    return Math.hypot(velocity.x || 0, velocity.y || 0, velocity.z || 0);
+  }
+
+  formatRacePercent(progress = 0) {
+    return `${Math.round(clamp(progress || 0, 0, 1) * 100)}%`;
+  }
+
+  buildRaceMetricLines({ leader, second = null, progressPercent = 0, speed = 0, speedBand = 'steady', gap = null } = {}) {
+    const name = leader?.name || 'Leader';
+    const rival = second?.name || 'the pack';
+    const percent = `${Math.round(progressPercent)}%`;
+    const speedText = `${speed.toFixed(1)} m/s`;
+    const gapText = Number.isFinite(gap) ? `${gap.toFixed(1)}m gap` : 'tight gap';
+    const progressLines = [
+      `${name} is ${percent} through`,
+      `${percent} done, ${name} leads`,
+      `${name} reaches ${percent} race distance`,
+      `${percent} on the board, ${rival} chasing`,
+      `${name} controls it at ${percent}`,
+      `${percent} complete, ${gapText}`,
+    ];
+    const speedLines = speedBand === 'fast'
+      ? [
+          `${name} flying at ${speedText}`,
+          `${name} hits top pace, ${speedText}`,
+          `Fast sector for ${name}, ${speedText}`,
+          `${name} carrying serious speed`,
+          `${speedText} from ${name}, big momentum`,
+          `${name} opens the throttle`,
+        ]
+      : speedBand === 'slow'
+        ? [
+            `${name} slows to ${speedText}`,
+            `${name} needs momentum`,
+            `Pace drops, ${rival} can attack`,
+            `${name} crawling through traffic`,
+            `${speedText} now, pressure rising`,
+            `${name} looking for a cleaner line`,
+          ]
+        : [
+            `${name} steady at ${speedText}`,
+            `${name} keeps the rhythm`,
+            `${speedText} and stable up front`,
+            `${name} balances speed and control`,
+            `${rival} still within range`,
+            `${name} keeps it tidy`,
+          ];
+    return { progressLines, speedLines };
+  }
+
+  pushRaceMetricCommentary(ranking = this.getRanking({ force: false })) {
+    if (this.state !== 'running' || !ranking.length) return;
+    const leader = ranking[0];
+    if (!leader || leader.finished || leader.defeated) return;
+    const second = ranking.find((data) => !data.finished && !data.defeated && data.id !== leader.id) || null;
+    const progress = clamp(leader.progress || (this.trackLength ? (leader.distance || 0) / this.trackLength : 0), 0, 1);
+    const progressPercent = progress * 100;
+    const speed = this.getMarbleSpeed(leader);
+    const maxSpeed = Math.max(1, this.speedPreset?.maxSpeed || 17);
+    const gap = second ? Math.max(0, (leader.distance || 0) - (second.distance || 0)) : null;
+    const speedBand = speed >= maxSpeed * 0.78 ? 'fast' : speed <= maxSpeed * 0.36 ? 'slow' : 'steady';
+    const { progressLines, speedLines } = this.buildRaceMetricLines({ leader, second, progressPercent, speed, speedBand, gap });
+
+    const milestone = Math.floor(progressPercent / 20) * 20;
+    if (milestone >= 20 && milestone <= 80 && milestone > (this.lastProgressMilestone || 0) && this.elapsed - (this.lastProgressCommentaryAt || -Infinity) > 5.5) {
+      this.lastProgressMilestone = milestone;
+      this.lastProgressCommentaryAt = this.elapsed;
+      const detail = `${leader.name} ${milestone}% through`;
+      this.pushBroadcastEvent('Race Progress', detail, { kind: 'progress', marbleId: leader.id, distance: leader.distance, progress, lines: progressLines });
+      return;
+    }
+
+    const paceChanged = this.lastPaceBand && speedBand !== this.lastPaceBand;
+    if ((paceChanged || speedBand === 'fast') && this.elapsed > 4 && this.elapsed - (this.lastSpeedCommentaryAt || -Infinity) > 7.5) {
+      this.lastPaceBand = speedBand;
+      this.lastSpeedCommentaryAt = this.elapsed;
+      const detail = `${leader.name} ${speed.toFixed(1)} m/s`;
+      this.pushBroadcastEvent(speedBand === 'fast' ? 'Speed Burst' : speedBand === 'slow' ? 'Pace Drop' : 'Pace Check', detail, { kind: 'speed', marbleId: leader.id, distance: leader.distance, progress, lines: speedLines });
+    } else if (!this.lastPaceBand) {
+      this.lastPaceBand = speedBand;
+    }
   }
 
   updateRaceStorylines(ranking) {
@@ -3538,10 +5207,31 @@ class MarbleRace {
         const passed = topFive[frontOvertake.index + 1] || ranking.find((data) => data.id === previousIds[frontOvertake.index]);
         this.lastOvertakeAt = this.elapsed;
         const position = `P${frontOvertake.index + 1}`;
+        const racerName = frontOvertake.data.name;
+        const rivalName = passed?.name || '';
         const detail = passed && passed.id !== frontOvertake.data.id
-          ? `${frontOvertake.data.name} slips past ${passed.name} for ${position}`
-          : `${frontOvertake.data.name} jumps up into ${position}`;
-        this.pushBroadcastEvent('Overtake!', detail, { kind: 'overtake', force: true });
+          ? `${racerName} slips into ${position}`
+          : `${racerName} climbs to ${position}`;
+        const lines = passed && passed.id !== frontOvertake.data.id
+          ? [
+              `${racerName} slips into ${position}`,
+              `${racerName} edges past ${rivalName}`,
+              `${racerName} steals ${position}`,
+              `${racerName} gets the run on ${rivalName}`,
+              `${racerName} jumps ahead`,
+              `${racerName} wins that duel`,
+              `${racerName} noses in front`,
+              `${racerName} finds a lane`,
+            ]
+          : [
+              `${racerName} climbs to ${position}`,
+              `${racerName} gains ground`,
+              `${racerName} moves up`,
+              `${racerName} into ${position}`,
+              `${racerName} makes progress`,
+              `${racerName} advances`,
+            ];
+        this.pushBroadcastEvent('Overtake!', detail, { kind: 'overtake', force: true, marbleId: frontOvertake.data.id, rivalId: passed?.id ?? null, distance: frontOvertake.data.distance, progress: frontOvertake.data.progress, lines });
       }
     }
 
@@ -3554,7 +5244,7 @@ class MarbleRace {
       const rival = topFive[index + 1];
       this.lastNeckAndNeckAt = this.elapsed;
       const gap = Math.abs((livePair.distance || 0) - (rival.distance || 0));
-      this.pushBroadcastEvent('Neck and Neck', `${livePair.name} vs ${rival.name} — only ${gap.toFixed(1)}m apart`, { kind: 'battle' });
+      this.pushBroadcastEvent('Neck and Neck', `${livePair.name} vs ${rival.name}`, { kind: 'battle', marbleId: livePair.id, rivalId: rival.id, distance: livePair.distance, progress: livePair.progress, lines: [`${livePair.name} vs ${rival.name}`, `${livePair.name} under pressure`, `${rival.name} right there`] });
     }
 
     this.previousTopFiveIds = currentIds;
@@ -3573,22 +5263,24 @@ class MarbleRace {
       this.activeCaption = null;
       this.hideBroadcastCaption();
     }
+    if (this.activeCommentary && this.elapsed > this.activeCommentary.expiresAt) this.hideCommentaryCaption();
     const ranking = this.getRanking({ force: false });
+    this.pushRaceMetricCommentary(ranking);
     this.updateRaceStorylines(ranking);
     const leader = ranking[0];
     if (!leader) return;
     if (leader.id !== this.lastBroadcastLeaderId && this.elapsed > 2.0) {
       this.lastBroadcastLeaderId = leader.id;
-      this.pushBroadcastEvent('New Leader', `${leader.name} takes control at ${Math.round(leader.progress * 100)}%`, { kind: 'leader' });
+      this.pushBroadcastEvent('New Leader', `${leader.name} leads`, { kind: 'leader', marbleId: leader.id, distance: leader.distance, progress: leader.progress, lines: [`${leader.name} leads`, `${leader.name} grabs P1`, `${leader.name} out front`, `${leader.name} sets the pace`, `${leader.name} owns the lead`] });
     }
     const second = ranking.find((data) => !data.finished && data.id !== leader.id);
     if (second && !leader.finished && leader.distance - second.distance < 5 && this.elapsed - this.lastCloseBattleAt > 5) {
       this.lastCloseBattleAt = this.elapsed;
-      this.pushBroadcastEvent('Close Battle', `${leader.name} and ${second.name} are almost side-by-side`, { kind: 'battle' });
+      this.pushBroadcastEvent('Close Battle', `${leader.name} vs ${second.name}`, { kind: 'battle', marbleId: leader.id, rivalId: second.id, distance: leader.distance, progress: leader.progress, lines: [`${leader.name} vs ${second.name}`, `${second.name} closes in`, `${leader.name} holds on`] });
     }
     if (!leader.finished && leader.progress > 0.82 && this.elapsed - this.lastFinalStretchAt > 8) {
       this.lastFinalStretchAt = this.elapsed;
-      this.pushBroadcastEvent('Final Stretch', `${leader.name} enters the closing sector`, { kind: 'finish' });
+      this.pushBroadcastEvent('Final Stretch', `${leader.name} closing`, { kind: 'finish', marbleId: leader.id, distance: leader.distance, progress: leader.progress, lines: [`${leader.name} closing`, `${leader.name} near finish`, `${leader.name} final push`] });
     }
   }
 
@@ -3647,9 +5339,9 @@ class MarbleRace {
       endedAt: null,
     };
     const detail = crossed
-      ? `${winner?.name || 'Leader'} breaks the line — confetti cannons firing`
-      : `${winner?.name || 'Leader'} is ${this.finishSlowMotion.preFinishDistance.toFixed(1)}m from the line — slow-mo engaged`;
-    this.pushBroadcastEvent(crossed ? 'Slow Motion Finish' : 'Final Slow-Mo', detail, { kind: 'winner', force: true });
+      ? `${winner?.name || 'Leader'} finishes`
+      : `${winner?.name || 'Leader'} near finish`;
+    this.pushBroadcastEvent(crossed ? 'Slow Motion Finish' : 'Final Slow-Mo', detail, { kind: 'winner', force: true, marbleId: winner?.id ?? null, lines: crossed ? [`${winner?.name || 'Leader'} finishes`, `${winner?.name || 'Leader'} takes flag`, `${winner?.name || 'Leader'} wins`] : [`${winner?.name || 'Leader'} near finish`, `${winner?.name || 'Leader'} closing`, `${winner?.name || 'Leader'} final push`] });
   }
 
   updatePreFinishSlowMotionTrigger() {
@@ -3708,20 +5400,90 @@ class MarbleRace {
     });
   }
 
+  resetPodiumCeremony() {
+    this.podiumCeremony = { active: false, startedAt: 0, lastConfettiAt: -Infinity, medalists: [], spotlightPhase: 0 };
+  }
+
+  startPodiumCeremony() {
+    if (!PODIUM_CEREMONY.enabled || this.podiumCeremony?.active) return;
+    this.setBgmMode('podium');
+    const ranking = this.getPodiumRanking({ force: true });
+    const medalists = ranking.slice(0, 3).map((data, index) => ({ id: data.id, rank: index + 1, name: data.name, colorHex: data.colorHex, finishTime: data.finishTime }));
+    const cupStage = this.cupMode?.active ? this.getCupStage() : null;
+    const isCupChampionCeremony = cupStage === 'final';
+    const duration = isCupChampionCeremony ? PODIUM_CEREMONY.championDuration : PODIUM_CEREMONY.duration;
+    this.podiumCeremony = {
+      active: true,
+      startedAt: this.elapsed,
+      lastConfettiAt: -Infinity,
+      medalists,
+      spotlightPhase: 0,
+      duration,
+      isCupChampionCeremony,
+    };
+    const podiumLine = this.buildPodiumResultLine(ranking);
+    this.pushBroadcastEvent(
+      isCupChampionCeremony ? 'Cup Champion Ceremony' : 'Podium Ceremony',
+      podiumLine,
+      { kind: 'complete', force: true, lines: [podiumLine] },
+    );
+  }
+
+  updatePodiumCeremony(delta) {
+    if (!this.podiumCeremony?.active || !this.finishRankingContainer) return;
+    const age = this.elapsed - this.podiumCeremony.startedAt;
+    this.podiumCeremony.spotlightPhase += delta * 2.2;
+    this.podiumCeremony.medalists.forEach((medalist, index) => {
+      const data = this.marbleData.find((item) => item.id === medalist.id);
+      if (!data?.mesh) return;
+      const pulse = 1 + Math.sin(this.podiumCeremony.spotlightPhase + index * 1.7) * 0.08;
+      data.mesh.scale.setScalar(pulse);
+      if (data.labelSprite) data.labelSprite.scale.setScalar(1 + (pulse - 1) * 1.8);
+    });
+    const confettiEverySeconds = this.podiumCeremony.isCupChampionCeremony
+      ? PODIUM_CEREMONY.championConfettiEverySeconds
+      : PODIUM_CEREMONY.confettiEverySeconds;
+    if (this.elapsed - this.podiumCeremony.lastConfettiAt >= confettiEverySeconds) {
+      this.podiumCeremony.lastConfettiAt = this.elapsed;
+      const collector = this.finishRankingContainer;
+      const origin = collector.center.clone().add(this.localToWorldOffset(0, 2.1, -0.2, collector.yaw));
+      this.spawnFinishConfetti(origin, this.podiumCeremony.isCupChampionCeremony ? 48 : 34, { cannon: true });
+    }
+    const ceremonyDuration = this.podiumCeremony.duration ?? PODIUM_CEREMONY.duration;
+    if (Number.isFinite(ceremonyDuration) && age >= ceremonyDuration) {
+      this.podiumCeremony.active = false;
+      this.podiumCeremony.medalists.forEach((medalist) => {
+        const data = this.marbleData.find((item) => item.id === medalist.id);
+        data?.mesh?.scale.setScalar(1);
+        data?.labelSprite?.scale.setScalar(1);
+      });
+    }
+  }
+
   showFinalShowcase() {
     const ranking = this.getRanking({ force: true });
     const winner = ranking[0];
     const comeback = ranking.reduce((best, data) => ((data.stuckResets || 0) + (data.fallPenaltyCount || 0) > ((best?.stuckResets || 0) + (best?.fallPenaltyCount || 0)) ? data : best), ranking[0]);
+    const cupStage = this.cupMode?.active ? this.getCupStage() : null;
+    const showcaseTitle = this.cupMode?.active
+      ? (cupStage === 'final' ? '🏆 Cup Champion Ceremony' : '✅ Qualified')
+      : '🏁 Group Winner';
+    const showcaseHint = this.cupMode?.active
+      ? (cupStage === 'final' ? 'Cup Champion' : `${this.getCupStageTitle(cupStage)} qualifiers locked in`)
+      : 'Group winner locked in';
     this.showcaseStats = {
       winner: winner ? winner.name : null,
-      top3: ranking.slice(0, 3).map((data) => ({ name: data.name, code: data.code, finishTime: data.finishTime })),
+      ceremony: this.podiumCeremony,
+      cupMode: this.cupMode?.active ? this.cupMode : null,
+      top3: ranking.slice(0, 3).map((data) => ({ name: data.name, code: data.code, finishTime: data.finishTime, colorHex: data.colorHex })),
       comeback: comeback ? comeback.name : null,
       pinballHits: { ...this.pinballInteractions },
       totalPinballHits: Object.values(this.pinballInteractions).reduce((sum, value) => sum + value, 0),
     };
     if (this.ui.finalShowcase) {
-      const top3 = ranking.slice(0, 3).map((data, index) => `<li><strong>#${index + 1}</strong> <span class="showcase-racer-name" data-marble-id="${data.id}" title="Double-click to copy reusable marble identity">${data.name}</span> <span>${data.finishTime?.toFixed(2) ?? '--'}s</span></li>`).join('');
-      this.ui.finalShowcase.innerHTML = `<h2>Winner Show</h2><ol>${top3}</ol><p>Best comeback: <strong>${this.showcaseStats.comeback || '—'}</strong></p><p>Pinball hits: <strong>${this.showcaseStats.totalPinballHits}</strong></p>`;
+      const medals = ['🥇', '🥈', '🥉'];
+      const top3 = ranking.slice(0, 3).map((data, index) => `<li class="podium-medalist rank-${index + 1}"><strong>${medals[index]} #${index + 1}</strong> <span class="showcase-racer-name" data-marble-id="${data.id}" title="Double-click to copy reusable marble identity" style="--medal-color:${data.colorHex}">${data.name}</span> <span>${data.finishTime?.toFixed(2) ?? '--'}s</span></li>`).join('');
+      this.ui.finalShowcase.innerHTML = `<h2>${showcaseTitle}</h2><p class="copy-hint">${showcaseHint}</p><ol class="podium-list">${top3}</ol><p>Best comeback: <strong>${this.showcaseStats.comeback || '—'}</strong></p><p>Pinball hits: <strong>${this.showcaseStats.totalPinballHits}</strong></p>`;
       this.ui.finalShowcase.querySelectorAll('.showcase-racer-name').forEach((nameEl) => {
         nameEl.addEventListener('dblclick', (event) => {
           event.stopPropagation();
@@ -3739,20 +5501,60 @@ class MarbleRace {
     const gateWidth = this.startCatcher?.gateWidth || fallbackLayout.gateWidth;
     const laneGap = Math.max(1.05, gateWidth / Math.max(1, laneCount));
     const cols = laneCount;
+    const chuteDepth = this.startCatcher?.depth || START_GATE_DESIGN.chuteDepth;
+    const highCountStaging = START_GATE_DESIGN.highCountStaging || {};
+    const maxRowsInsideChute = highCountStaging.enabled === false
+      ? Infinity
+      : Math.max(1, Math.floor(highCountStaging.maxRowsBeforeHoldingPattern ?? 3));
+    const laneRowSpacing = Math.max(1.12, Math.min(laneGap * 0.92, highCountStaging.rowSpacing ?? 1.18));
+    const gateLocalZ = this.getStartPrepLocalZForBack(START_GATE_DESIGN.gateBackDistance);
+    const safeChuteBackLocalZ = -chuteDepth / 2 + 0.7;
+    const safeChuteFrontLocalZ = gateLocalZ - 0.55;
+    const laneFrontLocalZ = clamp(gateLocalZ - 0.75, safeChuteBackLocalZ, safeChuteFrontLocalZ);
+    const laneBackLocalZ = Math.max(safeChuteBackLocalZ, laneFrontLocalZ - (maxRowsInsideChute - 1) * laneRowSpacing);
+    const holdingPatternCols = Math.max(1, Math.ceil(Math.sqrt(Math.max(1, count - cols * maxRowsInsideChute))));
+    const holdingPatternLateralSpacing = Math.max(1.05, highCountStaging.lateralSpacing ?? 1.12);
+    const holdingPatternDepthGap = Math.max(1.05, highCountStaging.holdingPatternDepthGap ?? 1.18);
+    const holdingPatternStartLocalZ = Math.max(safeChuteBackLocalZ, laneBackLocalZ - holdingPatternDepthGap);
+    this.startStagingLayout = {
+      count,
+      laneCount,
+      gateWidth,
+      laneGap,
+      maxRowsInsideChute,
+      laneRowSpacing,
+      holdingPatternCols,
+      holdingPatternStartLocalZ,
+      holdingPatternLateralSpacing,
+      holdingPatternDepthGap,
+      mode: count > cols * maxRowsInsideChute ? 'lane-plus-holding-grid' : 'lane-grid',
+    };
     this.ui.select.innerHTML = '';
     for (let i = 0; i < count; i += 1) {
-      const identity = this.createMarbleIdentity(i, count);
+      const identity = this.cupMode?.active && this.cupMode.currentEntrants?.[i]
+        ? this.cupMode.currentEntrants[i]
+        : this.createMarbleIdentity(i, count);
       const { color, radius } = identity;
-      const mesh = this.makeMarbleMesh(radius, color, i, identity.patternKey);
+      const mesh = this.makeMarbleMesh(radius, color, i, identity.patternKey, identity.palette, identity.materialKey);
       const labelSprite = this.createMarbleNameLabel(identity.name);
       const col = i % cols;
       const row = Math.floor(i / cols);
-      const lane = (col - (cols - 1) / 2) * laneGap;
-      const chuteDepth = this.startCatcher?.depth || START_GATE_DESIGN.chuteDepth;
-      const rowSpacing = Math.max(1.35, laneGap * 0.92);
-      const firstRowLocalZ = Math.max(-chuteDepth / 2 + 1.4, -4.15);
-      const localZ = clamp(firstRowLocalZ + row * rowSpacing, -chuteDepth / 2 + 1.0, -START_GATE_DESIGN.gateBackDistance - 0.85);
-      const localY = this.getStartChuteFloorTopLocalY(localZ, radius, 0.16);
+      let lane = (col - (cols - 1) / 2) * laneGap;
+      let localZ;
+      let localY;
+      let stagingMode = 'lane-grid';
+      if (row < maxRowsInsideChute) {
+        localZ = clamp(laneFrontLocalZ - row * laneRowSpacing, safeChuteBackLocalZ, safeChuteFrontLocalZ);
+        localY = this.getStartChuteFloorTopLocalY(localZ, radius, 0.16);
+      } else {
+        const holdingIndex = i - cols * maxRowsInsideChute;
+        const holdingCol = holdingIndex % holdingPatternCols;
+        const holdingRow = Math.floor(holdingIndex / holdingPatternCols);
+        lane = (holdingCol - (holdingPatternCols - 1) / 2) * holdingPatternLateralSpacing;
+        localZ = clamp(holdingPatternStartLocalZ - holdingRow * holdingPatternDepthGap, safeChuteBackLocalZ, laneBackLocalZ - 0.4);
+        localY = this.getStartChuteFloorTopLocalY(localZ, radius, 0.16) + 0.08;
+        stagingMode = 'holding-grid-in-chute';
+      }
       const backDistance = this.getStartChuteBackDistanceForLocalZ(localZ);
       const start = this.startCatcher.center.clone()
         .add(this.localToWorldOffset(lane, localY, localZ, this.startCatcher.yaw));
@@ -3781,6 +5583,10 @@ class MarbleRace {
         color,
         colorHex: identity.colorHex,
         colorName: identity.colorName,
+        palette: identity.palette,
+        paletteHex: identity.paletteHex,
+        materialKey: identity.materialKey,
+        materialName: identity.materialName,
         patternKey: identity.patternKey,
         patternName: identity.patternName,
         sizeKey: identity.sizeKey,
@@ -3792,15 +5598,18 @@ class MarbleRace {
         startSlotColumn: col,
         startSlotRow: row,
         startSlotLaneCount: laneCount,
+        startSlotStagingMode: stagingMode,
+        startStagingLayout: this.startStagingLayout,
         startSlotFillMode: START_GATE_DESIGN.slotFillMode,
         startFrozenUntilGateOpen: Boolean(START_GATE_DESIGN.freezeMarblesUntilGateOpen),
         startOnChuteSurface: true,
         mesh,
         labelSprite,
         body,
-        finished: false, finishTime: null, progress: 0, distance: 0,
+        finished: false, finishTime: null, defeated: false, defeatTime: null, defeatReason: null, progress: 0, distance: 0,
         lastDistance: 0, lastMovementTime: 0, stuckResets: 0, lastResetTime: -Infinity,
         lastDriveMovementDistance: 0, lastDriveMovementTime: 0,
+        lastForwardProgressPercent: 0, lastForwardProgressPercentTime: 0, lastProgressCheckDistance: 0,
         lastSafeDistanceBeforeFall: 0, pendingFallRespawn: null,
         wasAirborne: false,
         airbornePeakClearance: 0,
@@ -3852,8 +5661,12 @@ class MarbleRace {
     const colorStyle = MARBLE_COLOR_STYLES[index % MARBLE_COLOR_STYLES.length];
     const patternStyle = MARBLE_PATTERN_STYLES[Math.floor(index / MARBLE_COLOR_STYLES.length) % MARBLE_PATTERN_STYLES.length];
     const sizeStyle = MARBLE_SIZE_STYLES[index % MARBLE_SIZE_STYLES.length];
+    const materialKey = colorStyle.material || 'glass';
+    const materialStyle = MARBLE_MATERIAL_STYLES[materialKey] || MARBLE_MATERIAL_STYLES.glass;
+    const paletteHex = colorStyle.palette?.length ? colorStyle.palette : [colorStyle.hex];
+    const palette = paletteHex.map((hex) => Number.parseInt(hex.replace('#', ''), 16));
     const codeNumber = String(index + 1).padStart(Math.max(2, String(count).length), '0');
-    const code = `MB-${codeNumber}-${colorStyle.hex.slice(1, 4).toUpperCase()}-${patternStyle.key.slice(0, 3).toUpperCase()}-${sizeStyle.key}`;
+    const code = `MB-${codeNumber}-${colorStyle.hex.slice(1, 4).toUpperCase()}-${patternStyle.key.slice(0, 3).toUpperCase()}-${materialKey.slice(0, 3).toUpperCase()}-${sizeStyle.key}`;
     const name = this.generateName(index);
     return {
       id: index,
@@ -3863,6 +5676,10 @@ class MarbleRace {
       color: colorStyle.color,
       colorHex: colorStyle.hex,
       colorName: colorStyle.label,
+      palette,
+      paletteHex,
+      materialKey,
+      materialName: materialStyle.label,
       patternKey: patternStyle.key,
       patternName: patternStyle.label,
       sizeKey: sizeStyle.key,
@@ -3871,52 +5688,122 @@ class MarbleRace {
     };
   }
 
-  makeMarbleMesh(radius, color, index, patternKey = 'rings') {
+  makeMarbleMesh(radius, color, index, patternKey = 'rings', palette = null, materialKey = 'glass') {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 128;
     const ctx = canvas.getContext('2d');
-    const base = `#${color.toString(16).padStart(6, '0')}`;
-    ctx.fillStyle = base;
+    const colorToHex = (value) => `#${Number(value).toString(16).padStart(6, '0')}`;
+    const paletteHex = (palette?.length ? palette : [color]).map(colorToHex);
+    const base = paletteHex[0];
+    const accent = paletteHex[1] || '#ffffff';
+    const accent2 = paletteHex[2] || '#050a18';
+    const accent3 = paletteHex[3] || '#ffd166';
+    const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    paletteHex.forEach((hex, i) => gradient.addColorStop(paletteHex.length === 1 ? 0 : i / (paletteHex.length - 1), hex));
+    ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.globalAlpha = 0.55;
-    const drawLoop = patternKey === 'speckle' ? 22 : 9;
+
+    if (patternKey === 'split') {
+      ctx.fillStyle = accent;
+      ctx.fillRect(canvas.width / 2, 0, canvas.width / 2, canvas.height);
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.fillRect(canvas.width / 2 - 5, 0, 10, canvas.height);
+    } else if (patternKey === 'triad') {
+      [base, accent, accent2].forEach((hex, i) => {
+        ctx.fillStyle = hex;
+        ctx.beginPath();
+        ctx.moveTo(i * canvas.width / 3, 0);
+        ctx.lineTo((i + 1.25) * canvas.width / 3, 0);
+        ctx.lineTo((i + 0.75) * canvas.width / 3, canvas.height);
+        ctx.lineTo(i * canvas.width / 3 - 20, canvas.height);
+        ctx.closePath();
+        ctx.fill();
+      });
+    } else if (patternKey === 'checker') {
+      const cell = 24;
+      for (let y = 0; y < canvas.height; y += cell) {
+        for (let x = 0; x < canvas.width; x += cell) {
+          ctx.fillStyle = ((x / cell + y / cell + index) % 2) ? accent : base;
+          ctx.fillRect(x, y, cell, cell);
+        }
+      }
+    }
+
+    ctx.globalAlpha = 0.72;
+    const drawLoop = patternKey === 'speckle' || patternKey === 'starfield' ? 38 : 12;
     for (let i = 0; i < drawLoop; i += 1) {
       ctx.beginPath();
-      ctx.strokeStyle = i % 2 ? '#ffffff' : '#050a18';
-      ctx.fillStyle = i % 2 ? 'rgba(255,255,255,0.72)' : 'rgba(5,10,24,0.58)';
-      ctx.lineWidth = 8 + (index % 3) * 2;
+      ctx.strokeStyle = i % 3 === 0 ? accent : (i % 3 === 1 ? '#ffffff' : accent2);
+      ctx.fillStyle = i % 3 === 0 ? accent : (i % 3 === 1 ? 'rgba(255,255,255,0.78)' : accent3);
+      ctx.lineWidth = 5 + (index % 3) * 2;
       if (patternKey === 'spiral') {
         const x = 128 + Math.cos(i * 0.95 + index) * (12 + i * 7);
         const y = 64 + Math.sin(i * 0.95 + index) * (8 + i * 3.5);
         ctx.arc(x, y, 12 + i * 4, 0.3 + i * 0.35, Math.PI * 1.45 + i * 0.35);
         ctx.stroke();
       } else if (patternKey === 'ripple') {
-        ctx.moveTo(0, 20 + i * 13);
+        ctx.moveTo(0, 10 + i * 11);
         for (let x = 0; x <= canvas.width; x += 12) {
-          ctx.lineTo(x, 20 + i * 13 + Math.sin(x * 0.05 + index + i) * 11);
+          ctx.lineTo(x, 10 + i * 11 + Math.sin(x * 0.05 + index + i) * 11);
         }
         ctx.stroke();
-      } else if (patternKey === 'speckle') {
-        ctx.arc((i * 47 + index * 19) % canvas.width, (i * 31 + index * 23) % canvas.height, 3 + (i % 5), 0, Math.PI * 2);
+      } else if (patternKey === 'speckle' || patternKey === 'starfield') {
+        const r = patternKey === 'starfield' ? 1.8 + (i % 4) : 3 + (i % 6);
+        ctx.arc((i * 47 + index * 19) % canvas.width, (i * 31 + index * 23) % canvas.height, r, 0, Math.PI * 2);
         ctx.fill();
       } else if (patternKey === 'comet') {
         ctx.moveTo((i * 33) % canvas.width, 16 + (i % 5) * 24);
         ctx.quadraticCurveTo(80 + i * 10, 18 + Math.sin(index + i) * 35, 250 - i * 8, 42 + (i % 4) * 18);
         ctx.stroke();
-      } else if (patternKey === 'storm') {
+      } else if (patternKey === 'storm' || patternKey === 'marble-vein') {
+        ctx.lineWidth = patternKey === 'marble-vein' ? 3 + (i % 3) : ctx.lineWidth;
         ctx.moveTo((i * 29) % canvas.width, 0);
-        ctx.lineTo(34 + i * 24 + Math.sin(index + i) * 18, canvas.height);
+        ctx.bezierCurveTo(20 + i * 15, 28 + Math.sin(index + i) * 22, 180 - i * 7, 88 + Math.cos(i) * 28, 34 + i * 24 + Math.sin(index + i) * 18, canvas.height);
         ctx.stroke();
+      } else if (patternKey === 'chevron') {
+        const x = (i * 28) % (canvas.width + 60) - 30;
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x + 36, canvas.height / 2);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      } else if (patternKey === 'circuit') {
+        const y = 12 + (i * 17) % canvas.height;
+        ctx.moveTo(0, y);
+        ctx.lineTo(52 + (i * 13) % 80, y);
+        ctx.lineTo(52 + (i * 13) % 80, (y + 25) % canvas.height);
+        ctx.lineTo(canvas.width, (y + 25) % canvas.height);
+        ctx.stroke();
+        ctx.arc(52 + (i * 13) % 80, (y + 25) % canvas.height, 4, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (patternKey === 'flame') {
+        const x = (i * 31 + index * 7) % canvas.width;
+        ctx.moveTo(x, canvas.height);
+        ctx.bezierCurveTo(x - 18, 88, x + 12, 64, x - 5, 20 + (i % 4) * 12);
+        ctx.bezierCurveTo(x + 28, 58, x + 24, 94, x + 8, canvas.height);
+        ctx.fill();
       } else {
-        ctx.arc(40 + i * 30, 58 + Math.sin(i + index) * 22, 20 + (i % 4) * 6, 0, Math.PI * 2);
+        ctx.arc(40 + i * 24, 58 + Math.sin(i + index) * 22, 16 + (i % 4) * 6, 0, Math.PI * 2);
         ctx.stroke();
       }
     }
     ctx.globalAlpha = 1;
+    const highlight = ctx.createRadialGradient(70, 24, 8, 82, 30, 80);
+    highlight.addColorStop(0, 'rgba(255,255,255,0.62)');
+    highlight.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = highlight;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
-    const material = new THREE.MeshStandardMaterial({ color, map: texture, roughness: 0.24, metalness: 0.04 });
+    const materialStyle = MARBLE_MATERIAL_STYLES[materialKey] || MARBLE_MATERIAL_STYLES.glass;
+    const material = new THREE.MeshStandardMaterial({
+      color,
+      map: texture,
+      roughness: materialStyle.roughness,
+      metalness: materialStyle.metalness,
+      emissive: color,
+      emissiveIntensity: materialStyle.emissiveIntensity,
+    });
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, PERFORMANCE_TUNING.marbleSegments, PERFORMANCE_TUNING.marbleRings), material);
     mesh.castShadow = PERFORMANCE_TUNING.shadows;
     mesh.receiveShadow = PERFORMANCE_TUNING.shadows;
@@ -3927,14 +5814,24 @@ class MarbleRace {
     const adjective = nameAdjectives[Math.floor(this.rng() * nameAdjectives.length)];
     const noun = nameNouns[Math.floor(this.rng() * nameNouns.length)];
     const title = nameTitles[Math.floor(this.rng() * nameTitles.length)];
-    return `${adjective} ${noun} ${title}${i >= 12 ? `-${i + 1}` : ''}`;
+    const variant = i >= 12 ? ` ${nameAdjectives[(i + Math.floor(this.rng() * nameAdjectives.length)) % nameAdjectives.length]}` : '';
+    return `${adjective} ${noun} ${title}${variant}`.replace(/[^A-Za-z ]/g, '').replace(/\s+/g, ' ').trim();
   }
 
   startRace() {
     if (this.state !== 'ready' && this.state !== 'idle') return;
     this.state = 'running';
+    this.setBgmMode('race');
+    if (this.autoCupRecording?.active && this.autoCupRecording.phase === 'countdown-open-gate') {
+      this.autoCupRecording.phase = 'racing';
+      this.autoCupRecording.currentStage = this.getCupStage();
+    }
     this.elapsed = 0;
-    this.pushBroadcastEvent('Gate Open', 'The pack launches into the first sector', { kind: 'start', force: true });
+    if (!this.activeCommentary || this.activeCommentary.kind !== 'start') {
+      const gateOpenLine = this.getCountdownStarterLine(performance.now());
+      this.pushBroadcastEvent('Gate Open', gateOpenLine, { kind: 'start', force: true, countdownLine: gateOpenLine });
+    }
+    this.recordRaceHistorySample({ force: true });
     this.ui.start.textContent = 'Re-stage';
     if (this.startGate && !this.startGate.opened) {
       this.startGate.opened = true;
@@ -3956,18 +5853,36 @@ class MarbleRace {
       data.body.linearDamping = NO_ROLLING_SLOWDOWN.marbleLinearDamping;
       data.body.angularDamping = NO_ROLLING_SLOWDOWN.marbleAngularDamping;
       data.startImpulseDisabled = true;
+      data.lastDriveMovementDistance = Math.max(data.distance || 0, data.lastDriveMovementDistance || 0);
+      data.lastDriveMovementTime = this.elapsed;
+      data.lastForwardProgressPercentTime = this.elapsed;
+      data.hasObservedForwardProgress = false;
     });
     this.updateUI();
   }
 
-  startCountdownAndGateOpen() {
+  async startCountdownAndGateOpen() {
     if (this.countdownActive || this.state !== 'ready') return;
+    this.setBgmMode('intro');
+    const countdownLine = this.getCountdownStarterLine(performance.now());
+    let preparedAudio = null;
+    this.countdownVoiceWarmupPromise = this.prepareLocalTtsAudio(countdownLine).catch((error) => {
+      this.localTtsBridge.lastError = error?.message || 'countdown-voice-warmup-failed';
+      return null;
+    });
+    if (this.commentaryVoiceEnabled && this.localTtsBridge?.enabled) {
+      preparedAudio = await this.countdownVoiceWarmupPromise;
+      this.countdownVoiceWarmupUrl = preparedAudio?.url || null;
+    }
+    if (this.state !== 'ready') return;
     this.countdownActive = true;
     this.countdownRemaining = this.countdownDuration;
-    this.countdownLastAnnouncedSecond = null;
+    this.countdownLastAnnouncedSecond = this.countdownDuration;
     this.ui.start.textContent = 'Counting down';
+    this.hideMatchCard();
     this.showCountdownOverlay('3');
-    this.pushBroadcastEvent('Race Countdown', '3 seconds until gate open', { kind: 'start', force: true });
+    this.pushBroadcastEvent('Race Countdown', countdownLine, { kind: 'start', force: true, countdownLine, preparedAudio });
+    this.countdownVoicePlayStartedAt = performance.now();
     this.playCountdownSound(3);
   }
 
@@ -3997,7 +5912,6 @@ class MarbleRace {
       this.countdownLastAnnouncedSecond = nextSecond;
       this.showCountdownOverlay(String(nextSecond));
       this.playCountdownSound(nextSecond);
-      this.pushBroadcastEvent('Race Countdown', `${nextSecond}...`, { kind: 'start', force: true });
     }
     if (this.countdownRemaining <= 0) {
       this.countdownActive = false;
@@ -4009,19 +5923,132 @@ class MarbleRace {
   }
 
   unlockAudio() {
-    if (this.audioUnlocked) return;
     const AudioCtor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtor) return;
+    if (!AudioCtor) return false;
     this.audioContext = this.audioContext || new AudioCtor();
     this.audioMasterGain = this.audioMasterGain || this.audioContext.createGain();
     this.audioMasterGain.gain.value = 0.18;
-    this.audioMasterGain.connect(this.audioContext.destination);
+    if (!this.audioMasterGainConnected) {
+      this.audioMasterGain.connect(this.audioContext.destination);
+      this.audioMasterGainConnected = true;
+    }
+    this.ensureRecordingAudioDestination();
+    this.bgmGain = this.bgmGain || this.audioContext.createGain();
+    this.bgmGain.gain.value = this.bgmEnabled ? 0.11 : 0;
+    if (!this.bgmGainConnected) {
+      this.bgmGain.connect(this.audioMasterGain);
+      this.bgmGainConnected = true;
+    }
     this.audioContext.resume?.();
     this.audioUnlocked = true;
+    if (this.bgmEnabled && !this.bgmTimer) this.startBgm(this.bgmMode || 'idle');
+    return true;
+  }
+
+  ensureRecordingAudioDestination() {
+    if (!this.audioContext?.createMediaStreamDestination || !this.audioMasterGain) return null;
+    this.recordingAudioDestination = this.recordingAudioDestination || this.audioContext.createMediaStreamDestination();
+    if (!this.recordingAudioDestinationConnected) {
+      this.audioMasterGain.connect(this.recordingAudioDestination);
+      this.recordingAudioDestinationConnected = true;
+    }
+    return this.recordingAudioDestination;
+  }
+
+  ensureAudioReady() {
+    if (!this.audioContext || !this.audioUnlocked) return this.unlockAudio();
+    if (this.audioContext.state === 'suspended') this.audioContext.resume?.();
+    return true;
+  }
+
+  stopBgm() {
+    if (this.bgmTimer) clearTimeout(this.bgmTimer);
+    this.bgmTimer = null;
+    this.bgmNodes.forEach((node) => {
+      try { node.stop?.(); } catch {}
+      try { node.disconnect?.(); } catch {}
+    });
+    this.bgmNodes = [];
+  }
+
+  scheduleBgmStep(delayMs = 0) {
+    if (this.bgmTimer) clearTimeout(this.bgmTimer);
+    this.bgmTimer = setTimeout(() => this.playBgmStep(), delayMs);
+  }
+
+  startBgm(mode = 'idle') {
+    this.bgmMode = mode;
+    if (!this.bgmEnabled || !this.audioContext || !this.bgmGain) return false;
+    if (this.audioContext.state === 'suspended') this.audioContext.resume?.();
+    if (!this.bgmTimer) this.scheduleBgmStep(0);
+    return true;
+  }
+
+  setBgmMode(mode = 'idle') {
+    if (this.bgmMode === mode) return;
+    this.bgmMode = mode;
+    if (this.bgmEnabled && this.audioUnlocked) {
+      this.stopBgm();
+      this.startBgm(mode);
+    }
+  }
+
+  setBgmEnabled(enabled = true) {
+    this.bgmEnabled = Boolean(enabled);
+    if (this.ui?.bgmToggle) this.ui.bgmToggle.checked = this.bgmEnabled;
+    if (!this.bgmEnabled) {
+      if (this.bgmGain) this.bgmGain.gain.setTargetAtTime(0, this.audioContext?.currentTime || 0, 0.04);
+      this.stopBgm();
+      return false;
+    }
+    if (!this.audioContext || !this.audioUnlocked) this.unlockAudio();
+    if (this.audioContext && this.bgmGain) {
+      this.bgmGain.gain.setTargetAtTime(0.11, this.audioContext.currentTime, 0.08);
+      this.startBgm(this.bgmMode || 'idle');
+      return true;
+    }
+    return false;
+  }
+
+  getBgmPattern(mode = this.bgmMode) {
+    const patterns = {
+      idle: { notes: [196, 246.94, 293.66, 246.94], step: 0.42, gain: 0.028, type: 'sine' },
+      intro: { notes: [261.63, 329.63, 392, 523.25], step: 0.24, gain: 0.04, type: 'triangle' },
+      race: { notes: [220, 277.18, 329.63, 392, 329.63, 277.18], step: 0.18, gain: 0.045, type: 'sawtooth' },
+      podium: { notes: [261.63, 329.63, 392, 523.25, 659.25, 523.25], step: 0.34, gain: 0.052, type: 'triangle' },
+    };
+    return patterns[mode] || patterns.idle;
+  }
+
+  playBgmStep() {
+    if (!this.bgmEnabled || !this.audioContext || !this.bgmGain) return;
+    const pattern = this.getBgmPattern();
+    this.bgmStepIndex = (this.bgmStepIndex || 0) % pattern.notes.length;
+    const frequency = pattern.notes[this.bgmStepIndex];
+    this.bgmStepIndex += 1;
+    const ctx = this.audioContext;
+    const osc = ctx.createOscillator();
+    const amp = ctx.createGain();
+    osc.type = pattern.type;
+    osc.frequency.value = frequency;
+    amp.gain.value = 0.0001;
+    osc.connect(amp);
+    amp.connect(this.bgmGain);
+    const now = ctx.currentTime;
+    amp.gain.exponentialRampToValueAtTime(pattern.gain, now + 0.025);
+    amp.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.08, pattern.step * 0.82));
+    osc.start(now);
+    osc.stop(now + Math.max(0.1, pattern.step * 0.92));
+    this.bgmNodes.push(osc, amp);
+    osc.addEventListener('ended', () => {
+      this.bgmNodes = this.bgmNodes.filter((node) => node !== osc && node !== amp);
+      try { amp.disconnect(); } catch {}
+    });
+    this.scheduleBgmStep(pattern.step * 1000);
   }
 
   playTone({ frequency = 440, duration = 0.12, type = 'sine', gain = 0.12, detune = 0 } = {}) {
-    if (!this.audioUnlocked || !this.audioContext) return;
+    if (!this.ensureAudioReady() || !this.audioContext) return;
     const ctx = this.audioContext;
     const osc = ctx.createOscillator();
     const amp = ctx.createGain();
@@ -4073,21 +6100,33 @@ class MarbleRace {
     this.updateUI();
   }
 
+  applyLeftUIState() {
+    this.ui.leftHud?.classList.toggle('collapsed', this.leftUICollapsed);
+    if (this.ui.uiToggle) {
+      this.ui.uiToggle.textContent = 'Like ＆ Subscribe';
+      this.ui.uiToggle.title = this.leftUICollapsed ? 'Show left UI' : 'Hide left UI';
+      this.ui.uiToggle.setAttribute('aria-expanded', String(!this.leftUICollapsed));
+    }
+  }
+
+  applyRightUIState() {
+    this.ui.rightHud?.classList.toggle('collapsed', this.rightUICollapsed);
+    if (this.ui.rightUiToggle) {
+      this.ui.rightUiToggle.textContent = '＠VibeGameCreator';
+      this.ui.rightUiToggle.title = this.rightUICollapsed ? 'Show right UI' : 'Hide right UI';
+      this.ui.rightUiToggle.setAttribute('aria-expanded', String(!this.rightUICollapsed));
+    }
+  }
+
   toggleLeftUI() {
     this.leftUICollapsed = !this.leftUICollapsed;
-    this.ui.leftHud.classList.toggle('collapsed', this.leftUICollapsed);
-    this.ui.uiToggle.textContent = this.leftUICollapsed ? 'Show UI' : 'Hide UI';
-    this.ui.uiToggle.title = this.leftUICollapsed ? 'Show left UI' : 'Hide left UI';
-    this.ui.uiToggle.setAttribute('aria-expanded', String(!this.leftUICollapsed));
+    this.applyLeftUIState();
     this.updateUI();
   }
 
   toggleRightUI() {
     this.rightUICollapsed = !this.rightUICollapsed;
-    this.ui.rightHud.classList.toggle('collapsed', this.rightUICollapsed);
-    this.ui.rightUiToggle.textContent = this.rightUICollapsed ? 'Show Right UI' : 'Hide Right UI';
-    this.ui.rightUiToggle.title = this.rightUICollapsed ? 'Show right UI' : 'Hide right UI';
-    this.ui.rightUiToggle.setAttribute('aria-expanded', String(!this.rightUICollapsed));
+    this.applyRightUIState();
     this.updateUI();
   }
 
@@ -4102,6 +6141,8 @@ class MarbleRace {
 
   getRecordingMimeType() {
     const candidates = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
       'video/webm;codecs=vp9',
       'video/webm;codecs=vp8',
       'video/webm',
@@ -4109,51 +6150,255 @@ class MarbleRace {
     return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
   }
 
-  async createRecordingStream({ preferScreenRecording = true } = {}) {
+  buildDisplayMediaOptions({ tabOnly = false, includeAudio = true } = {}) {
+    const videoConstraints = {
+      frameRate: { ideal: 60, max: 60 },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      displaySurface: 'browser',
+      logicalSurface: true,
+      cursor: 'never',
+    };
+    const audioConstraints = includeAudio
+      ? {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      }
+      : false;
+    const displayOptions = {
+      video: videoConstraints,
+      audio: audioConstraints,
+      preferCurrentTab: true,
+      selfBrowserSurface: 'include',
+      surfaceSwitching: tabOnly ? 'exclude' : 'include',
+      systemAudio: includeAudio ? 'include' : 'exclude',
+    };
+    if (includeAudio) {
+      displayOptions.suppressLocalAudioPlayback = false;
+    }
+    return displayOptions;
+  }
+
+  getPageAudioTracksForRecording({ includeAudio = true } = {}) {
+    if (!includeAudio) return [];
+    this.ensureAudioReady();
+    const destination = this.ensureRecordingAudioDestination();
+    return destination?.stream?.getAudioTracks?.() || [];
+  }
+
+  mergeRecordingAudioTracks(stream, { includeAudio = true } = {}) {
+    const originalAudioTracks = stream?.getAudioTracks?.() || [];
+    const pageAudioTracks = this.getPageAudioTracksForRecording({ includeAudio });
+    const mixedAudioTracks = [];
+    const mixedInputs = { display: 0, page: 0 };
+    const detachedAudioTracks = [];
+    this.recordingMixSourceNodes?.forEach((node) => {
+      try { node.disconnect?.(); } catch {}
+    });
+    this.recordingMixSourceNodes = [];
+
+    if (includeAudio && this.audioContext?.createMediaStreamDestination && (originalAudioTracks.length || pageAudioTracks.length)) {
+      const mixDestination = this.audioContext.createMediaStreamDestination();
+      originalAudioTracks.forEach((track) => {
+        try {
+          const inputStream = new MediaStream([track]);
+          const sourceNode = this.audioContext.createMediaStreamSource(inputStream);
+          sourceNode.connect(mixDestination);
+          this.recordingMixSourceNodes.push(sourceNode);
+          mixedInputs.display += 1;
+        } catch (error) {
+          console.warn('Unable to mix display/tab audio into recording stream.', error);
+        }
+      });
+      pageAudioTracks.forEach((track) => {
+        try {
+          const inputStream = new MediaStream([track]);
+          const sourceNode = this.audioContext.createMediaStreamSource(inputStream);
+          sourceNode.connect(mixDestination);
+          this.recordingMixSourceNodes.push(sourceNode);
+          mixedInputs.page += 1;
+        } catch (error) {
+          console.warn('Unable to mix page audio into recording stream.', error);
+        }
+      });
+      originalAudioTracks.forEach((track) => {
+        try {
+          stream.removeTrack?.(track);
+          detachedAudioTracks.push(track);
+        } catch (error) {
+          console.warn('Unable to remove original audio track before mixed recording.', error);
+        }
+      });
+      mixedAudioTracks.push(...(mixDestination.stream?.getAudioTracks?.() || []));
+      mixedAudioTracks.forEach((track) => {
+        try { stream.addTrack(track); } catch (error) { console.warn('Unable to add mixed audio track to recording stream.', error); }
+      });
+    } else {
+      pageAudioTracks.forEach((track) => {
+        try { stream.addTrack(track); } catch (error) { console.warn('Unable to add page audio to recording stream.', error); }
+      });
+    }
+
+    const mergedAudioTracks = stream?.getAudioTracks?.() || [];
+    return {
+      stream,
+      originalAudioTracks,
+      pageAudioTracks,
+      addedPageTracks: pageAudioTracks,
+      mixedAudioTracks,
+      detachedAudioTracks,
+      mergedAudioTracks,
+      pageAudioMixed: pageAudioTracks.length > 0,
+      displayAudioMixed: originalAudioTracks.length > 0,
+      mixedAudioTrackCount: mixedAudioTracks.length,
+      mixedAudioInputs: mixedInputs,
+      singleMixedAudioTrack: mixedAudioTracks.length === 1,
+    };
+  }
+
+  async createRecordingStream({ preferScreenRecording = true, tabOnly = false, includeAudio = true } = {}) {
     const displayMedia = navigator.mediaDevices?.getDisplayMedia;
     if (preferScreenRecording && displayMedia) {
       try {
-        const stream = await displayMedia.call(navigator.mediaDevices, {
-          video: {
-            frameRate: 60,
-            displaySurface: 'browser',
-            preferCurrentTab: true,
+        const displayOptions = this.buildDisplayMediaOptions({ tabOnly, includeAudio });
+        this.lastRecordingRequest = {
+          mode: tabOnly ? 'tab-only-preferred' : 'screen-preferred',
+          options: displayOptions,
+          audioRequested: includeAudio,
+          pageAudioRequested: includeAudio,
+          note: includeAudio
+            ? 'On macOS Chrome, choose This Tab / Current Tab and enable Share tab audio. The app also mixes WebAudio BGM/SFX into the recorder when available.'
+            : 'Browser permission UI must still choose the current tab; constraints prefer a browser tab and exclude audio.',
+        };
+        const stream = await displayMedia.call(navigator.mediaDevices, displayOptions);
+        const [track] = stream.getVideoTracks();
+        const audioMerge = this.mergeRecordingAudioTracks(stream, { includeAudio });
+        const audioTracks = audioMerge.mergedAudioTracks;
+        const settings = track?.getSettings?.() || {};
+        const grantedAudioSettings = audioMerge.originalAudioTracks.map((audioTrack) => audioTrack.getSettings?.() || {});
+        const pageAudioSettings = audioMerge.pageAudioTracks.map((audioTrack) => audioTrack.getSettings?.() || {});
+        const audioSettings = audioTracks.map((audioTrack) => audioTrack.getSettings?.() || {});
+        const isBrowserTab = settings.displaySurface === 'browser' || settings.displaySurface === undefined;
+        if (tabOnly && settings.displaySurface && settings.displaySurface !== 'browser') {
+          stream.getTracks().forEach((item) => item.stop());
+          this.lastRecordingRequest = {
+            ...this.lastRecordingRequest,
+            rejectedSurface: settings.displaySurface,
+            rejectedReason: 'auto-cup-tab-only-requires-browser-tab',
+          };
+          throw new DOMException('Auto Record Cup requires selecting this browser tab.', 'NotAllowedError');
+        }
+        this.lastRecordingRequest = {
+          ...this.lastRecordingRequest,
+          grantedSettings: settings,
+          grantedAudioSettings,
+          pageAudioSettings,
+          audioTrackCount: audioTracks.length,
+          displayAudioTrackCount: audioMerge.originalAudioTracks.length,
+          pageAudioTrackCount: audioMerge.pageAudioTracks.length,
+          mixedAudioTrackCount: audioMerge.mixedAudioTrackCount,
+          mixedAudioInputs: audioMerge.mixedAudioInputs,
+          singleMixedAudioTrack: audioMerge.singleMixedAudioTrack,
+          pageAudioMixed: audioMerge.pageAudioMixed,
+          displayAudioMixed: audioMerge.displayAudioMixed,
+          audioGranted: audioTracks.length > 0,
+          displayAudioGranted: audioMerge.originalAudioTracks.length > 0,
+          grantedSurface: settings.displaySurface || 'browser-assumed',
+          tabOnlySatisfied: isBrowserTab,
+        };
+        return {
+          stream,
+          source: 'browser-tab',
+          settings: {
+            ...settings,
+            audioRequested: includeAudio,
+            audioTrackCount: audioTracks.length,
+            displayAudioTrackCount: audioMerge.originalAudioTracks.length,
+            pageAudioTrackCount: audioMerge.pageAudioTracks.length,
+            mixedAudioTrackCount: audioMerge.mixedAudioTrackCount,
+            mixedAudioInputs: audioMerge.mixedAudioInputs,
+            singleMixedAudioTrack: audioMerge.singleMixedAudioTrack,
+            audioGranted: audioTracks.length > 0,
+            displayAudioGranted: audioMerge.originalAudioTracks.length > 0,
+            pageAudioMixed: audioMerge.pageAudioMixed,
+            displayAudioMixed: audioMerge.displayAudioMixed,
+            audioSettings,
+            grantedAudioSettings,
+            pageAudioSettings,
           },
-          audio: false,
-        });
-        return { stream, source: 'screen' };
+        };
       } catch (error) {
+        if (tabOnly) throw error;
         if (error?.name !== 'NotAllowedError') console.warn('Screen recording unavailable, falling back to canvas capture.', error);
       }
     }
 
     if (!this.renderer?.domElement?.captureStream) return null;
-    return { stream: this.renderer.domElement.captureStream(60), source: 'canvas' };
+    const stream = this.renderer.domElement.captureStream(60);
+    const audioMerge = this.mergeRecordingAudioTracks(stream, { includeAudio });
+    this.lastRecordingRequest = {
+      mode: 'canvas-fallback',
+      options: { video: 'renderer.domElement.captureStream(60)', audio: includeAudio ? 'page-audio-mix' : false },
+      audioRequested: includeAudio,
+      pageAudioRequested: includeAudio,
+      audioTrackCount: audioMerge.mergedAudioTracks.length,
+      displayAudioTrackCount: 0,
+      pageAudioTrackCount: audioMerge.pageAudioTracks.length,
+      mixedAudioTrackCount: audioMerge.mixedAudioTrackCount,
+      mixedAudioInputs: audioMerge.mixedAudioInputs,
+      singleMixedAudioTrack: audioMerge.singleMixedAudioTrack,
+      pageAudioMixed: audioMerge.pageAudioMixed,
+      displayAudioMixed: audioMerge.displayAudioMixed,
+      audioGranted: audioMerge.mergedAudioTracks.length > 0,
+      displayAudioGranted: false,
+      grantedSurface: 'canvas',
+      tabOnlySatisfied: false,
+    };
+    return {
+      stream,
+      source: 'canvas',
+      settings: {
+        displaySurface: 'canvas',
+        audioRequested: includeAudio,
+        audioTrackCount: audioMerge.mergedAudioTracks.length,
+        displayAudioTrackCount: 0,
+        pageAudioTrackCount: audioMerge.pageAudioTracks.length,
+        mixedAudioTrackCount: audioMerge.mixedAudioTrackCount,
+        mixedAudioInputs: audioMerge.mixedAudioInputs,
+        singleMixedAudioTrack: audioMerge.singleMixedAudioTrack,
+        audioGranted: audioMerge.mergedAudioTracks.length > 0,
+        displayAudioGranted: false,
+        pageAudioMixed: audioMerge.pageAudioMixed,
+        displayAudioMixed: audioMerge.displayAudioMixed,
+      },
+    };
   }
 
-  async toggleRecording() {
+  async toggleRecording({ preferScreenRecording = true, tabOnly = false, includeAudio = false } = {}) {
     if (this.mediaRecorder?.state === 'recording') {
       this.mediaRecorder.stop();
-      return;
+      return false;
     }
     if (typeof MediaRecorder === 'undefined') {
       this.ui.recordStatus.textContent = 'Recording is not supported in this browser';
-      return;
+      return false;
     }
 
-    const recording = await this.createRecordingStream({ preferScreenRecording: true });
+    const recording = await this.createRecordingStream({ preferScreenRecording, tabOnly, includeAudio });
     if (!recording) {
       this.ui.recordStatus.textContent = 'Recording is not supported in this browser';
-      return;
+      return false;
     }
-    const { stream, source } = recording;
+    const { stream, source, settings } = recording;
     const mimeType = this.getRecordingMimeType();
     this.recordedChunks = [];
     this.mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
     this.recordingStartedAt = performance.now();
     this.recordingSource = source;
+    this.recordingSettings = settings || null;
 
-    stream.getVideoTracks().forEach((track) => {
+    [...stream.getVideoTracks(), ...stream.getAudioTracks()].forEach((track) => {
       track.addEventListener('ended', () => {
         if (this.mediaRecorder?.state === 'recording') this.mediaRecorder.stop();
       });
@@ -4165,17 +6410,44 @@ class MarbleRace {
     this.mediaRecorder.start(1000);
     this.ui.record.classList.add('recording');
     this.ui.record.textContent = 'Stop Recording';
-    this.ui.recordStatus.textContent = source === 'screen' ? 'Recording: full page UI' : 'Recording: 3D only';
+    const autoCupSuffix = this.autoCupRecording?.active ? ' · auto cup armed' : '';
+    const sourceLabel = source === 'browser-tab'
+      ? 'browser tab only'
+      : source === 'screen'
+        ? 'full page UI'
+        : '3D only';
+    const audioSuffix = settings?.audioGranted
+      ? ` + audio${settings?.displayAudioGranted ? '' : ' (page mix)'}`
+      : includeAudio ? ' · no audio granted' : '';
+    const ttsPolicy = this.getTtsRecordingPolicy();
+    const ttsSuffix = this.commentaryVoiceEnabled && ttsPolicy.tabAudioRequired && !settings?.displayAudioGranted
+      ? ' · TTS needs Share tab audio'
+      : this.commentaryVoiceEnabled && ttsPolicy.directPageMixRecordable
+        ? ' · TTS page-mixed'
+        : '';
+    const mixSuffix = settings?.singleMixedAudioTrack ? ' · mixed audio track' : '';
+    this.ui.recordStatus.textContent = `Recording: ${sourceLabel}${audioSuffix}${mixSuffix}${ttsSuffix}${autoCupSuffix}`;
+    this.updateTtsRecordingNotice();
     this.updateUI();
+    return true;
   }
 
   saveRecording(mimeType, stream) {
     stream?.getTracks().forEach((track) => track.stop());
+    this.recordingMixSourceNodes?.forEach((node) => {
+      try { node.disconnect?.(); } catch {}
+    });
+    this.recordingMixSourceNodes = [];
     this.ui.record.classList.remove('recording');
     this.ui.record.textContent = 'Start Recording';
     const duration = (performance.now() - this.recordingStartedAt) / 1000;
     if (!this.recordedChunks.length) {
       this.ui.recordStatus.textContent = 'No video was recorded';
+      this.mediaRecorder = null;
+      this.recordingSource = null;
+      this.recordingSettings = null;
+      if (this.autoCupRecording?.active) this.stopAutoCupRecording({ stopRecorder: false, reason: 'no-video-recorded' });
+      this.updateUI();
       return;
     }
     const blob = new Blob(this.recordedChunks, { type: mimeType || 'video/webm' });
@@ -4191,7 +6463,149 @@ class MarbleRace {
     this.ui.recordStatus.textContent = `Downloaded ${duration.toFixed(1)}s video`;
     this.mediaRecorder = null;
     this.recordingSource = null;
+    this.recordingSettings = null;
+    if (this.autoCupRecording?.active) {
+      this.autoCupRecording.active = false;
+      this.autoCupRecording.phase = 'idle';
+      this.autoCupRecording.nextActionAt = null;
+      if (this.ui.autoCupRecord) {
+        this.ui.autoCupRecord.classList.remove('recording');
+        this.ui.autoCupRecord.textContent = 'Auto Record Cup';
+      }
+    }
     this.updateUI();
+  }
+
+  clearAutoCupRecordingTimer() {
+    if (this.autoCupRecording?.pendingTimer) clearTimeout(this.autoCupRecording.pendingTimer);
+    if (this.autoCupRecording) {
+      this.autoCupRecording.pendingTimer = null;
+      this.autoCupRecording.nextActionAt = null;
+    }
+  }
+
+  scheduleAutoCupRecordingAction(delaySeconds, phase, action) {
+    if (!this.autoCupRecording?.active) return;
+    this.clearAutoCupRecordingTimer();
+    this.autoCupRecording.phase = phase;
+    this.autoCupRecording.nextActionAt = performance.now() + delaySeconds * 1000;
+    this.autoCupRecording.pendingTimer = setTimeout(() => {
+      if (!this.autoCupRecording?.active) return;
+      this.autoCupRecording.pendingTimer = null;
+      this.autoCupRecording.nextActionAt = null;
+      action();
+      this.updateUI();
+    }, delaySeconds * 1000);
+    this.updateUI();
+  }
+
+  async toggleAutoCupRecording() {
+    if (this.autoCupRecording?.active) {
+      this.stopAutoCupRecording({ stopRecorder: true, reason: 'manual-stop' });
+      return;
+    }
+    await this.startAutoCupRecording({ tabOnly: true, includeAudio: true });
+  }
+
+  async startAutoCupRecording({ preferScreenRecording = true, tabOnly = true, includeAudio = true } = {}) {
+    this.clearAutoCupRecordingTimer();
+    const cupSize = Number(this.ui.cupSize?.value) || this.cupMode?.size || 16;
+    this.autoCupRecording = {
+      ...this.autoCupRecording,
+      active: true,
+      phase: 'preparing-cup-track',
+      startedAt: performance.now(),
+      currentStage: null,
+      racesCompleted: 0,
+      stopAfterFinalSeconds: CUP_VIDEO_TIMING.finalPodiumSeconds + CUP_VIDEO_TIMING.endCardSeconds + CUP_VIDEO_TIMING.recordingStopGraceSeconds,
+      nextRaceDelaySeconds: CUP_VIDEO_TIMING.nextRaceDelaySeconds,
+      postRaceHoldSeconds: CUP_VIDEO_TIMING.postRaceHoldSeconds,
+      postReplayPodiumHoldSeconds: CUP_VIDEO_TIMING.postReplayPodiumHoldSeconds,
+      nextGateAfterRaceSeconds: CUP_VIDEO_TIMING.nextGateAfterRaceSeconds,
+      gateDelaySeconds: CUP_VIDEO_TIMING.introSeconds,
+      nextActionAt: null,
+      pendingTimer: null,
+      timingPlan: this.getCupVideoTimingEstimate(),
+      recordingMode: tabOnly ? 'browser-tab-only' : 'screen-preferred',
+      audioRequested: includeAudio,
+      lastError: null,
+    };
+    if (this.ui.autoCupRecord) {
+      this.ui.autoCupRecord.classList.add('recording');
+      this.ui.autoCupRecord.textContent = 'Stop Auto Cup';
+    }
+    if (this.ui.raceMode) this.ui.raceMode.value = 'cup';
+    this.startCupMode(cupSize, { preserveCurrentSettings: true });
+    if (!this.leftUICollapsed) this.toggleLeftUI();
+    const recordingStarted = this.mediaRecorder?.state === 'recording'
+      ? true
+      : await this.toggleRecording({ preferScreenRecording, tabOnly, includeAudio });
+    if (!recordingStarted) {
+      this.stopAutoCupRecording({ stopRecorder: false, reason: 'recording-unavailable' });
+      this.autoCupRecording.lastError = tabOnly ? 'browser-tab-recording-required' : 'recording-unavailable';
+      this.ui.recordStatus.textContent = tabOnly ? 'Auto Record Cup needs Current Tab / This Tab selected' : 'Recording unavailable';
+      return false;
+    }
+    // Keep recorder automation out of the LIVE EVENT caption; this is background control state, not viewer-facing race commentary.
+    this.scheduleAutoCupRecordingAction(this.autoCupRecording.gateDelaySeconds, 'waiting-open-gate', () => this.startAutoCupRace());
+    return true;
+  }
+
+  startAutoCupRace() {
+    if (!this.autoCupRecording?.active) return;
+    if (this.state !== 'ready') return;
+    this.autoCupRecording.phase = 'countdown-open-gate';
+    this.autoCupRecording.currentStage = this.getCupStage();
+    this.hideMatchCard();
+    this.startCountdownAndGateOpen();
+  }
+
+  handleAutoCupRaceComplete() {
+    if (!this.autoCupRecording?.active) return;
+    this.autoCupRecording.racesCompleted += 1;
+    this.autoCupRecording.currentStage = this.getCupStage();
+    if (this.cupMode?.status === 'complete') {
+      this.scheduleAutoCupRecordingAction(this.autoCupRecording.stopAfterFinalSeconds, 'waiting-final-ceremony-plus-10s-stop', () => {
+        this.stopAutoCupRecording({ stopRecorder: true, reason: 'final-complete' });
+      });
+      return;
+    }
+    const postRaceHoldSeconds = Number(this.autoCupRecording.postRaceHoldSeconds ?? CUP_VIDEO_TIMING.postRaceHoldSeconds) || 0;
+    const replayHoldSeconds = Number(this.autoCupRecording.playwrightReplayHoldSeconds ?? getReplayHighlightHoldSeconds(CUP_VIDEO_TIMING)) || 0;
+    const postReplayPodiumHoldSeconds = Number(this.autoCupRecording.postReplayPodiumHoldSeconds ?? CUP_VIDEO_TIMING.postReplayPodiumHoldSeconds) || 0;
+    const nextRaceDelaySeconds = Number(this.autoCupRecording.nextRaceDelaySeconds ?? CUP_VIDEO_TIMING.nextRaceDelaySeconds) || 0;
+    this.scheduleAutoCupRecordingAction(postRaceHoldSeconds, 'holding-stage-result', () => {
+      if (!this.autoCupRecording?.active || this.cupMode?.status !== 'awaiting-next') return;
+      this.showReplayHighlightOverlay({ stage: this.getCupStage(), duration: replayHoldSeconds });
+      this.scheduleAutoCupRecordingAction(replayHoldSeconds, 'showing-replay-highlights', () => {
+        if (!this.autoCupRecording?.active || this.cupMode?.status !== 'awaiting-next') return;
+        this.hideReplayHighlightOverlay({ restorePodium: true });
+        this.defaultCameraPhaseUntil = Math.max(this.defaultCameraPhaseUntil || 0, this.elapsed + postReplayPodiumHoldSeconds + nextRaceDelaySeconds);
+        this.scheduleAutoCupRecordingAction(postReplayPodiumHoldSeconds, 'holding-restored-podium', () => {
+          if (!this.autoCupRecording?.active || this.cupMode?.status !== 'awaiting-next') return;
+          this.advanceCupMatch();
+          this.scheduleAutoCupRecordingAction(nextRaceDelaySeconds, 'waiting-next-stage-countdown', () => {
+            if (!this.autoCupRecording?.active || this.state !== 'ready') return;
+            this.startAutoCupRace();
+          });
+        });
+      });
+    });
+  }
+
+  stopAutoCupRecording({ stopRecorder = true, reason = 'stopped' } = {}) {
+    this.clearAutoCupRecordingTimer();
+    if (this.autoCupRecording) {
+      this.autoCupRecording.active = false;
+      this.autoCupRecording.phase = reason;
+      this.autoCupRecording.nextActionAt = null;
+    }
+    if (this.ui.autoCupRecord) {
+      this.ui.autoCupRecord.classList.remove('recording');
+      this.ui.autoCupRecord.textContent = 'Auto Record Cup';
+    }
+    if (stopRecorder && this.mediaRecorder?.state === 'recording') this.mediaRecorder.stop();
+    else this.updateUI();
   }
 
   animate() {
@@ -4204,12 +6618,14 @@ class MarbleRace {
     this.updateFinishSpinner(rawDelta);
     this.updatePinballObstacles(delta);
     this.updateSpectacleEffects(rawDelta);
+    this.updatePodiumCeremony(rawDelta);
     this.updateMarbleTrails(delta);
     if (this.state === 'running') {
       this.elapsed += delta;
       this.applyMarbleDrive();
       this.world.step(1 / 60, delta, PERFORMANCE_TUNING.runningMaxSubSteps);
       this.syncMarbles();
+      this.recordRaceHistorySample();
       this.updatePreFinishSlowMotionTrigger();
       this.checkFinishers();
       this.updateBroadcastDirector();
@@ -4219,6 +6635,7 @@ class MarbleRace {
       this.syncMarbles();
     }
     this.updateCamera(delta);
+    this.updateMarbleNameLabels();
     this.controls.enabled = true;
     this.controls.update();
     this.fpsFrames += 1;
@@ -4234,13 +6651,29 @@ class MarbleRace {
     if (this.mediaRecorder?.state === 'recording' && now - this.lastRecordingStatusUpdate > 250) {
       this.lastRecordingStatusUpdate = now;
       const seconds = (now - this.recordingStartedAt) / 1000;
-      const scope = this.recordingSource === 'screen' ? 'full page UI' : '3D only';
-      this.ui.recordStatus.textContent = `Recording ${seconds.toFixed(1)}s | ${scope}`;
+      const scope = this.recordingSource === 'browser-tab'
+        ? 'browser tab only'
+        : this.recordingSource === 'screen'
+          ? 'full page UI'
+          : '3D only';
+      const audioSuffix = this.recordingSettings?.audioGranted
+        ? ` + audio${this.recordingSettings?.displayAudioGranted ? '' : ' (page mix)'}`
+        : this.recordingSettings?.audioRequested ? ' · no audio granted' : '';
+      const ttsPolicy = this.getTtsRecordingPolicy();
+      const ttsSuffix = this.commentaryVoiceEnabled && ttsPolicy.tabAudioRequired && !this.recordingSettings?.displayAudioGranted
+        ? ' · TTS needs Share tab audio'
+        : this.commentaryVoiceEnabled && ttsPolicy.directPageMixRecordable
+          ? ' · TTS page-mixed'
+          : '';
+      const mixSuffix = this.recordingSettings?.singleMixedAudioTrack ? ' · mixed audio track' : '';
+      this.ui.recordStatus.textContent = `Recording ${seconds.toFixed(1)}s | ${scope}${audioSuffix}${mixSuffix}${ttsSuffix}`;
+      this.updateTtsRecordingNotice();
     }
     if (now - this.lastUIUpdate > (this.performanceProfile?.uiUpdateMs || 200)) {
       this.lastUIUpdate = now;
       this.updateUI();
     }
+    this.updateReplayHighlightPlayback(rawDelta);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -4961,13 +7394,19 @@ class MarbleRace {
       }
 
       const movedForward = driveDistance - (data.lastDriveMovementDistance ?? driveDistance);
-      if (movedForward > 0.18) {
+      const minForwardProgress = this.stallElimination?.minForwardProgressMeters ?? 0.18;
+      if (movedForward > minForwardProgress) {
         data.lastDriveMovementTime = this.elapsed;
         data.lastDriveMovementDistance = Math.max(data.lastDriveMovementDistance || 0, driveDistance);
-      } else if (this.elapsed - (data.lastDriveMovementTime ?? 0) > this.stuckResetDelay
-        && this.elapsed - (data.lastResetTime ?? -Infinity) > this.stuckResetDelay) {
-        // 唔再用水平速度判定「有郁」：波子可能原地打轉/貼住護欄高速磨擦，但實際無前進。
-        this.resetStuckMarble(data, closest.distance, 'no-forward-progress');
+        data.lastForwardProgressPercent = this.trackLength ? clamp(data.lastDriveMovementDistance / this.trackLength, 0, 1) : 0;
+        data.lastForwardProgressPercentTime = this.elapsed;
+        data.hasObservedForwardProgress = true;
+      } else if (this.stallElimination?.enabled
+        && (!this.stallElimination.requireObservedMotionBeforeElimination || data.hasObservedForwardProgress)
+        && this.elapsed - (data.lastDriveMovementTime ?? 0) >= (this.stallElimination.delaySeconds ?? this.stuckResetDelay)) {
+        // DNF is a real stall rule, not a long-track pacing penalty: timeout scales by track length/stage
+        // and only starts after the marble has made meaningful forward progress since the gate opened.
+        this.eliminateStalledMarble(data, closest.distance, 'no-forward-progress-timeout');
       }
     });
   }
@@ -5028,6 +7467,7 @@ class MarbleRace {
     data.lastDriveMovementDistance = penaltyDistance;
     data.lastMovementTime = this.elapsed;
     data.lastDriveMovementTime = this.elapsed;
+    data.hasObservedForwardProgress = false;
     data.lastResetTime = this.elapsed;
     data.stuckResets = (data.stuckResets || 0) + 1;
     data.lastResetReason = reason;
@@ -5039,8 +7479,44 @@ class MarbleRace {
     data.lastVisualPosition = resetPos.clone();
   }
 
+  eliminateStalledMarble(data, currentDistance = 0, reason = 'no-forward-progress-timeout') {
+    if (!data || data.finished || data.defeated) return;
+    data.defeated = true;
+    data.defeatTime = this.elapsed;
+    data.defeatReason = reason;
+    data.finished = true;
+    data.finishTime = Number.POSITIVE_INFINITY;
+    data.distance = Math.max(data.distance || 0, currentDistance || 0);
+    data.progress = this.trackLength ? clamp(data.distance / this.trackLength, 0, 1) : (data.progress || 0);
+    data.lastResetReason = reason;
+    data.lastResetTime = this.elapsed;
+    data.pendingFallRespawn = null;
+    data.body.velocity.set(0, 0, 0);
+    data.body.angularVelocity.set(0, 0, 0);
+    data.body.force.set(0, 0, 0);
+    data.body.torque.set(0, 0, 0);
+    data.body.type = CANNON.Body.STATIC;
+    data.body.mass = 0;
+    data.body.updateMassProperties();
+    this.world.removeBody(data.body);
+    this.scene.remove(data.mesh);
+    if (data.labelSprite) this.scene.remove(data.labelSprite);
+    if (data.trail?.line) this.scene.remove(data.trail.line);
+    data.removedFromRace = true;
+    data.rank = this.marbleData.length;
+    this.finishers.push(data);
+    this.defeatedMarbles.push(data);
+    this.stallEliminationCount += 1;
+    this.stuckResetCount += 1;
+    this.cachedRanking = null;
+    this.cachedRankingAt = 0;
+    this.pushBroadcastEvent('DNF Eliminated', `${data.name} DNF`, { kind: 'dnf', force: true, marbleId: data.id, lines: [`${data.name} DNF`, `${data.name} no progress`, `${data.name} out`] });
+    this.checkFinishers();
+  }
+
   syncMarbles() {
     this.marbleData.forEach((data) => {
+      if (data.defeated || data.removedFromRace) return;
       const nextPos = new THREE.Vector3(data.body.position.x, data.body.position.y, data.body.position.z);
       const previous = data.lastVisualPosition || nextPos.clone();
       const delta = nextPos.clone().sub(previous);
@@ -5080,18 +7556,18 @@ class MarbleRace {
     });
   }
 
-  getRankingSlotPosition(index, collector, radius = 0.45) {
+  getRankingSlotPosition(index, collector, radius = 0.45, rank = index + 1) {
     if (collector.podiumStyle === 'top-3-on-podium-rest-below') {
-      if (index < 3) {
-        const slot = collector.podiumSlots[index];
+      if (rank <= 3) {
+        const slot = (collector.podiumSlots || []).find((item) => item.rank === rank) || collector.podiumSlots[index];
         return collector.center.clone().add(this.localToWorldOffset(slot.x, slot.height + radius + 0.14, slot.z, collector.yaw));
       }
-      const lowerIndex = index - 3;
+      const lowerIndex = Math.max(0, rank - 4);
       const cols = collector.lowerSlots?.cols || collector.cols || 4;
       const row = Math.floor(lowerIndex / cols);
       const col = lowerIndex % cols;
       const x = (col - (cols - 1) / 2) * collector.slotGap;
-      const z = 2.35 + row * collector.slotGap;
+      const z = (collector.lowerSlots?.originZ ?? 2.35) + row * collector.slotGap;
       return collector.center.clone().add(this.localToWorldOffset(x, radius + 0.08, z, collector.yaw));
     }
     const col = index % collector.cols;
@@ -5104,15 +7580,17 @@ class MarbleRace {
   checkFinishers() {
     this.marbleData.forEach((data) => {
       const finishThreshold = FINISH_LINE_RULE.threshold ?? 0.08;
-      if (!data.finished && data.distance >= this.trackLength - finishThreshold) {
+      if (!data.finished && !data.defeated && data.distance >= this.trackLength - finishThreshold) {
         data.finishTime = this.elapsed + (data.timePenalty || 0);
         data.body.linearDamping = 0.72;
         data.body.angularDamping = 0.78;
         const finishFrame = this.getTrackFrameAt(this.trackLength);
         const collector = this.finishRankingContainer;
-        const index = this.finishers.length;
+        const finishedPodiumCount = this.finishers.filter((item) => item && !item.defeated && !item.removedFromRace).length;
+        const rank = finishedPodiumCount + 1;
+        const index = rank - 1;
         const collectPos = collector
-          ? this.getRankingSlotPosition(index, collector, data.radius)
+          ? this.getRankingSlotPosition(index, collector, data.radius, rank)
           : new THREE.Vector3(finishFrame.p.x, finishFrame.p.y + 0.75, finishFrame.p.z).add(finishFrame.tangent.clone().multiplyScalar(3 + index * 1.2));
         data.body.position.copy(collectPos);
         data.body.velocity.set(0, 0, 0);
@@ -5125,7 +7603,7 @@ class MarbleRace {
         if (data.visualQuaternion) data.mesh.quaternion.copy(data.visualQuaternion);
         data.finished = true;
         data.body.sleep();
-        data.rank = index + 1;
+        data.rank = rank;
         data.placedInFinishContainer = true;
         this.finishers.push(data);
         if (this.finishers.length === 1) {
@@ -5133,7 +7611,7 @@ class MarbleRace {
           this.defaultCameraPhaseUntil = this.elapsed + 3.2;
           this.ui.winner.textContent = `🏆 ${data.name} wins! ${data.finishTime.toFixed(2)}s`;
           this.ui.winner.classList.remove('hidden');
-          this.pushBroadcastEvent('Winner Crowned', `${data.name} takes the flag in ${data.finishTime.toFixed(2)}s`, { kind: 'winner', force: true });
+          this.pushBroadcastEvent('Winner', `${data.name} wins`, { kind: 'winner', force: true, marbleId: data.id, lines: [`${data.name} wins`, `${data.name} takes flag`, `${data.name} first home`] });
           this.triggerFinishSlowMotion(data, { reason: 'finish-line-crossed-fallback', crossed: true });
           this.playFinishSound(true);
           this.spawnImpactEffect(collectPos, 0xffd166, 'burst');
@@ -5143,25 +7621,53 @@ class MarbleRace {
     });
     if (this.finishers.length === this.marbleData.length && this.marbleData.length > 0) {
       this.state = 'finished';
+      this.cameraMode = 'default';
+      const finalRanking = this.getRanking({ force: true });
+      this.handleCupRaceComplete(finalRanking);
+      this.handleAutoCupRaceComplete();
+      this.startPodiumCeremony(finalRanking.slice(0, 3));
       this.showFinalShowcase();
-      this.pushBroadcastEvent('Race Complete', 'Final podium and awards are locked in', { kind: 'complete', force: true });
+      const completeLabel = this.cupMode?.active
+        ? (this.cupMode.status === 'complete' ? 'Cup Champion Ceremony' : 'Qualified')
+        : 'Group winner';
+      const podiumLine = this.buildPodiumResultLine(finalRanking);
+      this.pushBroadcastEvent(completeLabel, podiumLine, { kind: 'complete', force: true, lines: [podiumLine] });
+      this.ui.start.textContent = this.cupMode?.active
+        ? (this.cupMode.status === 'complete' ? 'Restart Cup' : 'Next Cup Match')
+        : 'Re-stage';
       this.defaultCameraPhaseUntil = Math.max(this.defaultCameraPhaseUntil || 0, this.elapsed + 999);
     }
   }
 
-  getRanking({ force = false } = {}) {
+  getRaceRanking({ force = false, includeDefeated = true } = {}) {
     const now = performance.now();
     const cacheMs = this.performanceProfile?.rankingCacheMs || 80;
-    if (!force && this.cachedRanking && now - (this.cachedRankingAt || 0) < cacheMs) return this.cachedRanking;
-    this.cachedRanking = [...this.marbleData].sort((a, b) => {
-      if (a.finished && b.finished) return a.finishTime - b.finishTime;
-      if (a.finished) return -1;
-      if (b.finished) return 1;
-      return b.progress - a.progress;
-    });
-    this.cachedRankingAt = now;
-    this.cachedLeaderId = this.cachedRanking[0]?.id ?? null;
-    return this.cachedRanking;
+    if (includeDefeated && !force && this.cachedRanking && now - (this.cachedRankingAt || 0) < cacheMs) return this.cachedRanking;
+    const ranking = [...this.marbleData]
+      .filter((data) => includeDefeated || !data.defeated)
+      .sort((a, b) => {
+        if (a.defeated && b.defeated) return (b.progress || 0) - (a.progress || 0) || (a.defeatTime ?? Infinity) - (b.defeatTime ?? Infinity);
+        if (a.defeated) return 1;
+        if (b.defeated) return -1;
+        if (a.finished && b.finished) return a.finishTime - b.finishTime;
+        if (a.finished) return -1;
+        if (b.finished) return 1;
+        return b.progress - a.progress;
+      });
+    if (includeDefeated) {
+      this.cachedRanking = ranking;
+      this.cachedRankingAt = now;
+      this.cachedLeaderId = this.cachedRanking[0]?.id ?? null;
+    }
+    return ranking;
+  }
+
+  getRanking({ force = false } = {}) {
+    return this.getRaceRanking({ force, includeDefeated: true });
+  }
+
+  getPodiumRanking({ force = false } = {}) {
+    return this.getRaceRanking({ force, includeDefeated: false });
   }
 
   getReusableMarbleRegistry() {
@@ -5172,6 +7678,9 @@ class MarbleRace {
       displayName: data.displayName,
       colorName: data.colorName,
       colorHex: data.colorHex,
+      paletteHex: data.paletteHex,
+      materialKey: data.materialKey,
+      materialName: data.materialName,
       patternKey: data.patternKey,
       patternName: data.patternName,
       sizeKey: data.sizeKey,
@@ -5183,10 +7692,16 @@ class MarbleRace {
   getReusableRaceResults() {
     return this.getRanking({ force: true }).map((data, index) => ({
       rank: data.finished ? index + 1 : null,
+      defeated: Boolean(data.defeated),
+      defeatTime: data.defeatTime ?? null,
+      defeatReason: data.defeatReason || null,
+      removedFromRace: Boolean(data.removedFromRace),
       code: data.code,
       name: data.name,
       colorName: data.colorName,
       colorHex: data.colorHex,
+      paletteHex: data.paletteHex,
+      materialName: data.materialName,
       patternName: data.patternName,
       sizeName: data.sizeName,
       radius: data.radius,
@@ -5197,12 +7712,12 @@ class MarbleRace {
       pendingFallRespawn: Boolean(data.pendingFallRespawn),
       fallRespawnIn: data.pendingFallRespawn ? Math.max(0, data.pendingFallRespawn.respawnAt - this.elapsed) : 0,
       lastSafeDistanceBeforeFall: data.lastSafeDistanceBeforeFall || 0,
-      reusableLine: `${data.code} | ${data.name} | ${data.colorName} ${data.colorHex} | ${data.patternName} | ${data.sizeName} r=${data.radius.toFixed(3)}`,
+      reusableLine: `${data.code} | ${data.name} | ${data.colorName} ${data.colorHex} palette=${(data.paletteHex || [data.colorHex]).join('+')} | ${data.materialName || 'Glass'} | ${data.patternName} | ${data.sizeName} r=${data.radius.toFixed(3)}`,
     }));
   }
 
   getReusableMarbleLine(data) {
-    return `${data.code} | ${data.name} | ${data.colorName} ${data.colorHex} | ${data.patternName} | ${data.sizeName} r=${data.radius.toFixed(3)}`;
+    return `${data.code} | ${data.name} | ${data.colorName} ${data.colorHex} palette=${(data.paletteHex || [data.colorHex]).join('+')} | ${data.materialName || 'Glass'} | ${data.patternName} | ${data.sizeName} r=${data.radius.toFixed(3)}`;
   }
 
   async copyReusableMarble(data, feedbackTarget = null) {
@@ -5257,12 +7772,14 @@ class MarbleRace {
       if (previousTopIndex > index) li.classList.add('rank-up');
       const color = `#${data.color.toString(16).padStart(6, '0')}`;
       const gapToLeader = ranking[0] && ranking[0].id !== data.id ? Math.max(0, (ranking[0].distance || 0) - (data.distance || 0)) : 0;
-      const label = data.finished
-        ? `${data.finishTime.toFixed(2)}s${data.timePenalty ? ` (+${data.timePenalty}s)` : ''}`
-        : `${Math.round(data.progress * 100)}%${data.timePenalty ? ` +${data.timePenalty}s` : ''}`;
+      const label = data.defeated
+        ? `DNF ${Math.round(data.progress * 100)}%`
+        : (data.finished
+          ? `${data.finishTime.toFixed(2)}s${data.timePenalty ? ` (+${data.timePenalty}s)` : ''}`
+          : `${Math.round(data.progress * 100)}%${data.timePenalty ? ` +${data.timePenalty}s` : ''}`);
       const gapLabel = index === 0
         ? 'Leader'
-        : (data.finished ? `#${index + 1}` : `+${gapToLeader.toFixed(1)}m`);
+        : (data.defeated ? 'Out' : (data.finished ? `#${index + 1}` : `+${gapToLeader.toFixed(1)}m`));
       li.innerHTML = `<div class="racer-row"><span class="rank-badge">#${index + 1}</span><span class="swatch" style="background:${color};color:${color}"></span><span class="racer-name">${data.name}</span><span class="racer-progress">${label}</span><span class="racer-gap">${gapLabel}</span></div>`;
       li.addEventListener('click', () => {
         this.selectedIndex = data.id;
@@ -5320,10 +7837,21 @@ class MarbleRace {
         progress: data.progress || 0,
         distance: data.distance || 0,
         finished: Boolean(data.finished),
+        defeated: Boolean(data.defeated),
       })),
       broadcastStorylines: {
         eventCount: this.broadcastEvents.length,
         lastEvent: this.broadcastEvents[0] || null,
+        replayHighlight: this.replayHighlight || null,
+        replayPlayback: this.replayHighlight?.playback || null,
+        replayHistory: {
+          sampleIntervalSeconds: CUP_VIDEO_TIMING.replayHistorySampleSeconds,
+          samples: this.raceHistoryBuffer?.length || 0,
+          firstTime: this.raceHistoryBuffer?.[0]?.time ?? null,
+          lastTime: this.raceHistoryBuffer?.at(-1)?.time ?? null,
+          mode: this.replayHighlight?.playback?.mode || 'history-buffer-replay-ready',
+        },
+        replayHighlightSelection: this.selectReplayHighlightEvents().map((event) => ({ title: event.title, detail: event.detail, kind: event.kind, replayTitle: event.replayTitle, distance: event.distance, progress: event.progress, time: event.time, marbleId: event.marbleId, rivalId: event.rivalId })),
         previousTopFiveIds: this.previousTopFiveIds || [],
         lastOvertakeAt: Number.isFinite(this.lastOvertakeAt) ? this.lastOvertakeAt : null,
         lastNeckAndNeckAt: Number.isFinite(this.lastNeckAndNeckAt) ? this.lastNeckAndNeckAt : null,
@@ -5589,12 +8117,27 @@ class MarbleRace {
         opened: Boolean(this.startGate.opened),
         frozenUntilGateOpenCount: this.marbleData.filter((data) => data.startFrozenUntilGateOpen).length,
       } : START_GATE_DESIGN,
+      marbleLabelPolicy: {
+        ...MARBLE_LABEL_POLICY,
+        state: this.state,
+        visibleLabelCount: this.marbleData.filter((data) => data.labelSprite?.visible).length,
+        visibleLabelIds: this.marbleData.filter((data) => data.labelSprite?.visible).map((data) => data.id),
+      },
       startSlotDiagnostics: this.marbleData.map((data) => ({
         id: data.id,
         name: data.name,
+        colorName: data.colorName,
+        colorHex: data.colorHex,
+        paletteHex: data.paletteHex,
+        materialName: data.materialName,
+        patternName: data.patternName,
+        labelVisible: Boolean(data.labelSprite?.visible),
         row: data.startSlotRow,
         column: data.startSlotColumn,
         laneCount: data.startSlotLaneCount,
+        stagingMode: data.startSlotStagingMode,
+        localZ: Number((data.startLocalZ ?? 0).toFixed(3)),
+        stagingLayout: data.id === 0 ? this.startStagingLayout : undefined,
         frozenUntilGateOpen: data.startFrozenUntilGateOpen,
         bodyType: data.body?.type ?? null,
         mass: data.body?.mass ?? null,
@@ -5622,7 +8165,7 @@ class MarbleRace {
       pinballObstacleTypes: this.pinballObstacleTypes,
       pinballInteractions: this.pinballInteractions,
       activePinballObstacles: this.pinballObstacles.length,
-      spectacleFeatures: ['broadcast-event-captions', 'impact-rings-and-sparks', 'marble-speed-trails', 'finish-slow-motion', 'finish-confetti-cannons', 'winner-showcase-awards', 'themed-sector-signage'],
+      spectacleFeatures: ['broadcast-event-captions', 'impact-rings-and-sparks', 'marble-speed-trails', 'finish-slow-motion', 'finish-confetti-cannons', 'winner-showcase-awards', 'podium-ceremony', 'cup-mode-knockout', 'match-card-overlay', 'themed-sector-signage'],
       broadcastStageMarkers: this.trackStats.broadcastStageMarkers || 0,
       broadcastEvents: this.broadcastEvents,
       activeBroadcastCaption: this.activeCaption,
@@ -5642,6 +8185,19 @@ class MarbleRace {
         endedAt: this.finishSlowMotion?.endedAt ?? null,
       },
       winnerShowcase: this.showcaseStats,
+      podiumCeremony: this.podiumCeremony,
+      cupMode: {
+        active: Boolean(this.cupMode?.active),
+        status: this.cupMode?.status || 'idle',
+        size: this.cupMode?.size || null,
+        stage: this.cupMode?.active ? this.getCupStage() : null,
+        stageTitle: this.cupMode?.active ? this.getCupStageTitle() : null,
+        displayName: this.cupMode?.active ? this.getCupDisplayName() : null,
+        entrants: this.cupMode?.currentEntrants?.length || 0,
+        qualifierCount: this.cupMode?.active ? this.getCupQualifierCount() : 0,
+        champion: this.cupMode?.champion || null,
+        resultCount: this.cupMode?.results?.length || 0,
+      },
       obstacleForcePolicy: 'only pinball obstacle handlers may call applyImpulse/applyForce during racing',
       functionalPinballObstacles: ['popBumper impulse', 'slingshot kick', 'spinnerGate spin impulse', 'rolloverLane boost', 'dropTarget knockdown'],
       removedObstacleDesigns: ['ramp', 'slanted/curved rail bumpers'],
@@ -5670,11 +8226,20 @@ class MarbleRace {
       podiumSlots: this.finishRankingContainer?.podiumSlots || [],
       lowerFinisherSlots: this.finishRankingContainer?.lowerSlots || null,
       finishRankingSlots: this.finishRankingContainer ? (this.finishRankingContainer.podiumSlots?.length || 0) + (this.finishRankingContainer.lowerSlots?.count || 0) : 0,
-      allFinishersPlaced: this.marbleData.length > 0 && this.finishers.length === this.marbleData.length && this.finishers.every((d) => d.placedInFinishContainer),
+      finishRankingContainerSize: this.finishRankingContainer ? {
+        width: this.finishRankingContainer.width,
+        depth: this.finishRankingContainer.depth,
+        slotGap: this.finishRankingContainer.slotGap,
+        lowerSlots: this.finishRankingContainer.lowerSlots || null,
+      } : null,
+      allFinishersPlaced: this.marbleData.length > 0 && this.finishers.length === this.marbleData.length && this.finishers.every((d) => d.defeated || d.placedInFinishContainer),
       finishedCount: this.finishers.length,
+      defeatedCount: this.defeatedMarbles.length,
+      activeRacerCount: this.marbleData.filter((d) => !d.finished && !d.defeated).length,
       finishLineVisualLength: 0.7,
       stuckReset: {
-        enabled: true,
+        enabled: false,
+        replacedBy: 'stallElimination',
         total: this.stuckResetCount,
         penaltyMeters: this.stuckResetPenalty,
         delaySeconds: this.stuckResetDelay,
@@ -5686,8 +8251,38 @@ class MarbleRace {
           lastReason: d.lastResetReason || null,
           lastDriveMovementDistance: d.lastDriveMovementDistance || 0,
           lastDriveMovementAgo: this.elapsed - (d.lastDriveMovementTime ?? 0),
+          defeated: Boolean(d.defeated),
+          defeatReason: d.defeatReason || null,
+          removedFromRace: Boolean(d.removedFromRace),
           timePenalty: d.timePenalty || 0,
           fallPenalties: d.fallPenaltyCount || 0,
+        })),
+      },
+      stallElimination: {
+        ...this.stallElimination,
+        total: this.stallEliminationCount,
+        activeRacerCount: this.marbleData.filter((d) => !d.finished && !d.defeated).length,
+        defeatedCount: this.defeatedMarbles.length,
+        defeatedMarbles: this.defeatedMarbles.map((d) => ({
+          id: d.id,
+          code: d.code,
+          name: d.name,
+          progress: d.progress || 0,
+          progressPercent: Math.round((d.progress || 0) * 100),
+          defeatTime: d.defeatTime ?? null,
+          reason: d.defeatReason || null,
+          removedFromRace: Boolean(d.removedFromRace),
+        })),
+        marbles: this.marbleData.map((d) => ({
+          id: d.id,
+          name: d.name,
+          defeated: Boolean(d.defeated),
+          progress: d.progress || 0,
+          progressPercent: Math.round((d.progress || 0) * 100),
+          lastForwardProgressPercent: Math.round((d.lastForwardProgressPercent || 0) * 100),
+          noForwardProgressForSeconds: Number(Math.max(0, this.elapsed - (d.lastDriveMovementTime ?? 0)).toFixed(2)),
+          hasObservedForwardProgress: Boolean(d.hasObservedForwardProgress),
+          removedFromRace: Boolean(d.removedFromRace),
         })),
       },
       fallPenalty: {
@@ -5706,6 +8301,9 @@ class MarbleRace {
       physicsSteps: this.physicsSteps,
       state: this.state,
       backgroundMaterial: 'wood',
+      broadcastAudioPack: this.localTtsBridge?.available
+        ? 'web-audio-bgm + left-ui-commentary-status + mac-local-tts-bridge; BGM/SFX and local TTS are page-mixed into recording'
+        : 'web-audio-bgm + left-ui-commentary-status + optional-browser-tts; BGM/SFX are page-mixed into recording, but browser speechSynthesis TTS is recordable only through Chrome tab audio with Share tab audio enabled',
       leftUICollapsed: this.leftUICollapsed,
       rightUICollapsed: this.rightUICollapsed,
       rightUIToggleLocation: 'bottom-left stacked above left UI toggle',
@@ -5722,9 +8320,55 @@ class MarbleRace {
         label: 'one-click copy of the full live debug payload including marbles, rail diagnostics, guide samples, issue-window obstacles, and MR1 code',
         status: this.ui.debugCopyStatus?.textContent || 'Ready',
       },
+      broadcastAudio: {
+        bgmEnabled: this.bgmEnabled,
+        bgmMode: this.bgmMode,
+        bgmActive: Boolean(this.bgmTimer),
+        bgmNodeCount: this.bgmNodes?.length || 0,
+        audioUnlocked: this.audioUnlocked,
+        audioContextState: this.audioContext?.state || null,
+        commentaryEnabled: this.commentaryEnabled,
+        commentaryVoiceEnabled: this.commentaryVoiceEnabled,
+        activeCommentary: this.activeCommentary || null,
+        lastCommentary: this.commentaryHistory?.[0] || null,
+        commentaryHistoryCount: this.commentaryHistory?.length || 0,
+        commentaryDisplay: 'left-ui-only',
+        viewerOverlayHidden: this.ui.commentaryCaption?.classList.contains('hidden') !== false,
+        ttsTestStatus: this.ui.ttsTestStatus?.textContent || null,
+        ttsSupported: Boolean(window.speechSynthesis && typeof SpeechSynthesisUtterance !== 'undefined'),
+        ttsSpeaking: this.commentaryVoiceSpeaking,
+        ttsQueueLength: this.commentaryVoiceQueue?.length || 0,
+        ttsCurrentLine: this.commentaryVoiceCurrentLine,
+        ttsLastLine: this.lastCommentaryVoiceLine,
+        ttsLastError: this.commentaryVoiceLastError,
+        countdownVoiceLine: this.countdownVoiceLine,
+        countdownVoiceWarmupReady: Boolean(this.countdownVoiceWarmupUrl),
+        countdownVoiceWarmupUrl: this.countdownVoiceWarmupUrl,
+        countdownVoicePlayStartedAt: this.countdownVoicePlayStartedAt,
+        countdownLastAnnouncedSecond: this.countdownLastAnnouncedSecond,
+        ttsRecordingPolicy: this.getTtsRecordingPolicy(),
+      },
       debugPanelCollapsed: this.ui.debugPanel?.classList.contains('collapsed') || false,
       recordingState: this.mediaRecorder?.state || 'inactive',
       recordingSource: this.recordingSource || null,
+      recordingSettings: this.recordingSettings || null,
+      lastRecordingRequest: this.lastRecordingRequest || null,
+      autoCupRecording: this.autoCupRecording ? {
+        active: Boolean(this.autoCupRecording.active),
+        phase: this.autoCupRecording.phase,
+        recordingMode: this.autoCupRecording.recordingMode || null,
+        racesCompleted: this.autoCupRecording.racesCompleted || 0,
+        currentStage: this.autoCupRecording.currentStage || null,
+        gateDelaySeconds: this.autoCupRecording.gateDelaySeconds,
+        postRaceHoldSeconds: this.autoCupRecording.postRaceHoldSeconds,
+        nextRaceDelaySeconds: this.autoCupRecording.nextRaceDelaySeconds,
+        replayHighlightHoldSeconds: getReplayHighlightHoldSeconds(CUP_VIDEO_TIMING),
+        nextGateAfterRaceSeconds: this.autoCupRecording.nextGateAfterRaceSeconds,
+        stopAfterFinalSeconds: this.autoCupRecording.stopAfterFinalSeconds,
+        timingPlan: this.autoCupRecording.timingPlan || this.getCupVideoTimingEstimate(),
+        nextActionInSeconds: this.autoCupRecording.nextActionAt ? Number(Math.max(0, (this.autoCupRecording.nextActionAt - performance.now()) / 1000).toFixed(2)) : null,
+        lastError: this.autoCupRecording.lastError || null,
+      } : null,
       screenRecordingSupported: Boolean(navigator.mediaDevices?.getDisplayMedia),
       recordingSupported: typeof MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getDisplayMedia || this.renderer?.domElement?.captureStream),
       leader: this.getAutoCameraRanking({ includeFinished: true })[0]?.name || this.getRanking({ force: false })[0]?.name,
@@ -5775,14 +8419,28 @@ class MarbleRace {
         lateTrackCoverageEndProgress: Math.min(this.minForwardSpeedAssist?.endsBeforeProgress ?? 0, this.midTrackSpeedAssist?.endsBeforeProgress ?? 0),
         regressionTarget: '75% no-obstacle slowdown/stall and final-sector back-and-forth oscillation',
       },
+      cupVideoTiming: this.getCupVideoTimingEstimate(),
+      cupVideoStageTargetSeconds: this.cupMode?.active ? CUP_VIDEO_TIMING.stageTargetSeconds?.[this.getCupStage()] ?? null : null,
+      cupVideoStageTargetTrackLength: this.cupMode?.active ? CUP_VIDEO_TIMING.stageTrackLengths?.[this.getCupStage()] ?? null : null,
       defaultCameraMode: BROADCAST_CAMERA.defaultMode,
+      defaultCameraPreference: 'default auto every race/stage: lead-pack through countdown and early race; cinematic leader from 60%; after first finish, stay on lead pack of remaining marbles to avoid rapid switching; podium/orbit when fully finished',
+      defaultCameraPhaseSwitchProgress: BROADCAST_CAMERA.cinematicLeaderFromProgress,
       activeDefaultCameraShot: this.getDefaultCameraMode(),
       defaultCameraSequence: BROADCAST_CAMERA.sequence,
+      defaultCameraTrackingDirection: 'xy/xz direction sampled from next tracking point back toward previous tracking point',
+      defaultCameraOffsets: { leader: BROADCAST_CAMERA.leader, leadPack: BROADCAST_CAMERA.leadPack },
+      cinematicLeaderCamera: this.cinematicLeaderCameraState || null,
+      leadPackCamera: this.leadPackCameraState || null,
       autoCameraDirector: BROADCAST_CAMERA.angleStyle,
       autoCameraOutOfBoundsIgnoreAfterSeconds: BROADCAST_CAMERA.outOfBoundsIgnoreAfterSeconds,
       autoCameraOutOfBoundsIgnoreLabel: BROADCAST_CAMERA.outOfBoundsIgnoreLabel,
-      raceCompleteCameraMove: BROADCAST_CAMERA.podium360.label,
+      raceCompleteCameraMove: this.podiumCeremony?.isCupChampionCeremony ? BROADCAST_CAMERA.podium360.championLabel : BROADCAST_CAMERA.podium360.label,
       podium360Camera: BROADCAST_CAMERA.podium360,
+      finalCeremonyCamera: {
+        active: Boolean(this.podiumCeremony?.active && this.podiumCeremony?.isCupChampionCeremony),
+        label: BROADCAST_CAMERA.podium360.championLabel,
+        angularSpeed: BROADCAST_CAMERA.podium360.championAngularSpeed,
+      },
       leadPackCloseCamera: true,
       leadBattleCloseCamera: BROADCAST_CAMERA.leadBattle,
       leadBattleState: this.leadBattleState,
@@ -5793,7 +8451,11 @@ class MarbleRace {
         label: 'name sprite floats above every marble and follows mesh/body position',
       },
       birdEyeCameraAngle: BROADCAST_CAMERA.birdEyeCameraAngle,
-      cameraAngleStyle: 'high-angle overhead broadcast follow; lead battle switches to lower closer two-marble shot',
+      defaultCameraPitchUpDegrees: BROADCAST_CAMERA.defaultCameraPitchUpDegrees,
+      defaultCameraPitchModes: BROADCAST_CAMERA.defaultPitchModes,
+      initialCameraVerticalAxisRotationDegrees: BROADCAST_CAMERA.initialVerticalAxisRotationDegrees,
+      initialCameraRotationApplied: this.initialCameraRotationApplied,
+      cameraAngleStyle: 'mostly high-angle downward broadcast follow; close low lead-battle shot disabled by default',
       leadPackSize: this.getLeadPackTarget()?.size ?? 0,
     };
     window.__MARBLE_RACE_DEBUG__ = debug;
@@ -5807,13 +8469,22 @@ class MarbleRace {
       elapsed: this.elapsed.toFixed(1),
       leader: debug.leader || null,
       cameraMode: debug.cameraMode,
+      broadcastAudio: debug.broadcastAudio,
       activeDefaultCameraShot: debug.activeDefaultCameraShot,
       fps: debug.measuredFps,
       physicsSteps: debug.physicsSteps,
       finishedCount: debug.finishedCount,
+      defeatedCount: debug.defeatedCount,
+      activeRacerCount: debug.activeRacerCount,
+      stallElimination: debug.stallElimination,
       finishSlowMotion: debug.finishSlowMotion,
       confettiCount: debug.confettiCount,
-      startGateOpen: debug.startGateOpen,
+      podiumCeremony: debug.podiumCeremony,
+      cupMode: debug.cupMode,
+      cupVideoTiming: debug.cupVideoTiming ? `${debug.cupVideoTiming.estimatedMinutes} min target` : null,
+      replayHighlight: debug.broadcastStorylines?.replayHighlight,
+      replayHighlightSelection: debug.broadcastStorylines?.replayHighlightSelection,
+      autoCupRecording: debug.autoCupRecording,
       trackLength: debug.trackLength,
       marbleCount: debug.marbleCount,
       trackStats: debug.trackStats,
@@ -6022,16 +8693,80 @@ class MarbleRace {
     return target.clone().add(orbitDirection.multiplyScalar(blendedDistance));
   }
 
-  getDefaultCameraMode() {
-    if (this.state === 'finished') return BROADCAST_CAMERA.podium360.enabled ? 'podium360' : 'finish';
-    if (this.finishers.length > 0) {
-      if (this.elapsed < (this.defaultCameraPhaseUntil || 0)) return 'finish';
-      return 'unfinishedOrder';
+  applyDefaultCameraPitch(desired, target, activeCameraMode) {
+    const pitchDegrees = BROADCAST_CAMERA.defaultCameraPitchUpDegrees || 0;
+    if (!pitchDegrees || this.cameraMode !== 'default' || !BROADCAST_CAMERA.defaultPitchModes.includes(activeCameraMode)) return desired;
+    const offset = desired.clone().sub(target);
+    const horizontal = new THREE.Vector3(offset.x, 0, offset.z);
+    if (horizontal.lengthSq() < 0.0001 || offset.lengthSq() < 0.0001) return desired;
+    const rightAxis = new THREE.Vector3().crossVectors(horizontal.clone().normalize(), new THREE.Vector3(0, 1, 0)).normalize();
+    const pitchedOffset = offset.applyAxisAngle(rightAxis, THREE.MathUtils.degToRad(-pitchDegrees));
+    return target.clone().add(pitchedOffset);
+  }
+
+  getCameraTrackFrameAt(distance, lookAhead = 4.5) {
+    const current = this.getTrackPointAt(distance);
+    const nextDistance = clamp(distance + Math.max(0.35, lookAhead), 0, this.trackLength);
+    const previousDistance = clamp(distance - Math.max(0.35, lookAhead * 0.55), 0, this.trackLength);
+    let next = this.getTrackPointAt(nextDistance);
+    let previous = this.getTrackPointAt(previousDistance);
+    if (nextDistance === previousDistance || new THREE.Vector3(next.x - previous.x, 0, next.z - previous.z).lengthSq() < 0.0001) {
+      next = this.getTrackPointAt(clamp(distance + 1.2, 0, this.trackLength));
+      previous = this.getTrackPointAt(clamp(distance - 1.2, 0, this.trackLength));
     }
-    if (this.getLeadBattleTarget()) return 'leadBattle';
-    const cycle = (this.elapsed || 0) % 24;
-    if (cycle < 18) return 'leadPack';
-    if (cycle < 22) return 'leader';
+    const nextToPrevious = new THREE.Vector3(previous.x - next.x, previous.y - next.y, previous.z - next.z).normalize();
+    const horizontalBack = new THREE.Vector3(nextToPrevious.x, 0, nextToPrevious.z).normalize();
+    const forward = horizontalBack.clone().multiplyScalar(-1);
+    const right = new THREE.Vector3(-forward.z, 0, forward.x).normalize();
+    return {
+      ...this.getTrackFrameAt(distance),
+      p: current,
+      tangent: nextToPrevious,
+      horizontalTangent: horizontalBack,
+      right,
+      cameraDirection: 'next-tracking-point-to-previous-tracking-point',
+      nextDistance,
+      previousDistance,
+    };
+  }
+
+  applyInitialCameraVerticalAxisRotation() {
+    if (!this.camera || !this.controls || this.initialCameraRotationApplied) return;
+    const degrees = BROADCAST_CAMERA.initialVerticalAxisRotationDegrees || 0;
+    const basePosition = new THREE.Vector3(0, 30, 48);
+    const baseTarget = new THREE.Vector3(0, 0, -35);
+    const radians = THREE.MathUtils.degToRad(degrees);
+    const offset = basePosition.clone().sub(baseTarget).applyAxisAngle(new THREE.Vector3(0, 1, 0), radians);
+    this.controls.target.copy(baseTarget);
+    this.cameraTargetSmoothed.copy(baseTarget);
+    this.camera.position.copy(baseTarget).add(offset);
+    this.camera.lookAt(baseTarget);
+    this.controls.update();
+    this.initialCameraRotationApplied = true;
+  }
+
+  getUpcomingObstacleForCamera(distance, maxAhead = 35) {
+    if (!Array.isArray(this.pinballObstacles) || !this.pinballObstacles.length || !this.trackLength) return null;
+    let best = null;
+    for (const obstacle of this.pinballObstacles) {
+      if (!obstacle?.center) continue;
+      const progress = this.findClosestProgress(obstacle.center);
+      const obstacleDistance = progress.distance || 0;
+      const ahead = obstacleDistance - distance;
+      if (ahead < 0 || ahead > maxAhead) continue;
+      if (!best || ahead < best.ahead) best = { obstacle, distance: obstacleDistance, ahead };
+    }
+    return best;
+  }
+
+  getDefaultCameraMode() {
+    const leader = this.getAutoCameraRanking({ includeFinished: true })[0] || this.getRanking({ force: false })[0];
+    if (this.state === 'finished') return BROADCAST_CAMERA.podium360.enabled ? 'podium360' : 'finish';
+    if (this.countdownActive || this.state === 'ready' || this.state === 'idle') return 'leadPack';
+    if (this.finishers.length > 0) return 'leadPack';
+    if (BROADCAST_CAMERA.highAngleBattleEnabled && this.getLeadBattleTarget()) return 'leadBattle';
+    const leaderProgress = this.trackLength && leader ? clamp((leader.distance || 0) / this.trackLength, 0, 1) : 0;
+    if (leaderProgress >= BROADCAST_CAMERA.cinematicLeaderFromProgress) return 'cinematicLeader';
     return 'leadPack';
   }
 
@@ -6039,8 +8774,7 @@ class MarbleRace {
     const unfinished = this.getAutoCameraRanking({ includeFinished: false })
       .sort((a, b) => b.progress - a.progress);
     if (!unfinished.length) return null;
-    const index = Math.floor((this.elapsed - (this.firstFinishTime || 0)) / 4) % unfinished.length;
-    return unfinished[index];
+    return unfinished[0];
   }
 
   getPodiumCameraTarget() {
@@ -6050,8 +8784,14 @@ class MarbleRace {
   }
 
   updateCamera(delta) {
-    const requestedMode = this.cameraMode;
-    const activeCameraMode = requestedMode === 'default' ? this.getDefaultCameraMode() : requestedMode;
+    const requestedMode = (this.state === 'finished' && !this.replayHighlight?.active)
+      ? 'default'
+      : this.cameraMode;
+    if (this.state === 'finished' && this.cameraMode !== 'default' && !this.replayHighlight?.active) {
+      this.cameraMode = 'default';
+    }
+    const activeCameraMode = this.replayHighlight?.active ? 'replayHighlight' : (requestedMode === 'default' ? this.getDefaultCameraMode() : requestedMode);
+    this.activeCameraMode = activeCameraMode;
     const leader = this.getAutoCameraRanking({ includeFinished: true })[0] || this.getRanking({ force: false })[0];
     const selectedCandidate = this.marbleData[this.selectedIndex];
     const selected = selectedCandidate && !this.isMarbleIgnoredByAutoCamera(selectedCandidate) ? selectedCandidate : leader;
@@ -6061,7 +8801,23 @@ class MarbleRace {
     let target = new THREE.Vector3(0, 0, -this.trackLength / 2);
     let desired = new THREE.Vector3(0, 52, 56);
 
-    if (activeCameraMode === 'leadBattle' && leadBattle) {
+    if (activeCameraMode === 'replayHighlight' && this.replayHighlight?.active) {
+      const replayState = this.getReplayHighlightState();
+      if (replayState) {
+        const cfg = this.replayHighlight.playback || {};
+        const frame = this.getCameraTrackFrameAt(replayState.distance, 4.8);
+        if (replayState.focusMarble?.position) {
+          target.set(replayState.focusMarble.position.x, replayState.focusMarble.position.y + 0.9, replayState.focusMarble.position.z);
+        } else {
+          target.copy(frame.p).add(new THREE.Vector3(0, 1.15, 0));
+        }
+        const pan = Math.sin(replayState.clipProgress * Math.PI * 2) * 0.85;
+        desired.copy(target)
+          .add(frame.tangent.clone().multiplyScalar(cfg.cameraBack ?? -4.2))
+          .add(frame.right.clone().multiplyScalar((cfg.cameraSide ?? 3.6) + pan))
+          .add(new THREE.Vector3(0, cfg.cameraHeight ?? 18, 0));
+      }
+    } else if (activeCameraMode === 'leadBattle' && leadBattle) {
       const cfg = BROADCAST_CAMERA.leadBattle;
       const dt = Math.max(0.001, Math.min(delta, 0.05));
       const ease = 1 - Math.exp(-dt * 2.6);
@@ -6088,30 +8844,60 @@ class MarbleRace {
     } else if (activeCameraMode === 'leadPack' && leadPack) {
       const cfg = BROADCAST_CAMERA.leadPack;
       const dt = Math.max(0.001, Math.min(delta, 0.05));
-      const distanceEase = 1 - Math.exp(-dt * 1.25);
+      const packEase = 1 - Math.exp(-dt * 2.0);
       if (!this.leadPackInitialized) {
         this.cameraTargetSmoothed.copy(leadPack.center);
         this.leadPackDistanceSmoothed = leadPack.avgDistance;
         this.leadPackInitialized = true;
       } else {
-        this.cameraTargetSmoothed.lerp(leadPack.center, distanceEase);
-        this.leadPackDistanceSmoothed = lerp(this.leadPackDistanceSmoothed, leadPack.avgDistance, distanceEase);
+        this.cameraTargetSmoothed.lerp(leadPack.center, packEase);
+        this.leadPackDistanceSmoothed = lerp(this.leadPackDistanceSmoothed, leadPack.avgDistance, packEase);
       }
-      const frame = this.getTrackFrameAt(this.leadPackDistanceSmoothed);
-      target.copy(this.cameraTargetSmoothed);
-      const packZoom = clamp(leadPack.size - 1, 0, 4);
-      desired.copy(target)
-        .add(frame.tangent.clone().multiplyScalar(cfg.back - packZoom * 0.45))
-        .add(frame.right.clone().multiplyScalar(cfg.side))
-        .add(new THREE.Vector3(0, cfg.height + packZoom * cfg.packHeightStep, 0));
-    } else if (activeCameraMode === 'leader' && leader) {
-      const cfg = BROADCAST_CAMERA.leader;
-      const frame = this.getTrackFrameAt(leader.distance || 0);
-      target.copy(leader.mesh.position);
-      desired.copy(leader.mesh.position)
-        .add(frame.tangent.clone().multiplyScalar(cfg.back))
-        .add(frame.right.clone().multiplyScalar(cfg.side))
-        .add(new THREE.Vector3(0, cfg.height, 0));
+      const packMembers = this.getAutoCameraRanking({ includeFinished: false }).slice(0, Math.max(1, leadPack.size || 3));
+      const avgSpeed = packMembers.length
+        ? packMembers.reduce((sum, data) => {
+          const velocity = data.body?.velocity;
+          return sum + (velocity ? Math.hypot(velocity.x || 0, velocity.y || 0, velocity.z || 0) : 0);
+        }, 0) / packMembers.length
+        : 0;
+      const speedFactor = clamp(avgSpeed / 20, 0, 1);
+      const upcomingObstacle = this.getUpcomingObstacleForCamera(this.leadPackDistanceSmoothed, cfg.obstacleAwareDistance);
+      const obstacleFactor = upcomingObstacle ? 1 - clamp(upcomingObstacle.ahead / cfg.obstacleAwareDistance, 0, 1) : 0;
+      const lookAhead = cfg.lookAhead
+        + speedFactor * (cfg.dynamicLookAheadBySpeed || 0)
+        + obstacleFactor * (cfg.obstacleLookAheadBoost || 0);
+      const frame = this.getCameraTrackFrameAt(this.leadPackDistanceSmoothed, lookAhead);
+      const targetLead = clamp(lookAhead * (cfg.targetLookAheadScale ?? 0.2), 1.4, 5.2);
+      const guideTarget = this.getTrackPointAt(clamp(this.leadPackDistanceSmoothed + targetLead, 0, this.trackLength));
+      const guideBlend = clamp(cfg.targetGuideBlend ?? 0.28, 0, 1);
+      const packTarget = this.cameraTargetSmoothed.clone().lerp(guideTarget, guideBlend).add(new THREE.Vector3(0, cfg.targetLift ?? 1.7, 0));
+      target.copy(packTarget);
+      const packZoom = clamp((leadPack.size || 1) - 1, 0, 4);
+      const t = this.elapsed || 0;
+      const sideWave = Math.sin(t * (cfg.sideWaveSpeed || 0.28)) * (cfg.maxSideWave || 0);
+      const desiredBack = cfg.back - packZoom * 0.35 - obstacleFactor * (cfg.obstaclePullback || 0);
+      const desiredSide = cfg.side + sideWave;
+      const desiredHeight = cfg.height + packZoom * cfg.packHeightStep + obstacleFactor * (cfg.obstacleHeightBoost || 0);
+      desired.copy(this.cameraTargetSmoothed)
+        .add(frame.tangent.clone().multiplyScalar(desiredBack))
+        .add(frame.right.clone().multiplyScalar(desiredSide))
+        .add(new THREE.Vector3(0, desiredHeight, 0));
+      this.leadPackCameraState = {
+        size: leadPack.size,
+        avgSpeed: Number(avgSpeed.toFixed(2)),
+        speedFactor: Number(speedFactor.toFixed(2)),
+        lookAhead: Number(lookAhead.toFixed(2)),
+        targetLead: Number(targetLead.toFixed(2)),
+        targetGuideBlend: Number(guideBlend.toFixed(2)),
+        obstacleAware: Boolean(upcomingObstacle),
+        upcomingObstacleType: upcomingObstacle?.obstacle?.type || null,
+        upcomingObstacleAhead: upcomingObstacle ? Number(upcomingObstacle.ahead.toFixed(2)) : null,
+        obstacleFactor: Number(obstacleFactor.toFixed(2)),
+        desiredBack: Number(desiredBack.toFixed(2)),
+        desiredSide: Number(desiredSide.toFixed(2)),
+        desiredHeight: Number(desiredHeight.toFixed(2)),
+        fov: cfg.fov,
+      };
     } else if (activeCameraMode === 'selected' && selected) {
       const cfg = BROADCAST_CAMERA.selected;
       const frame = this.getTrackFrameAt(selected.distance || 0);
@@ -6135,13 +8921,48 @@ class MarbleRace {
       target.set(frame.p.x, frame.p.y + 0.8, frame.p.z);
       desired.copy(target).add(frame.right.clone().multiplyScalar(Math.sin(t) * 28)).add(frame.tangent.clone().multiplyScalar(-22)).add(new THREE.Vector3(0, 17 + Math.cos(t * 0.7) * 5, 0));
     } else if (activeCameraMode === 'cinematicLeader' && leader) {
-      const t = this.elapsed * 0.9;
-      const frame = this.getTrackFrameAt(leader.distance || 0);
-      target.copy(leader.mesh.position).add(new THREE.Vector3(0, 0.75, 0));
-      desired.copy(target)
-        .add(frame.tangent.clone().multiplyScalar(-13 - Math.sin(t * 0.7) * 3))
-        .add(frame.right.clone().multiplyScalar(Math.sin(t) * 8))
-        .add(new THREE.Vector3(0, 17 + Math.cos(t * 0.55) * 2.2, 0));
+      const cfg = BROADCAST_CAMERA.leader;
+      const leaderDistance = leader.distance || 0;
+      const velocity = leader.body?.velocity;
+      const speed = velocity ? Math.hypot(velocity.x || 0, velocity.y || 0, velocity.z || 0) : 0;
+      const speedFactor = clamp(speed / 20, 0, 1);
+      const upcomingObstacle = this.getUpcomingObstacleForCamera(leaderDistance, cfg.obstacleAwareDistance);
+      const obstacleFactor = upcomingObstacle ? 1 - clamp(upcomingObstacle.ahead / cfg.obstacleAwareDistance, 0, 1) : 0;
+      const lookAhead = cfg.lookAhead
+        + speedFactor * (cfg.dynamicLookAheadBySpeed || 0)
+        + obstacleFactor * (cfg.obstacleLookAheadBoost || 0);
+      const t = this.elapsed || 0;
+      const frame = this.getCameraTrackFrameAt(leaderDistance, lookAhead);
+      const targetLead = clamp(lookAhead * (cfg.targetLookAheadScale ?? 0.22), 1.5, 5.5);
+      const guideTarget = this.getTrackPointAt(clamp(leaderDistance + targetLead, 0, this.trackLength));
+      const guideBlend = clamp(cfg.targetGuideBlend ?? 0.35, 0, 1);
+      const lookPoint = leader.mesh.position.clone().lerp(guideTarget, guideBlend);
+      const sideWave = Math.sin(t * (cfg.sideWaveSpeed || 0.35)) * (cfg.maxSideWave || 0);
+      const desiredBack = cfg.back - obstacleFactor * (cfg.obstaclePullback || 0);
+      const desiredSide = cfg.side + sideWave;
+      const desiredHeight = cfg.height + obstacleFactor * (cfg.obstacleHeightBoost || 0);
+      target.copy(lookPoint).add(new THREE.Vector3(0, cfg.targetLift ?? 0.9, 0));
+      this.cameraTargetSmoothed.lerp(target, cfg.targetSmoothing || 0.075);
+      target.copy(this.cameraTargetSmoothed);
+      desired.copy(leader.mesh.position)
+        .add(frame.tangent.clone().multiplyScalar(desiredBack))
+        .add(frame.right.clone().multiplyScalar(desiredSide))
+        .add(new THREE.Vector3(0, desiredHeight, 0));
+      this.cinematicLeaderCameraState = {
+        speed: Number(speed.toFixed(2)),
+        speedFactor: Number(speedFactor.toFixed(2)),
+        lookAhead: Number(lookAhead.toFixed(2)),
+        targetLead: Number(targetLead.toFixed(2)),
+        targetGuideBlend: Number(guideBlend.toFixed(2)),
+        obstacleAware: Boolean(upcomingObstacle),
+        upcomingObstacleType: upcomingObstacle?.obstacle?.type || null,
+        upcomingObstacleAhead: upcomingObstacle ? Number(upcomingObstacle.ahead.toFixed(2)) : null,
+        obstacleFactor: Number(obstacleFactor.toFixed(2)),
+        desiredBack: Number(desiredBack.toFixed(2)),
+        desiredSide: Number(desiredSide.toFixed(2)),
+        desiredHeight: Number(desiredHeight.toFixed(2)),
+        fov: cfg.fov,
+      };
     } else if (activeCameraMode === 'finish') {
       const cfg = BROADCAST_CAMERA.finish;
       const frame = this.getTrackFrameAt(this.trackLength);
@@ -6151,12 +8972,16 @@ class MarbleRace {
       const cfg = BROADCAST_CAMERA.podium360;
       const podiumTarget = this.getPodiumCameraTarget() || new THREE.Vector3(0, 1.2, 0);
       const collector = this.finishRankingContainer;
-      const t = this.elapsed * cfg.angularSpeed;
-      const radius = cfg.radius;
+      const isChampionCeremony = Boolean(this.podiumCeremony?.active && this.podiumCeremony?.isCupChampionCeremony);
+      const ceremonyAge = Math.max(0, this.elapsed - (this.podiumCeremony?.startedAt || this.elapsed));
+      const t = (isChampionCeremony ? ceremonyAge : this.elapsed) * (isChampionCeremony ? cfg.championAngularSpeed : cfg.angularSpeed);
+      const radius = isChampionCeremony ? cfg.championRadius : cfg.radius;
+      const height = isChampionCeremony ? cfg.championHeight : cfg.height;
+      const heightBob = isChampionCeremony ? cfg.championHeightBob : cfg.heightBob;
       target.copy(podiumTarget);
       desired.copy(target).add(this.localToWorldOffset(
         Math.sin(t) * radius,
-        cfg.height + Math.sin(t * 0.7) * cfg.heightBob,
+        height + Math.sin(t * 0.7) * heightBob,
         Math.cos(t) * radius,
         collector?.yaw || 0,
       ));
@@ -6169,12 +8994,36 @@ class MarbleRace {
       this.leadBattleInitialized = false;
       this.leadBattleState = this.leadBattleState ? { ...this.leadBattleState, active: false } : null;
     }
-    this.updateMarbleNameLabels();
+    desired.copy(this.applyDefaultCameraPitch(desired, target, activeCameraMode));
     desired.copy(this.getMouseOrbitAdjustedCamera(desired, target));
-    const isLeadCloseMode = activeCameraMode === 'leadPack' || activeCameraMode === 'leadBattle';
-    const positionSmooth = isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 3.2 : 2.1)) : 1 - Math.pow(0.001, delta);
-    const targetSmooth = isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 4.2 : 2.8)) : 1 - Math.pow(0.001, delta);
-    this.camera.position.lerp(desired, positionSmooth * (activeCameraMode === 'leadBattle' ? 0.78 : activeCameraMode === 'leadPack' ? 0.62 : 0.72));
+    const desiredFov = activeCameraMode === 'cinematicLeader'
+      ? (BROADCAST_CAMERA.leader.fov || 40)
+      : (activeCameraMode === 'leadPack'
+        ? (BROADCAST_CAMERA.leadPack.fov || 44)
+        : (activeCameraMode === 'replayHighlight' ? 38 : 58));
+    if (Math.abs(this.camera.fov - desiredFov) > 0.01) {
+      this.camera.fov = lerp(this.camera.fov, desiredFov, (activeCameraMode === 'cinematicLeader' || activeCameraMode === 'leadPack') ? 0.035 : 0.055);
+      this.camera.updateProjectionMatrix();
+    }
+    const isLeadCloseMode = activeCameraMode === 'leadPack' || activeCameraMode === 'leadBattle' || activeCameraMode === 'replayHighlight';
+    const isCinematicLeader = activeCameraMode === 'cinematicLeader';
+    const isCinematicLeadPack = activeCameraMode === 'leadPack';
+    const positionSmooth = activeCameraMode === 'replayHighlight'
+      ? 1
+      : (isCinematicLeader
+        ? (BROADCAST_CAMERA.leader.positionSmoothing || 0.035)
+        : (isCinematicLeadPack
+          ? (BROADCAST_CAMERA.leadPack.positionSmoothing || 0.035)
+          : (isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 3.2 : 2.1)) : 1 - Math.pow(0.001, delta))));
+    const targetSmooth = activeCameraMode === 'replayHighlight'
+      ? 1
+      : (isCinematicLeader
+        ? (BROADCAST_CAMERA.leader.targetSmoothing || 0.075)
+        : (isCinematicLeadPack
+          ? (BROADCAST_CAMERA.leadPack.targetSmoothing || 0.08)
+          : (isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 4.2 : 2.8)) : 1 - Math.pow(0.001, delta))));
+    const cameraBlend = activeCameraMode === 'replayHighlight' ? 1 : (activeCameraMode === 'leadBattle' ? 0.78 : isCinematicLeadPack ? 0.84 : isCinematicLeader ? 0.82 : 0.72);
+    this.camera.position.lerp(desired, positionSmooth * cameraBlend);
     this.controls.target.lerp(target, targetSmooth);
     this.camera.lookAt(this.controls.target);
   }
@@ -6187,7 +9036,7 @@ class MarbleRace {
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => new MarbleRace(), { once: true });
+  document.addEventListener('DOMContentLoaded', () => { window.__MARBLE_RACE_APP__ = new MarbleRace(); }, { once: true });
 } else {
-  new MarbleRace();
+  window.__MARBLE_RACE_APP__ = new MarbleRace();
 }
