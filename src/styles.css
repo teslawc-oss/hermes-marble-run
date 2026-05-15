@@ -189,6 +189,29 @@ input[type="range"] {
   margin-bottom: 8px;
 }
 
+.obstacle-category {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(124, 247, 212, 0.16);
+  border-radius: 12px;
+  background: rgba(10, 18, 32, 0.42);
+}
+
+.obstacle-category legend {
+  padding: 0 4px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.obstacle-category legend small,
+.obstacle-category > small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
 .obstacle-type-toggles label {
   flex-direction: row;
   align-items: center;

@@ -344,6 +344,32 @@ const OBSTACLE_PRESETS = [
   { label: 'Many', multiplier: 1.65 },
   { label: 'Extreme', multiplier: 2.35 },
 ];
+const OBSTACLE_DISTRIBUTION_MODES = {
+  random: {
+    label: '完全隨機',
+    description: 'Each obstacle independently picks a random enabled type and random distance.',
+  },
+  zoned: {
+    label: '障礙物分區',
+    description: 'Track length is split into zones; each zone uses one obstacle type only.',
+    minZoneMeters: 70,
+  },
+};
+const OBSTACLE_CATEGORIES = {
+  normal: {
+    label: '普通障礙物',
+    description: '物理碰撞、彈射、方向影響等一般障礙。',
+  },
+  buff: {
+    label: '增益類',
+    description: '預留給之後加速、保護、分數或能力提升效果。',
+  },
+  debuff: {
+    label: '減益類',
+    description: '預留給之後減速、干擾、失控或懲罰效果。',
+  },
+};
+
 const PINBALL_OBSTACLE_TYPES = [
   'popBumper',
   'slingshot',
@@ -351,6 +377,23 @@ const PINBALL_OBSTACLE_TYPES = [
   'rolloverLane',
   'dropTarget',
 ];
+const PINBALL_OBSTACLE_TYPE_METADATA = {
+  popBumper: { label: 'Pop Bumper', category: 'normal' },
+  slingshot: { label: 'Slingshot', category: 'normal' },
+  spinnerGate: { label: 'Spinner Gate', category: 'normal' },
+  rolloverLane: { label: 'Rollover Lane', category: 'normal' },
+  dropTarget: { label: 'Drop Target', category: 'normal' },
+};
+const PINBALL_OBSTACLE_CATALOG = Object.fromEntries(
+  Object.entries(OBSTACLE_CATEGORIES).map(([category, config]) => [
+    category,
+    {
+      ...config,
+      key: category,
+      types: PINBALL_OBSTACLE_TYPES.filter((type) => PINBALL_OBSTACLE_TYPE_METADATA[type]?.category === category),
+    },
+  ]),
+);
 
 const BROADCAST_CAMERA = {
   defaultMode: 'default',
@@ -722,6 +765,8 @@ class MarbleRace {
     this.speedPreset = SPEED_PRESETS[this.speedIndex];
     this.obstacleIndex = 0;
     this.obstaclePreset = OBSTACLE_PRESETS[this.obstacleIndex];
+    this.obstacleDistributionMode = 'random';
+    this.obstacleDistributionSummary = null;
     this.curveStyleKey = 'mixed';
     this.curveStyle = CURVE_PRESETS[this.curveStyleKey];
     this.rng = Math.random;
@@ -757,7 +802,11 @@ class MarbleRace {
     this.startGate = null;
     this.finishSpinner = null;
     this.obstacleTypeCounts = Object.fromEntries(PINBALL_OBSTACLE_TYPES.map((type) => [type, 0]));
+    this.obstacleCategoryCounts = Object.fromEntries(Object.keys(OBSTACLE_CATEGORIES).map((category) => [category, 0]));
     this.pinballObstacleTypes = PINBALL_OBSTACLE_TYPES;
+    this.pinballObstacleCategories = OBSTACLE_CATEGORIES;
+    this.pinballObstacleTypeMetadata = PINBALL_OBSTACLE_TYPE_METADATA;
+    this.pinballObstacleCatalog = PINBALL_OBSTACLE_CATALOG;
     this.enabledObstacleTypes = new Set(PINBALL_OBSTACLE_TYPES);
     this.pinballObstacles = [];
     this.showGuidePoints = false;
@@ -985,6 +1034,7 @@ class MarbleRace {
       widthLabel: document.querySelector('#width-label'),
       obstacle: document.querySelector('#obstacle-slider'),
       obstacleLabel: document.querySelector('#obstacle-label'),
+      obstacleDistribution: document.querySelector('#obstacle-distribution-select'),
       showGuidePointsToggle: document.querySelector('#show-guide-points-toggle'),
       catchupToggle: document.querySelector('#catchup-toggle'),
       catchupLabel: document.querySelector('#catchup-label'),
@@ -1139,6 +1189,7 @@ class MarbleRace {
     this.ui.width.addEventListener('change', () => this.updateWidthPreset({ regenerateTrack: true }));
     this.ui.obstacle.addEventListener('input', () => this.updateObstaclePreset({ regenerateTrack: false }));
     this.ui.obstacle.addEventListener('change', () => this.updateObstaclePreset({ regenerateTrack: true }));
+    this.ui.obstacleDistribution?.addEventListener('change', () => this.updateObstacleDistribution({ regenerateTrack: true }));
     this.ui.catchupToggle.addEventListener('change', () => this.updateCatchupAssist());
     this.ui.showGuidePointsToggle?.addEventListener('change', () => this.updateGuidePointsVisibility());
     this.ui.curveSelect.addEventListener('change', () => this.newRace({ regenerateTrack: true }));
@@ -1353,6 +1404,14 @@ class MarbleRace {
     else this.updateUI();
   }
 
+  updateObstacleDistribution({ regenerateTrack = false } = {}) {
+    const mode = this.ui.obstacleDistribution?.value || 'random';
+    this.obstacleDistributionMode = OBSTACLE_DISTRIBUTION_MODES[mode] ? mode : 'random';
+    if (this.ui.obstacleDistribution) this.ui.obstacleDistribution.value = this.obstacleDistributionMode;
+    if (regenerateTrack) this.newRace({ regenerateTrack: true });
+    else this.updateUI();
+  }
+
   updateObstacleTypeToggles({ regenerateTrack = false } = {}) {
     const checkedTypes = (this.ui.obstacleTypeToggles || [])
       .filter((toggle) => toggle.checked)
@@ -1495,6 +1554,7 @@ class MarbleRace {
     this.ui.regen.textContent = this.cupMode?.active ? 'Regenerate Cup Track' : 'Generate New Track';
     this.updateSpeedPreset();
     this.updateGuideBias();
+    this.updateObstacleDistribution({ regenerateTrack: false });
     this.updateObstacleTypeToggles({ regenerateTrack: false });
     this.updateWidthPreset({ regenerateTrack: false });
     this.updateObstaclePreset({ regenerateTrack: false });
@@ -1524,7 +1584,7 @@ class MarbleRace {
       this.curveStyleKey = selectedCurveStyle;
       this.widthPreset = WIDTH_PRESETS[this.widthPresetKey] || WIDTH_PRESETS.normal;
       this.curveStyle = CURVE_PRESETS[this.curveStyleKey] || CURVE_PRESETS.mixed;
-      this.rng = mulberry32(cyrb128(`${this.seed}-${this.trackPresetKey}-${this.customTrackLength || 'preset'}-${this.widthPresetKey}-${this.curveStyleKey}-${this.obstacleIndex}`)[0]);
+      this.rng = mulberry32(cyrb128(`${this.seed}-${this.trackPresetKey}-${this.customTrackLength || 'preset'}-${this.widthPresetKey}-${this.curveStyleKey}-${this.obstacleIndex}-${this.obstacleDistributionMode}`)[0]);
       this.clearTrack();
       this.createTrack();
       this.refreshStallEliminationPolicy();
@@ -1595,6 +1655,15 @@ class MarbleRace {
       return {
         index,
         type: obstacle.type,
+        typeLabel: PINBALL_OBSTACLE_TYPE_METADATA[obstacle.type]?.label || obstacle.type,
+        category: obstacle.category || PINBALL_OBSTACLE_TYPE_METADATA[obstacle.type]?.category || 'normal',
+        categoryLabel: OBSTACLE_CATEGORIES[obstacle.category || PINBALL_OBSTACLE_TYPE_METADATA[obstacle.type]?.category || 'normal']?.label || '普通障礙物',
+        visualStyle: obstacle.visualStyle || null,
+        textureStyle: obstacle.textureStyle || null,
+        distributionMode: obstacle.distributionMode || this.obstacleDistributionMode || 'random',
+        distributionZoneIndex: obstacle.distributionZoneIndex ?? null,
+        distributionZoneStart: obstacle.distributionZoneStart != null ? Number(obstacle.distributionZoneStart.toFixed(2)) : null,
+        distributionZoneEnd: obstacle.distributionZoneEnd != null ? Number(obstacle.distributionZoneEnd.toFixed(2)) : null,
         distance: Number(distance.toFixed(2)),
         progress: this.trackLength ? Number((distance / this.trackLength).toFixed(4)) : 0,
         laneOffset: Number(laneOffset.toFixed(2)),
@@ -1616,7 +1685,7 @@ class MarbleRace {
       version: 1,
       app: 'marble-race',
       seed: this.seed,
-      rngMaterial: `${this.seed}-${this.trackPresetKey}-${this.customTrackLength || 'preset'}-${this.widthPresetKey}-${this.curveStyleKey}-${this.obstacleIndex}`,
+      rngMaterial: `${this.seed}-${this.trackPresetKey}-${this.customTrackLength || 'preset'}-${this.widthPresetKey}-${this.curveStyleKey}-${this.obstacleIndex}-${this.obstacleDistributionMode}`,
       trackPresetKey: this.trackPresetKey,
       customTrackLength: this.customTrackLength || null,
       actualTrackLength: this.trackLength,
@@ -1626,6 +1695,12 @@ class MarbleRace {
       obstacleIndex: this.obstacleIndex,
       obstacleLabel: this.obstaclePreset?.label,
       obstacleMultiplier: this.obstaclePreset?.multiplier ?? 1,
+      obstacleDistributionMode: this.obstacleDistributionMode,
+      obstacleDistributionLabel: OBSTACLE_DISTRIBUTION_MODES[this.obstacleDistributionMode]?.label || OBSTACLE_DISTRIBUTION_MODES.random.label,
+      obstacleDistributionSummary: this.obstacleDistributionSummary,
+      obstacleCategories: OBSTACLE_CATEGORIES,
+      obstacleTypeMetadata: PINBALL_OBSTACLE_TYPE_METADATA,
+      obstacleCatalog: PINBALL_OBSTACLE_CATALOG,
       enabledObstacleTypes: [...(this.enabledObstacleTypes || new Set(PINBALL_OBSTACLE_TYPES))],
       curveStyleKey: this.curveStyleKey,
       catchupAssistEnabled: this.catchupAssistEnabled,
@@ -1661,6 +1736,7 @@ class MarbleRace {
         regressionFix: 'late-track sustained force-only assists remain, all rail-hit return-to-center guide/correction assists are disabled, airborne guide assists pause until landing then recalculate an ahead guide; rail and rolling friction/damping removed by request',
       },
       obstacleTypeCounts: this.obstacleTypeCounts,
+      obstacleCategoryCounts: this.obstacleCategoryCounts,
       enabledObstacleTypes: [...(this.enabledObstacleTypes || new Set(PINBALL_OBSTACLE_TYPES))],
       obstacles: this.getObstacleDebugEntries(),
       generatedAt: new Date().toISOString(),
@@ -1721,6 +1797,7 @@ class MarbleRace {
     if (this.ui.width && widthIndex >= 0) this.ui.width.value = String(widthIndex);
     if (this.ui.speed && Number.isFinite(Number(payload.speedIndex))) this.ui.speed.value = String(payload.speedIndex);
     if (this.ui.obstacle && Number.isFinite(Number(payload.obstacleIndex))) this.ui.obstacle.value = String(payload.obstacleIndex);
+    if (this.ui.obstacleDistribution && payload.obstacleDistributionMode && OBSTACLE_DISTRIBUTION_MODES[payload.obstacleDistributionMode]) this.ui.obstacleDistribution.value = payload.obstacleDistributionMode;
     if (this.ui.curveSelect && payload.curveStyleKey) this.ui.curveSelect.value = payload.curveStyleKey;
     if (this.ui.catchupToggle && typeof payload.catchupAssistEnabled === 'boolean') this.ui.catchupToggle.checked = payload.catchupAssistEnabled;
     this.importedTrackDebugFromSeed = payload;
@@ -1751,6 +1828,7 @@ class MarbleRace {
     this.obstacleBodies = [];
     this.obstacleMeshes = [];
     this.pinballObstacles = [];
+    this.obstacleDistributionSummary = null;
     this.pinballInteractions = {
       popBumper: 0,
       slingshot: 0,
@@ -1759,6 +1837,7 @@ class MarbleRace {
       dropTarget: 0,
     };
     this.obstacleTypeCounts = Object.fromEntries(PINBALL_OBSTACLE_TYPES.map((type) => [type, 0]));
+    this.obstacleCategoryCounts = Object.fromEntries(Object.keys(OBSTACLE_CATEGORIES).map((category) => [category, 0]));
     this.branchSegments = [];
     this.pathPoints = [];
     this.trackSamples = [];
@@ -1851,6 +1930,108 @@ class MarbleRace {
     ctx.fillText(label, 131, 132);
     ctx.fillStyle = '#fff9dd';
     ctx.fillText(label, 128, 128);
+    return this.finishTexture(canvas, 1, 1);
+  }
+
+  createSlingshotPanelTexture() {
+    const { canvas, ctx } = this.createTextureCanvas(512, '#06131f');
+    const bg = ctx.createLinearGradient(0, 0, 512, 512);
+    bg.addColorStop(0, '#02111c');
+    bg.addColorStop(0.28, '#083c4d');
+    bg.addColorStop(0.52, '#11f5d5');
+    bg.addColorStop(0.7, '#6b4cff');
+    bg.addColorStop(1, '#160724');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, 512, 512);
+
+    ctx.globalCompositeOperation = 'screen';
+    for (let i = 0; i < 18; i += 1) {
+      const x = -60 + i * 38;
+      ctx.strokeStyle = i % 3 === 0 ? 'rgba(255,255,255,0.28)' : 'rgba(34,211,238,0.24)';
+      ctx.lineWidth = i % 3 === 0 ? 5 : 3;
+      ctx.beginPath();
+      ctx.moveTo(x, 522);
+      ctx.lineTo(x + 220, -20);
+      ctx.stroke();
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(2,7,18,0.52)';
+    ctx.fillRect(42, 72, 428, 368);
+    ctx.strokeStyle = 'rgba(255,255,255,0.62)';
+    ctx.lineWidth = 9;
+    ctx.strokeRect(42, 72, 428, 368);
+    ctx.strokeStyle = 'rgba(18,240,200,0.88)';
+    ctx.lineWidth = 5;
+    ctx.strokeRect(64, 94, 384, 324);
+
+    ['rgba(255,255,255,0.78)', 'rgba(18,240,200,0.82)', 'rgba(255,61,172,0.76)'].forEach((color, idx) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = idx === 0 ? 7 : 4;
+      ctx.beginPath();
+      ctx.moveTo(86, 330 - idx * 34);
+      ctx.lineTo(198, 198 + idx * 16);
+      ctx.lineTo(256, 268 - idx * 18);
+      ctx.lineTo(314, 198 + idx * 16);
+      ctx.lineTo(426, 330 - idx * 34);
+      ctx.stroke();
+    });
+
+    ctx.font = '900 54px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(2,7,18,0.72)';
+    ctx.fillText('SLING', 260, 258);
+    ctx.fillStyle = '#f8ffff';
+    ctx.fillText('SLING', 256, 252);
+    return this.finishTexture(canvas, 1, 1);
+  }
+
+  createSlingshotChevronTexture() {
+    const { canvas, ctx } = this.createTextureCanvas(256, '#0a1020');
+    const grad = ctx.createLinearGradient(0, 0, 256, 256);
+    grad.addColorStop(0, '#fff7ad');
+    grad.addColorStop(0.36, '#16f5d0');
+    grad.addColorStop(0.7, '#ff3dac');
+    grad.addColorStop(1, '#4f46e5');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillStyle = 'rgba(3,7,18,0.42)';
+    for (let y = -80; y < 300; y += 72) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(128, y + 58);
+      ctx.lineTo(256, y);
+      ctx.lineTo(256, y + 30);
+      ctx.lineTo(128, y + 88);
+      ctx.lineTo(0, y + 30);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.72)';
+    ctx.lineWidth = 10;
+    ctx.strokeRect(18, 18, 220, 220);
+    return this.finishTexture(canvas, 1, 1);
+  }
+
+  createSlingshotRubberTexture() {
+    const { canvas, ctx } = this.createTextureCanvas(256, '#050816');
+    const grad = ctx.createLinearGradient(0, 0, 256, 0);
+    grad.addColorStop(0, '#050816');
+    grad.addColorStop(0.35, '#111827');
+    grad.addColorStop(0.5, '#1fffe1');
+    grad.addColorStop(0.65, '#111827');
+    grad.addColorStop(1, '#050816');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 256, 256);
+    for (let y = 10; y < 256; y += 24) {
+      ctx.strokeStyle = y % 48 === 10 ? 'rgba(255,255,255,0.28)' : 'rgba(20,184,166,0.26)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(256, y + 18);
+      ctx.stroke();
+    }
     return this.finishTexture(canvas, 1, 1);
   }
 
@@ -3467,15 +3648,83 @@ class MarbleRace {
       .filter((type) => PINBALL_OBSTACLE_TYPES.includes(type));
     if (!enabledTypes.length) return;
 
-    for (let i = 0; i < count; i += 1) {
-      const d = 12 + this.rng() * Math.max(8, this.trackLength - 28);
+    const mode = OBSTACLE_DISTRIBUTION_MODES[this.obstacleDistributionMode] ? this.obstacleDistributionMode : 'random';
+    const placements = this.buildObstaclePlacements(count, enabledTypes, mode);
+    const zones = mode === 'zoned' ? this.buildObstacleDistributionZones(enabledTypes) : [];
+    this.obstacleDistributionSummary = {
+      mode,
+      label: OBSTACLE_DISTRIBUTION_MODES[mode]?.label || OBSTACLE_DISTRIBUTION_MODES.random.label,
+      obstacleCount: placements.length,
+      enabledTypes,
+      zones: zones.map((zone) => ({
+        index: zone.index,
+        type: zone.type,
+        category: PINBALL_OBSTACLE_TYPE_METADATA[zone.type]?.category || 'normal',
+        categoryLabel: OBSTACLE_CATEGORIES[PINBALL_OBSTACLE_TYPE_METADATA[zone.type]?.category || 'normal']?.label || '普通障礙物',
+        start: Number(zone.start.toFixed(2)),
+        end: Number(zone.end.toFixed(2)),
+      })),
+    };
+
+    placements.forEach((placement) => {
+      const d = placement.distance;
       const frame = this.getTrackFrameAt(d);
       const localWidth = this.getTrackWidthAt(d);
       const lane = (this.rng() - 0.5) * Math.max(2.8, localWidth - 3.8);
-      const type = enabledTypes[i % enabledTypes.length];
-      this.createPinballObstacle(type, frame, lane, localWidth, palette);
+      const type = placement.type;
+      const obstacle = this.createPinballObstacle(type, frame, lane, localWidth, palette);
+      const category = PINBALL_OBSTACLE_TYPE_METADATA[type]?.category || 'normal';
+      if (obstacle) {
+        obstacle.category = category;
+        obstacle.categoryLabel = OBSTACLE_CATEGORIES[category]?.label || '普通障礙物';
+        obstacle.distributionMode = mode;
+        obstacle.distributionZoneIndex = placement.zoneIndex ?? null;
+        obstacle.distributionZoneStart = placement.zoneStart ?? null;
+        obstacle.distributionZoneEnd = placement.zoneEnd ?? null;
+      }
       this.obstacleTypeCounts[type] = (this.obstacleTypeCounts[type] || 0) + 1;
+      this.obstacleCategoryCounts[category] = (this.obstacleCategoryCounts[category] || 0) + 1;
+    });
+  }
+
+  buildObstacleDistributionZones(enabledTypes) {
+    const usableStart = 12;
+    const usableEnd = Math.max(usableStart + 8, this.trackLength - 16);
+    const usableLength = Math.max(1, usableEnd - usableStart);
+    const maxZonesByLength = Math.max(1, Math.floor(usableLength / (OBSTACLE_DISTRIBUTION_MODES.zoned.minZoneMeters || 70)));
+    const zoneCount = Math.max(1, Math.min(enabledTypes.length, maxZonesByLength));
+    return Array.from({ length: zoneCount }, (_, index) => {
+      const start = usableStart + (usableLength * index) / zoneCount;
+      const end = usableStart + (usableLength * (index + 1)) / zoneCount;
+      return { index, start, end, type: enabledTypes[index % enabledTypes.length] };
+    });
+  }
+
+  buildObstaclePlacements(count, enabledTypes, mode = this.obstacleDistributionMode) {
+    if (count <= 0 || !enabledTypes.length) return [];
+    if (mode === 'zoned') {
+      const zones = this.buildObstacleDistributionZones(enabledTypes);
+      return Array.from({ length: count }, (_, i) => {
+        const zone = zones[i % zones.length];
+        const zonePadding = Math.min(5, Math.max(1.2, (zone.end - zone.start) * 0.12));
+        const minD = Math.min(zone.end - 0.5, zone.start + zonePadding);
+        const maxD = Math.max(minD + 0.5, zone.end - zonePadding);
+        return {
+          type: zone.type,
+          distance: clamp(minD + this.rng() * Math.max(0.5, maxD - minD), 12, Math.max(12, this.trackLength - 16)),
+          zoneIndex: zone.index,
+          zoneStart: zone.start,
+          zoneEnd: zone.end,
+        };
+      });
     }
+    return Array.from({ length: count }, () => ({
+      type: enabledTypes[Math.floor(this.rng() * enabledTypes.length)] || enabledTypes[0],
+      distance: 12 + this.rng() * Math.max(8, this.trackLength - 28),
+      zoneIndex: null,
+      zoneStart: null,
+      zoneEnd: null,
+    }));
   }
 
   createPinballObstacle(type, frame, lane, localWidth, palette) {
@@ -3488,6 +3737,7 @@ class MarbleRace {
         return this.createPopBumperObstacle(center, palette.popBumper);
       case 'slingshot':
         palette.slingshot.userData.insertMaterial = palette.yellowInsert;
+        palette.slingshot.userData.chromeMaterial = palette.chrome;
         return this.createSlingshotObstacle(center, yaw + (this.rng() < 0.5 ? -1 : 1) * Math.PI * 0.24, palette.slingshot);
       case 'spinnerGate':
         palette.spinnerGate.userData.yellowInsert = palette.yellowInsert;
@@ -3534,7 +3784,7 @@ class MarbleRace {
     body.addShape(new CANNON.Cylinder(radius, radius, 0.66, 28));
     body.position.copy(mesh.position);
     this.addObstacleBody(body, mesh);
-    this.pinballObstacles.push({
+    const obstacle = {
       type: 'popBumper',
       center: mesh.position.clone(),
       radius: Math.max(PINBALL_PHYSICS.popBumperRadius, radius + 0.62),
@@ -3544,43 +3794,84 @@ class MarbleRace {
       cap,
       skirt,
       pulse: 0,
-    });
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
   }
 
   createSlingshotObstacle(center, yaw, material) {
     const w = 2.1 + this.rng() * 0.65;
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, 0.44, 0.36), material);
-    mesh.position.set(center.x, center.y + 0.3, center.z);
-    mesh.rotation.y = yaw;
-    mesh.castShadow = PERFORMANCE_TUNING.shadows;
-    mesh.receiveShadow = PERFORMANCE_TUNING.shadows;
-    this.trackGroup.add(mesh);
+    const group = new THREE.Group();
+    group.position.copy(center);
+    group.rotation.y = yaw;
+    group.userData.visualStyle = 'aligned-modern-chrome-neon-slingshot';
+    this.trackGroup.add(group);
 
-    const insertMat = material.userData?.insertMaterial || material;
-    [-0.38, 0, 0.38].forEach((offset) => {
-      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.135, 14, 8), insertMat);
-      const localX = offset * w;
-      bulb.position.copy(center.clone().add(this.localToWorldOffset(localX, 0.57, 0, yaw)));
-      bulb.scale.y = 0.42;
+    const panelMat = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      map: this.createSlingshotPanelTexture(),
+      roughness: 0.12,
+      metalness: 0.18,
+      clearcoat: 1,
+      clearcoatRoughness: 0.045,
+      emissive: 0x0cd9c0,
+      emissiveIntensity: 0.36,
+    });
+    const chromeMat = material.userData?.chromeMaterial || new THREE.MeshPhysicalMaterial({ color: 0xe6f2ff, roughness: 0.1, metalness: 0.92, clearcoat: 1, clearcoatRoughness: 0.04 });
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0x18ffe1, transparent: true, opacity: 0.3, depthWrite: false });
+    const insertMat = material.userData?.insertMaterial || panelMat;
+
+    const base = new THREE.Mesh(new THREE.BoxGeometry(w, 0.18, 0.5), chromeMat);
+    base.position.set(0, 0.25, 0);
+    base.castShadow = PERFORMANCE_TUNING.shadows;
+    base.receiveShadow = PERFORMANCE_TUNING.shadows;
+    group.add(base);
+
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(w * 0.84, 0.36, 0.16), panelMat);
+    panel.position.set(0, 0.49, 0);
+    panel.castShadow = PERFORMANCE_TUNING.shadows;
+    panel.receiveShadow = PERFORMANCE_TUNING.shadows;
+    group.add(panel);
+
+    const glow = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.84, 0.28), glowMat);
+    glow.position.set(0, 0.585, 0.085);
+    glow.rotation.x = -Math.PI / 2;
+    glow.renderOrder = 36;
+    group.add(glow);
+
+    const bulbs = [];
+    [-0.3, 0, 0.3].forEach((offset) => {
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.13, 18, 10), insertMat);
+      bulb.position.set(offset * w, 0.71, 0);
+      bulb.scale.y = 0.44;
       bulb.castShadow = PERFORMANCE_TUNING.shadows;
-      this.trackGroup.add(bulb);
+      group.add(bulb);
+      bulbs.push(bulb);
     });
 
     const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
     body.addShape(new CANNON.Box(new CANNON.Vec3(w / 2, 0.22, 0.18)));
-    body.position.copy(mesh.position);
-    body.quaternion.copy(mesh.quaternion);
-    this.addObstacleBody(body, mesh);
-    this.pinballObstacles.push({
+    body.position.copy(center.clone().add(this.localToWorldOffset(0, 0.3, 0, yaw)));
+    body.quaternion.copy(group.quaternion);
+    this.addObstacleBody(body, group);
+    const obstacle = {
       type: 'slingshot',
-      center: mesh.position.clone(),
+      center: center.clone().add(this.localToWorldOffset(0, 0.3, 0, yaw)),
       normal: new THREE.Vector3(Math.sin(yaw + Math.PI / 2), 0, Math.cos(yaw + Math.PI / 2)).normalize(),
       radius: PINBALL_PHYSICS.slingshotRadius,
       impulse: PINBALL_PHYSICS.slingshotImpulse,
       cooldown: new Map(),
-      mesh,
+      mesh: panel,
+      group,
+      base,
+      bulbs,
+      glow,
+      visualStyle: 'aligned-modern-chrome-neon-slingshot',
+      textureStyle: 'aligned-gradient-panel-neon-bulbs',
       pulse: 0,
-    });
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
   }
 
   createSpinnerGateObstacle(center, yaw, material) {
@@ -3612,7 +3903,7 @@ class MarbleRace {
     body.addShape(new CANNON.Cylinder(0.62, 0.62, 0.5, 16));
     body.position.set(center.x, center.y + 0.48, center.z);
     this.addObstacleBody(body, group);
-    this.pinballObstacles.push({
+    const obstacle = {
       type: 'spinnerGate',
       center: center.clone().add(new THREE.Vector3(0, 0.48, 0)),
       radius: PINBALL_PHYSICS.spinnerRadius,
@@ -3620,7 +3911,9 @@ class MarbleRace {
       cooldown: new Map(),
       group,
       spinnerSpeed: PINBALL_PHYSICS.spinnerSpeed * (this.rng() < 0.5 ? -1 : 1),
-    });
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
   }
 
   createRolloverLaneObstacle(center, yaw, material) {
@@ -3658,7 +3951,7 @@ class MarbleRace {
     insertDisc.position.set(0, 0.115, 0);
     insertDisc.rotation.x = -Math.PI / 2;
     group.add(insertDisc);
-    this.pinballObstacles.push({
+    const obstacle = {
       type: 'rolloverLane',
       center: center.clone().add(this.localToWorldOffset(0, 0.16, 0, yaw)),
       direction: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).normalize(),
@@ -3667,7 +3960,9 @@ class MarbleRace {
       cooldown: new Map(),
       mesh: lanePlate,
       pulse: 0,
-    });
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
   }
 
   createDropTargetObstacle(center, yaw, material, rubberMaterial) {
@@ -3701,7 +3996,7 @@ class MarbleRace {
     jewel.position.set(0, 0.3, -0.42);
     jewel.rotation.x = Math.PI / 2;
     group.add(jewel);
-    this.pinballObstacles.push({
+    const obstacle = {
       type: 'dropTarget',
       center: center.clone().add(this.localToWorldOffset(0, 0.58, 0, yaw)),
       direction: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).normalize(),
@@ -3718,7 +4013,9 @@ class MarbleRace {
       bodies,
       dropped: false,
       dropProgress: 0,
-    });
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
   }
 
   updatePinballObstacles(delta) {
@@ -7812,6 +8109,12 @@ class MarbleRace {
       obstacleIndex: this.obstacleIndex,
       obstaclePreset: this.obstaclePreset,
       obstacleMultiplier: this.obstaclePreset?.multiplier ?? 1,
+      obstacleDistributionMode: this.obstacleDistributionMode,
+      obstacleDistributionLabel: OBSTACLE_DISTRIBUTION_MODES[this.obstacleDistributionMode]?.label || OBSTACLE_DISTRIBUTION_MODES.random.label,
+      obstacleDistributionSummary: this.obstacleDistributionSummary,
+      obstacleCategories: OBSTACLE_CATEGORIES,
+      obstacleTypeMetadata: PINBALL_OBSTACLE_TYPE_METADATA,
+      obstacleCatalog: PINBALL_OBSTACLE_CATALOG,
       enabledObstacleTypes: [...(this.enabledObstacleTypes || new Set(PINBALL_OBSTACLE_TYPES))],
       curveStyleKey: this.curveStyleKey,
       curveStyle: this.curveStyle,
@@ -8161,8 +8464,12 @@ class MarbleRace {
       branchCount: this.branchSegments.length,
       obstacleCount: this.obstacleMeshes.length,
       obstacleTypeCounts: this.obstacleTypeCounts,
+      obstacleCategoryCounts: this.obstacleCategoryCounts,
       enabledObstacleTypes: [...(this.enabledObstacleTypes || new Set(PINBALL_OBSTACLE_TYPES))],
       pinballObstacleTypes: this.pinballObstacleTypes,
+      pinballObstacleCategories: this.pinballObstacleCategories,
+      pinballObstacleTypeMetadata: this.pinballObstacleTypeMetadata,
+      pinballObstacleCatalog: this.pinballObstacleCatalog,
       pinballInteractions: this.pinballInteractions,
       activePinballObstacles: this.pinballObstacles.length,
       spectacleFeatures: ['broadcast-event-captions', 'impact-rings-and-sparks', 'marble-speed-trails', 'finish-slow-motion', 'finish-confetti-cannons', 'winner-showcase-awards', 'podium-ceremony', 'cup-mode-knockout', 'match-card-overlay', 'themed-sector-signage'],
@@ -8493,6 +8800,7 @@ class MarbleRace {
       speedLabel: debug.speedLabel,
       widthPresetKey: debug.widthPresetKey,
       obstaclePreset: debug.obstaclePreset?.label || debug.obstaclePreset,
+      obstacleDistribution: debug.obstacleDistributionLabel || debug.obstacleDistributionMode,
       curveStyleKey: debug.curveStyleKey,
       trackDebugCodeLength: debug.trackDebugCode?.length || 0,
     };

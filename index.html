@@ -83,6 +83,14 @@
               <div class="speed-ticks"><span>None</span><span>Standard</span><span>Many</span><span>Extreme</span></div>
             </label>
             <label class="span-2">
+              Obstacle Distribution
+              <select id="obstacle-distribution-select">
+                <option value="random" selected>完全隨機</option>
+                <option value="zoned">障礙物分區</option>
+              </select>
+              <small>分區模式會按賽道長度切成多個區域，每區只放一種障礙物。</small>
+            </label>
+            <label class="span-2">
               Curve Style
               <select id="curve-select">
                 <option value="mixed" selected>Mixed: U-turns + S-curves</option>
@@ -106,7 +114,7 @@
               <input id="seed-input" type="text" value="" placeholder="Leave blank for random" />
             </label>
           </div>
-          <p class="hint">Marbles stage at the gate after loading | Smooth bird’s-eye Default Auto camera by default | Track length presets are doubled and Custom length supports typed meters | Overall speed is now doubled again; use the slider to slow down or speed up | Track width can be Ultra Narrow / Narrow / Normal / Wide and changing it regenerates the track | Rail momentum assist prevents marbles losing forward inertia when they scrape rails | “Generate New Track” rerolls the route and obstacles | “Re-stage” resets the same track | Drag to orbit | Scroll to zoom | Press 1-6 for cameras | R to re-stage | Space to open gate/pause</p>
+          <p class="hint">Marbles stage at the gate after loading | Smooth bird’s-eye Default Auto camera by default | Track length presets are doubled and Custom length supports typed meters | Overall speed is now doubled again; use the slider to slow down or speed up | Track width can be Ultra Narrow / Narrow / Normal / Wide and changing it regenerates the track | Obstacles can be fully random or grouped into length-based single-type zones | Rail momentum assist prevents marbles losing forward inertia when they scrape rails | “Generate New Track” rerolls the route and obstacles | “Re-stage” resets the same track | Drag to orbit | Scroll to zoom | Press 1-6 for cameras | R to re-stage | Space to open gate/pause</p>
           </div>
         </section>
 
@@ -157,13 +165,24 @@
           </div>
           <div class="panel-body">
             <div id="obstacle-type-toggles" class="obstacle-type-toggles" aria-label="Toggle obstacle types">
-              <label><span>Pop Bumper</span><input type="checkbox" data-obstacle-type="popBumper" checked /></label>
-              <label><span>Slingshot</span><input type="checkbox" data-obstacle-type="slingshot" checked /></label>
-              <label><span>Spinner Gate</span><input type="checkbox" data-obstacle-type="spinnerGate" checked /></label>
-              <label><span>Rollover Lane</span><input type="checkbox" data-obstacle-type="rolloverLane" checked /></label>
-              <label><span>Drop Target</span><input type="checkbox" data-obstacle-type="dropTarget" checked /></label>
+              <fieldset class="obstacle-category" data-obstacle-category="normal">
+                <legend>普通障礙物 <small>物理方向影響等</small></legend>
+                <label><span>Pop Bumper</span><input type="checkbox" data-obstacle-type="popBumper" data-obstacle-category="normal" checked /></label>
+                <label><span>Slingshot</span><input type="checkbox" data-obstacle-type="slingshot" data-obstacle-category="normal" checked /></label>
+                <label><span>Spinner Gate</span><input type="checkbox" data-obstacle-type="spinnerGate" data-obstacle-category="normal" checked /></label>
+                <label><span>Rollover Lane</span><input type="checkbox" data-obstacle-type="rolloverLane" data-obstacle-category="normal" checked /></label>
+                <label><span>Drop Target</span><input type="checkbox" data-obstacle-type="dropTarget" data-obstacle-category="normal" checked /></label>
+              </fieldset>
+              <fieldset class="obstacle-category" data-obstacle-category="buff">
+                <legend>增益類</legend>
+                <small>暫未有現有障礙物；預留給之後加速、保護或其他增益效果。</small>
+              </fieldset>
+              <fieldset class="obstacle-category" data-obstacle-category="debuff">
+                <legend>減益類</legend>
+                <small>暫未有現有障礙物；預留給之後減速、干擾或其他懲罰效果。</small>
+              </fieldset>
             </div>
-            <small>Turn obstacle families on/off, then regenerate the track to rebuild with those types.</small>
+            <small>障礙物開始按「普通 / 增益 / 減益」分類；現有障礙物全部歸入普通障礙物，可先開關普通類型後再重新生成賽道。</small>
           </div>
         </section>
 
