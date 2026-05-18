@@ -19,12 +19,36 @@ const MARBLE_SERVER_URL = process.env.MARBLE_SERVER_URL || `http://${MARBLE_SERV
 
 mkdirSync(recordingsDir, { recursive: true });
 
+const OBSTACLE_CATEGORIES = {
+  normal: {
+    label: '普通障礙物',
+    description: '物理方向影響、反彈、旋轉、阻擋等現有 pinball 障礙物。',
+  },
+  buff: {
+    label: '增益類',
+    description: '預留給之後加速、保護、分數或能力提升效果。',
+  },
+  debuff: {
+    label: '減益類',
+    description: '預留給之後減速、干擾、失控或懲罰效果。',
+  },
+};
+
 const OBSTACLE_TYPES = [
-  { value: 'popBumper', label: 'Pop Bumpers / 彈跳 bumper' },
-  { value: 'slingshot', label: 'Slingshots / 彈射器' },
-  { value: 'spinnerGate', label: 'Spinner Gates / 旋轉閘' },
-  { value: 'rolloverLane', label: 'Rollover Lanes / 滾道路線' },
-  { value: 'dropTarget', label: 'Drop Targets / 掉落目標' },
+  { value: 'popBumper', label: 'Pop Bumper', category: 'normal' },
+  { value: 'slingshot', label: 'Slingshot', category: 'normal' },
+  { value: 'spinnerGate', label: 'Spinner Gate', category: 'normal' },
+  { value: 'dropTarget', label: 'Drop Target', category: 'normal' },
+];
+
+const OBSTACLE_DISTRIBUTION_MODES = [
+  { value: 'random', label: '完全隨機', description: 'Each obstacle independently picks a random enabled type and distance.' },
+  { value: 'zoned', label: '障礙物分區', description: 'Track length is split into zones; each zone uses one obstacle type only.' },
+];
+
+const BACKGROUND_RECORD_MODES = [
+  { value: 'continuous', key: 'multiple', label: 'Multiple', description: 'Background record several single races; regenerate track between races.' },
+  { value: 'cup', key: 'cup', label: 'Cup Mode', description: 'Background tournament render using QF / SF / Final timing.' },
 ];
 
 const DENSITY_PRESETS = [
@@ -120,7 +144,13 @@ function normalizeOptions(input = {}) {
   const audio = input.audio !== false;
   const ttsVoice = String(input.ttsVoice || 'Alex').replace(/[^\w .'-]/g, '').trim().slice(0, 48) || 'Alex';
   const dryRun = input.dryRun === true || input.__dryRun === true;
+  const recordMode = BACKGROUND_RECORD_MODES.some((mode) => mode.value === input.recordMode) ? input.recordMode : 'cup';
+  const multipleRaceCount = Math.max(1, Math.min(99, Math.round(Number(input.multipleRaceCount) || 5)));
+  const obstacleDistribution = OBSTACLE_DISTRIBUTION_MODES.some((mode) => mode.value === input.obstacleDistribution) ? input.obstacleDistribution : 'random';
   return {
+    recordMode,
+    multipleRaceCount,
+    obstacleDistribution,
     cupName,
     density,
     obstacleTypes,
@@ -186,7 +216,12 @@ function startRender(options) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const slug = safeSlug(options.cupName, 'marble-cup');
   const typeSlug = options.obstacleTypes.length ? options.obstacleTypes.join('-') : 'all-obstacles';
-  const output = path.join(recordingsDir, `${stamp}-${slug}-${options.density}-${typeSlug}.${options.format}`);
+  const modeSlug = {
+    single: 'single-record',
+    continuous: `multiple-${options.multipleRaceCount || 5}`,
+    cup: 'cup-mode',
+  }[options.recordMode] || 'cup-mode';
+  const output = path.join(recordingsDir, `${stamp}-${slug}-${modeSlug}-${options.density}-${typeSlug}.${options.format}`);
   const renderPort = nextRenderPort++;
   const renderUrl = `http://127.0.0.1:${renderPort}`;
   const args = [
@@ -195,9 +230,12 @@ function startRender(options) {
     `--output=${output}`,
     `--format=${options.format}`,
     `--cup-name=${options.cupName}`,
+    `--mode=${options.recordMode}`,
+    `--multiple-race-count=${options.multipleRaceCount}`,
     `--cup-size=${options.cupSize}`,
     `--track-length=${options.trackLength}`,
     `--obstacle-preset=${options.density}`,
+    `--obstacle-distribution=${options.obstacleDistribution}`,
     `--max-race-seconds=${options.maxRaceSeconds}`,
     `--timeout=${options.timeout}`,
     `--tts-voice=${options.ttsVoice}`,
@@ -375,11 +413,32 @@ async function stopMarbleServer() {
 }
 
 function dashboardHtml() {
-  const obstacleChecks = OBSTACLE_TYPES.map((type) => `
-    <label class="check"><input type="checkbox" name="obstacleTypes" value="${type.value}" checked> <span>${type.label}</span></label>
-  `).join('');
+  const obstacleChecks = Object.entries(OBSTACLE_CATEGORIES).map(([categoryKey, category]) => {
+    const types = OBSTACLE_TYPES.filter((type) => type.category === categoryKey);
+    const body = types.length
+      ? types.map((type) => `
+        <label class="check"><input type="checkbox" name="obstacleTypes" value="${type.value}" data-obstacle-category="${categoryKey}" checked> <span>${type.label}</span></label>
+      `).join('')
+      : `<p class="muted category-note">${category.description}</p>`;
+    return `
+      <fieldset class="obstacle-category" data-dashboard-obstacle-category="${categoryKey}">
+        <legend>${category.label}</legend>
+        ${body}
+      </fieldset>
+    `;
+  }).join('');
   const densityOptions = DENSITY_PRESETS.map((density) => `
     <option value="${density.value}" ${density.value === 'extreme' ? 'selected' : ''}>${density.label}</option>
+  `).join('');
+  const obstacleDistributionOptions = OBSTACLE_DISTRIBUTION_MODES.map((mode) => `
+    <option value="${mode.value}" ${mode.value === 'random' ? 'selected' : ''}>${mode.label}</option>
+  `).join('');
+  const backgroundRecordModeCards = BACKGROUND_RECORD_MODES.map((mode) => `
+    <label class="record-mode-card" data-background-record-mode="${mode.key}">
+      <input type="radio" name="recordMode" value="${mode.value}" ${mode.value === 'cup' ? 'checked' : ''}>
+      <b>${mode.label}</b>
+      <span>${mode.description}</span>
+    </label>
   `).join('');
   const trackLengthOptions = `
     <option value="${CUP_VIDEO_DEFAULTS.trackLength}" selected>${CUP_STAGE_TRACK_LABEL}</option>
@@ -422,7 +481,11 @@ function dashboardHtml() {
     .form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
     .wide { grid-column: span 2; }
     .full { grid-column: 1 / -1; }
-    .checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+    .checks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .obstacle-category { margin: 0; border: 1px solid rgba(255,255,255,.09); border-radius: 13px; padding: 8px; background: rgba(255,255,255,.04); }
+    .obstacle-category legend { padding: 0 5px; color: #dfe8fb; font-weight: 900; font-size: 12px; }
+    .obstacle-category .check + .check { margin-top: 6px; }
+    .category-note { margin: 6px 0 0; line-height: 1.35; }
     .check { display: flex; align-items: center; gap: 8px; margin: 0; padding: 8px 9px; border-radius: 12px; background: rgba(255,255,255,.055); font-weight: 700; font-size: 12px; min-height: 36px; }
     button { border: 0; border-radius: 12px; padding: 9px 12px; min-height: 36px; font-weight: 900; color: #07111d; background: linear-gradient(135deg, #8ef4ff, #b49cff); cursor: pointer; font-size: 12px; }
     button.secondary { background: rgba(255,255,255,.11); color: #f4f7fb; border: 1px solid rgba(255,255,255,.14); }
@@ -440,8 +503,17 @@ function dashboardHtml() {
     .muted { color: var(--muted); font-size: 12px; }
     .pill { display: inline-block; border: 1px solid rgba(255,255,255,.13); border-radius: 999px; padding: 4px 8px; color: #cad7ef; font-size: 11px; margin: 4px 4px 0 0; }
     .section-divider { height: 1px; background: var(--line); margin: 12px 0 10px; }
+    .record-mode-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .record-mode-card { position: relative; display: grid; gap: 4px; margin: 0; padding: 10px 10px 10px 34px; border-radius: 14px; background: rgba(255,255,255,.055); border: 1px solid rgba(255,255,255,.09); font-weight: 800; min-height: 78px; }
+    .record-mode-card input { position: absolute; left: 10px; top: 12px; }
+    .record-mode-card:has(input:checked) { border-color: rgba(142,244,255,.62); box-shadow: inset 0 0 0 1px rgba(142,244,255,.22); background: rgba(142,244,255,.12); }
+    .record-mode-card b { font-size: 13px; color: #f4f7fb; }
+    .record-mode-card span { color: var(--muted); font-size: 11px; line-height: 1.3; }
+    .record-mode-extra { margin-top: 8px; display: grid; grid-template-columns: minmax(0, 180px) 1fr; gap: 10px; align-items: end; }
+    .record-mode-extra .muted { padding-bottom: 8px; }
     details { border-radius: 14px; background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.075); padding: 9px; }
     summary { cursor: pointer; font-weight: 900; font-size: 12px; color: #eaf1ff; }
+    @media (max-width: 760px) { .record-mode-grid, .record-mode-extra { grid-template-columns: 1fr; } }
     @media (max-width: 1180px) { .shell { grid-template-columns: 260px 1fr; } .right-pane { grid-column: 1 / -1; } }
     @media (max-width: 760px) { main { padding: 10px; } .topbar { grid-template-columns: 1fr; margin: -10px -10px 10px; } .shell, .form-grid { grid-template-columns: 1fr; } .wide { grid-column: auto; } .checks { grid-template-columns: 1fr; } }
   </style>
@@ -505,6 +577,10 @@ function dashboardHtml() {
             <select id="density" name="density">${densityOptions}</select>
           </div>
           <div>
+            <label for="obstacleDistribution">障礙分佈</label>
+            <select id="obstacleDistribution" name="obstacleDistribution">${obstacleDistributionOptions}</select>
+          </div>
+          <div>
             <label for="trackLength">賽道</label>
             <select id="trackLength" name="trackLength">${trackLengthOptions}</select>
           </div>
@@ -524,9 +600,23 @@ function dashboardHtml() {
         </div>
 
         <div class="section-divider"></div>
+        <section aria-label="Background Record" data-dashboard-section="background-record-categories">
+          <div class="card-head"><h2>Background Record</h2><span class="muted">Multiple / Cup Mode</span></div>
+          <div class="record-mode-grid">${backgroundRecordModeCards}</div>
+          <div class="record-mode-extra">
+            <div>
+              <label for="multipleRaceCount">Multiple 場數</label>
+              <input id="multipleRaceCount" name="multipleRaceCount" type="number" min="1" max="99" value="5">
+            </div>
+            <div id="recordModeHint" class="muted">Cup Mode: background tournament recording.</div>
+          </div>
+        </section>
+
+        <div class="section-divider"></div>
         <details open>
-          <summary>障礙物種類</summary>
+          <summary>障礙物種類 / 分類</summary>
           <div class="checks" style="margin-top:8px">${obstacleChecks}</div>
+          <p class="muted">Dashboard now mirrors the game categories: 普通 / 增益 / 減益. Empty categories are reserved so future obstacle add/remove changes are visible here too.</p>
           <div class="actions">
             <button type="button" class="secondary" id="allTypes">全選</button>
             <button type="button" class="secondary" id="bumperOnly">只選 Bumper</button>
@@ -575,11 +665,31 @@ const serverStopBtn = document.querySelector('#serverStopBtn');
 const serverRefreshBtn = document.querySelector('#serverRefreshBtn');
 const serverOpenLink = document.querySelector('#serverOpenLink');
 const gameServiceStat = document.querySelector('#gameServiceStat');
+const recordModeHint = document.querySelector('#recordModeHint');
+const multipleRaceCountInput = document.querySelector('#multipleRaceCount');
+const recordModeHints = {
+  single: 'Single: in-game recording only; use Marble Rush page for manual Single capture.',
+  continuous: 'Multiple: background record repeated single races; 場數由 Multiple 場數控制。',
+  cup: 'Cup Mode: background tournament recording.',
+};
 let currentJobId = null;
 let pollTimer = null;
 
 function selectedTypes() {
   return Array.from(document.querySelectorAll('input[name="obstacleTypes"]:checked')).map((el) => el.value);
+}
+function selectedRecordMode() {
+  return form.recordMode?.value || 'cup';
+}
+function normalizeMultipleRaceCount() {
+  const raw = Number(multipleRaceCountInput?.value);
+  const count = Number.isFinite(raw) ? Math.round(raw) : 5;
+  return Math.max(1, Math.min(99, count));
+}
+function updateRecordModeHint() {
+  const mode = selectedRecordMode();
+  if (recordModeHint) recordModeHint.textContent = recordModeHints[mode] || recordModeHints.cup;
+  if (multipleRaceCountInput) multipleRaceCountInput.disabled = mode !== 'continuous';
 }
 function setTypes(types) {
   document.querySelectorAll('input[name="obstacleTypes"]').forEach((el) => { el.checked = types.includes(el.value); });
@@ -587,6 +697,9 @@ function setTypes(types) {
 document.querySelector('#allTypes').onclick = () => setTypes(${JSON.stringify(OBSTACLE_TYPES.map((type) => type.value))});
 document.querySelector('#bumperOnly').onclick = () => setTypes(['popBumper']);
 document.querySelector('#clearTypes').onclick = () => setTypes([]);
+document.querySelectorAll('input[name="recordMode"]').forEach((el) => el.addEventListener('change', updateRecordModeHint));
+multipleRaceCountInput?.addEventListener('change', () => { multipleRaceCountInput.value = String(normalizeMultipleRaceCount()); });
+updateRecordModeHint();
 
 function fmtBytes(n) {
   if (!n) return '0 B';
@@ -639,15 +752,18 @@ function renderJob(job) {
   jobMeta.innerHTML = 'Job #' + job.id + ' · ' + (job.outputName || '') + ' · ' + (job.size ? fmtBytes(job.size) : 'rendering...') +
     (job.outputExists ? ' · <a href="/recordings/' + encodeURIComponent(job.outputName) + '" target="_blank">下載/預覽</a>' : '');
   jobPills.innerHTML = [
+    'Mode: ' + (job.options.recordMode === 'continuous' ? 'Multiple' : 'Cup Mode'),
+    job.options.recordMode === 'continuous' ? 'Races: ' + (job.options.multipleRaceCount || 5) : null,
     'Cup: ' + job.options.cupName,
     'Density: ' + job.options.density,
+    'Distribution: ' + (job.options.obstacleDistribution || 'random'),
     'Types: ' + (job.options.obstacleTypes.length ? job.options.obstacleTypes.join(', ') : 'all'),
     'Target: ' + (job.options.targetMinutes || ${CUP_VIDEO_DEFAULTS.targetMinutes}) + ' min',
     'Track: ' + (job.options.stageTrackLabel || (job.options.trackLength + 'm')),
     'Format: ' + job.options.format,
     'TTS: ' + (job.options.ttsVoice || 'Alex'),
     'Port: ' + job.renderPort,
-  ].map((text) => '<span class="pill">' + text + '</span>').join('');
+  ].filter(Boolean).map((text) => '<span class="pill">' + text + '</span>').join('');
   logEl.textContent = job.log || '已開始，等待 render log...';
   logEl.scrollTop = logEl.scrollHeight;
 }
@@ -673,8 +789,11 @@ async function pollJob() {
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const payload = {
+    recordMode: selectedRecordMode(),
+    multipleRaceCount: normalizeMultipleRaceCount(),
     cupName: form.cupName.value,
     density: form.density.value,
+    obstacleDistribution: form.obstacleDistribution.value,
     obstacleTypes: selectedTypes(),
     format: form.format.value,
     cupSize: Number(form.cupSize.value),
@@ -717,7 +836,14 @@ async function handleRequest(req, res) {
   if (req.method === 'GET' && url.pathname === '/') return htmlResponse(res, dashboardHtml());
 
   if (req.method === 'GET' && url.pathname === '/api/options') {
-    return jsonResponse(res, 200, { ok: true, obstacleTypes: OBSTACLE_TYPES, densityPresets: DENSITY_PRESETS });
+    return jsonResponse(res, 200, {
+      ok: true,
+      obstacleTypes: OBSTACLE_TYPES,
+      obstacleCategories: OBSTACLE_CATEGORIES,
+      obstacleDistributionModes: OBSTACLE_DISTRIBUTION_MODES,
+      densityPresets: DENSITY_PRESETS,
+      backgroundRecordModes: BACKGROUND_RECORD_MODES,
+    });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/marble-server') {

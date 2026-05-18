@@ -125,10 +125,18 @@
             <button id="regen-btn">Generate New Track</button>
             <button id="pause-btn">Pause</button>
           </div>
-          <div class="record-row">
-            <button id="record-btn" type="button">Start Recording</button>
-            <button id="auto-cup-record-btn" type="button">Auto Record Cup</button>
-            <span id="record-status" aria-live="polite">Not recording</span>
+          <div class="record-group" aria-label="Record">
+            <span class="record-group-title">Record</span>
+            <div class="record-row" aria-label="Recording categories">
+              <button id="record-btn" type="button" data-recording-category="single">Single</button>
+              <button id="continuous-record-btn" type="button" data-recording-category="continuous">Multiple</button>
+              <button id="auto-cup-record-btn" type="button" data-recording-category="cup">Cup Mode</button>
+              <label class="multiple-race-count-row" for="multiple-race-count-input">
+                <span>Multiple races</span>
+                <input id="multiple-race-count-input" type="number" min="1" max="99" step="1" value="5" inputmode="numeric" />
+              </label>
+              <span id="record-status" aria-live="polite">Not recording</span>
+            </div>
           </div>
           <div class="broadcast-audio-controls" aria-label="Broadcast audio controls">
             <label><span>BGM</span><input id="bgm-toggle" type="checkbox" checked /></label>
@@ -147,6 +155,13 @@
               <option value="Karen">Karen</option>
               <option value="Tessa">Tessa</option>
             </select>
+          </div>
+          <div class="tts-pitch-row">
+            <label for="tts-pitch-slider">TTS Pitch</label>
+            <div class="tts-pitch-control">
+              <input id="tts-pitch-slider" type="range" min="0.70" max="1.30" step="0.01" value="1.00" aria-label="TTS pitch" />
+              <span id="tts-pitch-label">1.00x</span>
+            </div>
           </div>
           <div class="tts-test-row">
             <button id="test-tts-btn" type="button">Test TTS</button>
@@ -170,7 +185,6 @@
                 <label><span>Pop Bumper</span><input type="checkbox" data-obstacle-type="popBumper" data-obstacle-category="normal" checked /></label>
                 <label><span>Slingshot</span><input type="checkbox" data-obstacle-type="slingshot" data-obstacle-category="normal" checked /></label>
                 <label><span>Spinner Gate</span><input type="checkbox" data-obstacle-type="spinnerGate" data-obstacle-category="normal" checked /></label>
-                <label><span>Rollover Lane</span><input type="checkbox" data-obstacle-type="rolloverLane" data-obstacle-category="normal" checked /></label>
                 <label><span>Drop Target</span><input type="checkbox" data-obstacle-type="dropTarget" data-obstacle-category="normal" checked /></label>
               </fieldset>
               <fieldset class="obstacle-category" data-obstacle-category="buff">
@@ -246,7 +260,7 @@
             <div><span id="race-state">Idle</span><small>Status</small></div>
             <div><span id="elapsed">0.0s</span><small>Time</small></div>
             <div><span id="track-length">0m</span><small>Track</small></div>
-            <div><span id="fps">--</span><small>FPS</small></div>
+            <div id="fps-stat"><span id="fps">--</span><small>FPS</small></div>
           </div>
         </section>
 

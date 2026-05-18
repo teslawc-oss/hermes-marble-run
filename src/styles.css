@@ -294,12 +294,77 @@ button:hover {
   margin-top: 8px;
 }
 
+.record-group {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid rgba(124, 247, 212, 0.14);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.record-group-title {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
 .record-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: stretch;
+}
+
+.record-row button {
+  min-height: 42px;
+  padding: 8px 9px;
+  white-space: normal;
+  line-height: 1.2;
+}
+
+.record-row button[data-recording-category="single"] {
+  border-color: rgba(124, 247, 212, 0.38);
+}
+
+.record-row button[data-recording-category="continuous"] {
+  border-color: rgba(255, 209, 102, 0.42);
+}
+
+.record-row button[data-recording-category="cup"] {
+  border-color: rgba(255, 119, 183, 0.42);
+}
+
+.multiple-race-count-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(72px, 96px);
   gap: 8px;
   align-items: center;
-  margin-top: 8px;
+  margin: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(255, 209, 102, 0.18);
+  border-radius: 10px;
+  background: rgba(255, 209, 102, 0.06);
+}
+
+.multiple-race-count-row span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.multiple-race-count-row input {
+  min-height: 32px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 209, 102, 0.3);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text);
+  font-weight: 800;
 }
 
 .broadcast-audio-controls {
@@ -328,6 +393,7 @@ button:hover {
 }
 
 .tts-voice-row,
+.tts-pitch-row,
 .tts-test-row {
   display: grid;
   grid-template-columns: minmax(96px, auto) 1fr;
@@ -336,7 +402,8 @@ button:hover {
   margin-top: 8px;
 }
 
-.tts-voice-row label {
+.tts-voice-row label,
+.tts-pitch-row label {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
@@ -346,6 +413,21 @@ button:hover {
 .tts-voice-row select {
   min-height: 32px;
   padding: 6px 10px;
+}
+
+.tts-pitch-control {
+  display: grid;
+  grid-template-columns: 1fr 52px;
+  gap: 8px;
+  align-items: center;
+}
+
+#tts-pitch-label {
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 900;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .tts-test-row button {
@@ -384,6 +466,7 @@ button:hover {
 }
 
 #record-status {
+  grid-column: 1 / -1;
   min-width: 92px;
   color: var(--muted);
   font-size: 12px;
@@ -441,6 +524,17 @@ button.recording {
 .hud-left,
 .hud-right {
   transition: transform 0.24s ease, opacity 0.2s ease;
+}
+
+body.recording-ui-instant-hide .hud-left {
+  transition: none !important;
+}
+
+body.recording-cursor-hidden,
+body.recording-cursor-hidden *,
+body.recording-cursor-hidden #canvas-container,
+body.recording-cursor-hidden #canvas-container canvas {
+  cursor: none !important;
 }
 
 .hud-left.collapsed {

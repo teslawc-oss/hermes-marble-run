@@ -11,6 +11,26 @@ const TRACK_PRESETS = {
   epic: { label: 'Epic', base: 820, variation: 220, segment: 13, branches: 4 },
 };
 
+const RECORDING_GATE_DELAY_SECONDS = 2;
+const RECORDING_AUDIO_QUALITY = {
+  codec: 'opus',
+  mimeCodecPreference: ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm;codecs=opus'],
+  audioBitsPerSecond: 192_000,
+  sampleRate: 48_000,
+  channelCount: 2,
+  sampleSize: 16,
+  label: 'high quality WebM audio: Opus, 192kbps, 48kHz, stereo',
+};
+const RECORDING_CURSOR_SUPPRESSION = {
+  cursor: 'never',
+  hidePageCursorClass: 'recording-cursor-hidden',
+  label: 'recordings request cursor: never and hide the in-page cursor during capture',
+};
+const MULTIPLE_RECORDING_DEFAULT_RACES = 5;
+const MULTIPLE_RECORDING_CEREMONY_HOLD_SECONDS = 10;
+const MULTIPLE_RECORDING_NEXT_GATE_SECONDS = 10;
+const MULTIPLE_RECORDING_FINAL_STOP_SECONDS = 10;
+const SINGLE_RECORDING_FINAL_STOP_SECONDS = MULTIPLE_RECORDING_FINAL_STOP_SECONDS;
 const CUP_VIDEO_TIMING = {
   enabled: true,
   targetSeconds: 600,
@@ -188,10 +208,11 @@ const SPEED_PRESETS = [
 
 const CATCHUP_ASSIST = {
   enabledByDefault: true,
-  maxBonus: 0.12,
-  fullEffectGap: 42,
+  maxBonus: 0.16,
+  fullEffectGap: 36,
   disableBonusOnTurnPieces: true,
   turnPieceMaxSpeedRatio: 0.7,
+  label: 'slightly stronger comeback pacing: trailing marbles reach up to +16% top speed on straights once the gap is about 36m, while leaders and corner pieces stay protected',
 };
 
 const MID_TRACK_SPEED_ASSIST = {
@@ -292,6 +313,13 @@ const STALL_ELIMINATION = {
   label: 'DNF waits longer on long tracks/finals: timeout scales from 10s toward 24s by track length, final stage gets extra grace, and a marble must first make real forward progress before no-forward-progress elimination can fire',
 };
 
+const POST_FIRST_FINISH_DNF_CUTOFF = {
+  enabled: true,
+  delaySeconds: 15,
+  reason: 'post-first-finish-cutoff',
+  label: 'After the first marble finishes, wait 15 seconds, then mark every unfinished marble as DNF in the current race order to avoid long tail waiting.',
+};
+
 const GUIDE_POINT_POLICY = {
   targetMode: 'same-piece-lookahead-then-piece-exit-then-next-piece-entrance-or-finish',
   snapToCurrentPieceExit: true,
@@ -374,14 +402,12 @@ const PINBALL_OBSTACLE_TYPES = [
   'popBumper',
   'slingshot',
   'spinnerGate',
-  'rolloverLane',
   'dropTarget',
 ];
 const PINBALL_OBSTACLE_TYPE_METADATA = {
   popBumper: { label: 'Pop Bumper', category: 'normal' },
   slingshot: { label: 'Slingshot', category: 'normal' },
   spinnerGate: { label: 'Spinner Gate', category: 'normal' },
-  rolloverLane: { label: 'Rollover Lane', category: 'normal' },
   dropTarget: { label: 'Drop Target', category: 'normal' },
 };
 const PINBALL_OBSTACLE_CATALOG = Object.fromEntries(
@@ -397,40 +423,55 @@ const PINBALL_OBSTACLE_CATALOG = Object.fromEntries(
 
 const BROADCAST_CAMERA = {
   defaultMode: 'default',
-  angleStyle: 'high-angle-broadcast-auto-director',
+  angleStyle: 'broadcast-auto-director-late-race-leader-chase',
   highAngleBattleEnabled: false,
   birdEyeCameraAngle: true,
   initialVerticalAxisRotationDegrees: 150,
-  defaultCameraPitchUpDegrees: 72,
+  defaultCameraPitchUpDegrees: 58,
   defaultPitchModes: ['leadPack', 'leadBattle', 'unfinishedOrder'],
   outOfBoundsIgnoreAfterSeconds: 1.0,
   outOfBoundsIgnoreLabel: 'auto camera: if a marble is outside the track for more than 1 second, stop targeting it until it respawns/returns',
   cinematicLeaderFromProgress: 0.6,
+  lineOfSight: {
+    enabled: true,
+    minClearance: 3.2,
+    sampleCount: 2,
+    maxHeightBoost: 7.5,
+    boostStep: 3.5,
+    maxElevationDegrees: 58,
+    protectedModes: ['leadBattle', 'selected', 'unfinishedOrder', 'replayHighlight'],
+    raceFollowProtectedModes: ['leadPack', 'cinematicLeader'],
+    raceFollowMaxHeightBoost: 5,
+    raceFollowBoostStep: 2.5,
+    passedTrackBehindDistance: 7,
+    passedTrackLabel: 'Default Auto race-follow modes only lift when an already-passed track/rail section sits between the camera and the current target, avoiding full overhead line-of-sight boosting',
+    label: 'auto camera applies a bounded lift on real line-of-sight blockers; lead-pack and 60%+ cinematic leader only use the smaller passed-track guard so the shot stays readable without being blocked by old track sections',
+  },
   leader: {
-    back: -3.8,
-    side: 0.75,
-    height: 56,
-    lookAhead: 12,
-    targetLookAheadScale: 0.22,
-    targetGuideBlend: 0.35,
-    targetLift: 1.4,
-    dynamicLookAheadBySpeed: 7,
-    maxSideWave: 0.22,
-    sideWaveSpeed: 0.35,
-    positionSmoothing: 0.035,
-    targetSmoothing: 0.075,
-    fov: 16,
-    obstacleAwareDistance: 35,
-    obstaclePullback: 1.2,
-    obstacleHeightBoost: 14,
-    obstacleLookAheadBoost: 6,
-    label: 'cinematic leader lower late-race hero shot: starts from 60% progress with a lower camera height, tight zoom, top-down track-direction chase cam, speed lookahead, restrained side drift, obstacle-aware height boost, and narrower FOV',
+    back: -15.5,
+    side: 0.35,
+    height: 16,
+    lookAhead: 6,
+    targetLookAheadScale: 0.1,
+    targetGuideBlend: 0.12,
+    targetLift: 0.9,
+    dynamicLookAheadBySpeed: 2,
+    maxSideWave: 0.08,
+    sideWaveSpeed: 0.2,
+    positionSmoothing: 0.07,
+    targetSmoothing: 0.14,
+    fov: 26,
+    obstacleAwareDistance: 24,
+    obstaclePullback: 0.6,
+    obstacleHeightBoost: 2,
+    obstacleLookAheadBoost: 2,
+    label: 'late-race leader chase shot: from 60% progress it follows P1 more tightly with lower non-bird-eye height, longer chase distance, less guide lead, restrained side drift, and wider FOV so the leader stays in frame',
   },
   leadPack: {
     back: -8.5,
     side: 0.9,
-    height: 70,
-    packHeightStep: 1.45,
+    height: 38,
+    packHeightStep: 0.55,
     lookAhead: 11,
     targetLookAheadScale: 0.2,
     targetGuideBlend: 0.28,
@@ -443,7 +484,7 @@ const BROADCAST_CAMERA = {
     fov: 28,
     obstacleAwareDistance: 38,
     obstaclePullback: 3.5,
-    obstacleHeightBoost: 9,
+    obstacleHeightBoost: 4,
     obstacleLookAheadBoost: 5,
     label: 'cinematic lead-pack hero shot: follows the pack center while using track direction, small guide blend, obstacle-aware height/pullback, and gentle side drift',
   },
@@ -544,6 +585,10 @@ const PERFORMANCE_TUNING = {
   maxSpectacleEffects: 7,
   decorationStepMeters: 26,
   disableDecorativePointLights: true,
+  renderNameLabelUpdateMs: 0,
+  renderSkipOrbitControlsUpdate: false,
+  renderSkipSpectacleEffects: false,
+  nameLabelScaleSmoothing: 0.18,
 };
 
 const PINBALL_PHYSICS = {
@@ -551,11 +596,9 @@ const PINBALL_PHYSICS = {
   popBumperImpulse: 7.2,
   slingshotRadius: 1.75,
   slingshotImpulse: 6.6,
-  spinnerRadius: 1.65,
+  spinnerRadius: 1.25,
   spinnerImpulse: 5.2,
   spinnerSpeed: 5.2,
-  rolloverRadius: 1.35,
-  rolloverBoostImpulse: 3.9,
   dropTargetRadius: 1.35,
   dropTargetImpulse: 7.8,
   dropTargetUpImpulse: 0.55,
@@ -724,6 +767,7 @@ class MarbleRace {
     this.defaultCameraPhaseUntil = 0;
     this.defaultCameraFocusId = null;
     this.firstFinishTime = 0;
+    this.firstFinishRealTimeMs = 0;
     this.elapsed = 0;
     this.countdownDuration = 3;
     this.countdownRemaining = 0;
@@ -750,9 +794,11 @@ class MarbleRace {
     this.lastCommentaryVoiceLine = null;
     this.commentaryVoiceQueue = [];
     this.commentaryVoiceSpeaking = false;
+    this.commentaryVoicePreparing = false;
     this.commentaryVoiceCurrentLine = null;
     this.commentaryVoiceStartedAt = 0;
     this.commentaryVoiceLastError = null;
+    this.ttsPitch = 1;
     this.lastObstacleSfxAt = -Infinity;
     this.trackLength = 190;
     this.trackWidth = 16;
@@ -793,6 +839,7 @@ class MarbleRace {
     this.lastFps = 0;
     this.fpsFrames = 0;
     this.fpsTime = 0;
+    this.lastNameLabelUpdate = 0;
     this.pathPoints = [];
     this.trackSamples = [];
     this.branchSegments = [];
@@ -818,7 +865,6 @@ class MarbleRace {
       popBumper: 0,
       slingshot: 0,
       spinnerGate: 0,
-      rolloverLane: 0,
       dropTarget: 0,
     };
     this.trackStats = { ribbonMeshes: 0, visibleDecks: 0, physicsDecks: 0, railTubes: 0, branchJoinDecks: 0, physicalRailBodies: 0, smoothRailJoinBodies: 0, optimizedRailBodies: 0, broadcastStageMarkers: 0 };
@@ -860,6 +906,7 @@ class MarbleRace {
     this.recordedChunks = [];
     this.recordingStartedAt = 0;
     this.recordingSource = null;
+    this.recordingCategory = null;
     this.recordingSettings = null;
     this.lastRecordingRequest = null;
     this.recordingAudioDestination = null;
@@ -873,6 +920,7 @@ class MarbleRace {
       status: 'unknown',
       engine: null,
       voice: 'Alex',
+      pitch: 1,
       lastUrl: null,
       lastLine: null,
       lastError: null,
@@ -895,6 +943,8 @@ class MarbleRace {
     this.countdownVoicePlayStartedAt = 0;
     this.autoCupRecording = {
       active: false,
+      mode: 'cup',
+      label: 'Cup Mode',
       phase: 'idle',
       startedAt: 0,
       currentStage: null,
@@ -907,11 +957,48 @@ class MarbleRace {
       gateDelaySeconds: CUP_VIDEO_TIMING.introSeconds,
       lastError: null,
     };
+    this.continuousRecording = {
+      active: false,
+      mode: 'continuous',
+      label: 'Multiple',
+      phase: 'idle',
+      startedAt: 0,
+      racesCompleted: 0,
+      pendingTimer: null,
+      nextActionAt: null,
+      nextRaceDelaySeconds: MULTIPLE_RECORDING_CEREMONY_HOLD_SECONDS,
+      gateDelaySeconds: MULTIPLE_RECORDING_NEXT_GATE_SECONDS,
+      finalStopDelaySeconds: MULTIPLE_RECORDING_FINAL_STOP_SECONDS,
+      totalRaces: MULTIPLE_RECORDING_DEFAULT_RACES,
+      lastGeneratedTrackAfterRace: 0,
+      lastError: null,
+    };
+    this.singleRecording = {
+      active: false,
+      mode: 'single',
+      label: 'Single',
+      phase: 'idle',
+      startedAt: 0,
+      pendingTimer: null,
+      nextActionAt: null,
+      gateDelaySeconds: RECORDING_GATE_DELAY_SECONDS,
+      startedCountdownAt: null,
+      finalStopDelaySeconds: SINGLE_RECORDING_FINAL_STOP_SECONDS,
+      lastError: null,
+    };
     this.leftUICollapsed = false;
     this.rightUICollapsed = false;
+    this.recordingUIPresentation = {
+      active: false,
+      category: null,
+      restoreLeftCollapsed: null,
+      preserveRightUI: true,
+      restoreToggleVisibility: true,
+      instantHideLeft: false,
+    };
     this.enableAllCameraMouseOrbit = true;
     this.cameraAutoDistance = 24;
-    this.trackMaterials = ['dark illustrated pinball playfield texture', 'neon rubber rail texture', 'MeshPhysicalMaterial clearcoat obstacle plastics', 'chrome bumper rings', 'lit rollover lane inserts'];
+    this.trackMaterials = ['dark illustrated pinball playfield texture', 'neon rubber rail texture', 'MeshPhysicalMaterial clearcoat obstacle plastics', 'chrome bumper rings'];
     this.railSpring = RAIL_REBOUND;
     this.railGuidePolicy = {
       allRailHitCenterGuidesDisabled: true,
@@ -997,12 +1084,16 @@ class MarbleRace {
       uiToggle: document.querySelector('#ui-toggle-btn'),
       rightUiToggle: document.querySelector('#right-ui-toggle-btn'),
       record: document.querySelector('#record-btn'),
+      continuousRecord: document.querySelector('#continuous-record-btn'),
+      multipleRaceCount: document.querySelector('#multiple-race-count-input'),
       autoCupRecord: document.querySelector('#auto-cup-record-btn'),
       recordStatus: document.querySelector('#record-status'),
       bgmToggle: document.querySelector('#bgm-toggle'),
       commentaryToggle: document.querySelector('#commentary-toggle'),
       commentaryVoiceToggle: document.querySelector('#commentary-voice-toggle'),
       ttsVoiceSelect: document.querySelector('#tts-voice-select'),
+      ttsPitchSlider: document.querySelector('#tts-pitch-slider'),
+      ttsPitchLabel: document.querySelector('#tts-pitch-label'),
       testTts: document.querySelector('#test-tts-btn'),
       ttsTestStatus: document.querySelector('#tts-test-status'),
       controlsPanel: document.querySelector('#controls-panel'),
@@ -1051,6 +1142,7 @@ class MarbleRace {
       state: document.querySelector('#race-state'),
       elapsed: document.querySelector('#elapsed'),
       length: document.querySelector('#track-length'),
+      fpsStat: document.querySelector('#fps-stat'),
       fps: document.querySelector('#fps'),
       winner: document.querySelector('#winner-banner'),
       caption: document.querySelector('#broadcast-caption'),
@@ -1067,6 +1159,7 @@ class MarbleRace {
     this.leftUICollapsed = true;
     this.applyLeftUIState();
     this.applyRightUIState();
+    this.setTtsPitch(this.ui.ttsPitchSlider?.value || this.ttsPitch || 1, { resetQueue: false, updateStatus: false });
     this.initTtsVoiceSelector();
     this.initThree();
     this.initPhysics();
@@ -1163,12 +1256,20 @@ class MarbleRace {
     this.ui.debugPanel?.setAttribute('aria-hidden', 'true');
     this.ui.debugToggle?.setAttribute('aria-expanded', 'false');
     this.ui.debugConsoleCopy?.addEventListener('click', () => this.copyDebugConsole());
-    this.ui.record.addEventListener('click', () => this.toggleRecording({ includeAudio: true }));
+    this.ui.record.addEventListener('click', () => this.toggleSingleRecording());
+    this.ui.continuousRecord?.addEventListener('click', () => this.toggleContinuousRecording());
+    this.ui.multipleRaceCount?.addEventListener('change', () => {
+      this.ui.multipleRaceCount.value = String(this.getMultipleRecordingTotalRaces());
+      this.updateUI();
+    });
+    this.ui.multipleRaceCount?.addEventListener('input', () => this.updateUI());
     this.ui.autoCupRecord?.addEventListener('click', () => this.toggleAutoCupRecording());
     this.ui.bgmToggle?.addEventListener('change', () => this.setBgmEnabled(this.ui.bgmToggle.checked));
     this.ui.commentaryToggle?.addEventListener('change', () => this.setCommentaryEnabled(this.ui.commentaryToggle.checked));
     this.ui.commentaryVoiceToggle?.addEventListener('change', () => this.setCommentaryVoiceEnabled(this.ui.commentaryVoiceToggle.checked));
     this.ui.ttsVoiceSelect?.addEventListener('change', () => this.setTtsVoice(this.ui.ttsVoiceSelect.value));
+    this.ui.ttsPitchSlider?.addEventListener('input', () => this.setTtsPitch(this.ui.ttsPitchSlider.value, { resetQueue: false, updateStatus: false }));
+    this.ui.ttsPitchSlider?.addEventListener('change', () => this.setTtsPitch(this.ui.ttsPitchSlider.value, { resetQueue: true, updateStatus: true }));
     this.ui.testTts?.addEventListener('click', () => this.testCommentaryTts());
     this.ui.copyTrackCode?.addEventListener('click', () => this.copyTrackDebugCode());
     this.ui.importTrackCode?.addEventListener('click', () => this.importTrackDebugCode());
@@ -1209,7 +1310,7 @@ class MarbleRace {
       const isTyping = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
       if (!isTyping && event.key.toLowerCase() === 'h') this.toggleLeftUI();
       if (!isTyping && event.key.toLowerCase() === 'j') this.toggleRightUI();
-      if (!isTyping && event.key.toLowerCase() === 'v') this.toggleRecording({ includeAudio: true });
+      if (!isTyping && event.key.toLowerCase() === 'v') this.toggleSingleRecording();
       const map = { '1': 'default', '2': 'leadPack', '3': 'selected', '4': 'cinematicLeader', '5': 'orbit' };
       if (map[event.key]) this.cameraMode = map[event.key];
     });
@@ -1498,6 +1599,9 @@ class MarbleRace {
     this.state = 'ready';
     this.elapsed = 0;
     this.finishers = [];
+    this.firstFinishTime = 0;
+    this.firstFinishRealTimeMs = 0;
+    this.postFirstFinishDnfCutoff = { ...POST_FIRST_FINISH_DNF_CUTOFF, triggered: false, triggeredAt: null, triggeredAtRealTimeMs: null, dnfCount: 0 };
     this.cachedRanking = null;
     this.cachedRankingAt = 0;
     this.cachedLeaderId = null;
@@ -1564,6 +1668,8 @@ class MarbleRace {
     this.resetDefaultAutoCameraForRace();
     this.initialCameraRotationApplied = false;
     this.firstFinishTime = 0;
+    this.firstFinishRealTimeMs = 0;
+    this.postFirstFinishDnfCutoff = { ...POST_FIRST_FINISH_DNF_CUTOFF, triggered: false, triggeredAt: null, triggeredAtRealTimeMs: null, dnfCount: 0 };
     this.resetFinishSlowMotion();
 
     const rawSeedInput = this.ui.seed.value.trim() || `${Date.now()}-${Math.random()}`;
@@ -1660,6 +1766,15 @@ class MarbleRace {
         categoryLabel: OBSTACLE_CATEGORIES[obstacle.category || PINBALL_OBSTACLE_TYPE_METADATA[obstacle.type]?.category || 'normal']?.label || '普通障礙物',
         visualStyle: obstacle.visualStyle || null,
         textureStyle: obstacle.textureStyle || null,
+        trackSlopePitch: obstacle.trackSlopePitch != null ? Number(obstacle.trackSlopePitch.toFixed(4)) : null,
+        trackYaw: obstacle.trackYaw != null ? Number(obstacle.trackYaw.toFixed(4)) : null,
+        localYaw: obstacle.localYaw != null ? Number(obstacle.localYaw.toFixed(4)) : null,
+        rotationPitch: obstacle.group?.rotation?.x != null ? Number(obstacle.group.rotation.x.toFixed(4)) : null,
+        slopeAligned: obstacle.trackSlopePitch != null && obstacle.trackYaw != null && obstacle.group?.quaternion
+          ? new THREE.Vector3(0, 1, 0)
+            .applyQuaternion(obstacle.group.quaternion)
+            .angleTo(new THREE.Vector3(0, 1, 0).applyQuaternion(this.getTrackSlopeQuaternion(obstacle.trackYaw, obstacle.trackSlopePitch, 0))) < 0.001
+          : null,
         distributionMode: obstacle.distributionMode || this.obstacleDistributionMode || 'random',
         distributionZoneIndex: obstacle.distributionZoneIndex ?? null,
         distributionZoneStart: obstacle.distributionZoneStart != null ? Number(obstacle.distributionZoneStart.toFixed(2)) : null,
@@ -1704,6 +1819,7 @@ class MarbleRace {
       enabledObstacleTypes: [...(this.enabledObstacleTypes || new Set(PINBALL_OBSTACLE_TYPES))],
       curveStyleKey: this.curveStyleKey,
       catchupAssistEnabled: this.catchupAssistEnabled,
+      catchupAssist: CATCHUP_ASSIST,
       trackWidth: Number((this.trackWidth || 0).toFixed(3)),
       rightAngleTurnCount: this.rightAngleTurnCount,
       modularTrackPieceCounts: {
@@ -1833,7 +1949,6 @@ class MarbleRace {
       popBumper: 0,
       slingshot: 0,
       spinnerGate: 0,
-      rolloverLane: 0,
       dropTarget: 0,
     };
     this.obstacleTypeCounts = Object.fromEntries(PINBALL_OBSTACLE_TYPES.map((type) => [type, 0]));
@@ -1846,6 +1961,9 @@ class MarbleRace {
     this.finishRankingContainer = null;
     this.finishSpinner = null;
     this.trackStats = { ribbonMeshes: 0, visibleDecks: 0, physicsDecks: 0, railTubes: 0, branchJoinDecks: 0, physicalRailBodies: 0, smoothRailJoinBodies: 0, optimizedRailBodies: 0, broadcastStageMarkers: 0 };
+    this.firstFinishTime = 0;
+    this.firstFinishRealTimeMs = 0;
+    this.postFirstFinishDnfCutoff = { ...POST_FIRST_FINISH_DNF_CUTOFF, triggered: false, triggeredAt: null, triggeredAtRealTimeMs: null, dnfCount: 0 };
     this.stuckResetCount = 0;
     this.stallEliminationCount = 0;
     this.defeatedMarbles = [];
@@ -1930,6 +2048,80 @@ class MarbleRace {
     ctx.fillText(label, 131, 132);
     ctx.fillStyle = '#fff9dd';
     ctx.fillText(label, 128, 128);
+    return this.finishTexture(canvas, 1, 1);
+  }
+
+  createSpinnerGateTexture() {
+    const { canvas, ctx } = this.createTextureCanvas(512, '#08091d');
+    const bg = ctx.createRadialGradient(256, 230, 18, 256, 256, 360);
+    bg.addColorStop(0, '#f8fbff');
+    bg.addColorStop(0.12, '#23ffe3');
+    bg.addColorStop(0.34, '#7c3dff');
+    bg.addColorStop(0.62, '#ff3dac');
+    bg.addColorStop(1, '#09071a');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, 512, 512);
+
+    ctx.globalCompositeOperation = 'screen';
+    for (let i = 0; i < 18; i += 1) {
+      const angle = (Math.PI * 2 * i) / 18;
+      const inner = i % 3 === 0 ? 54 : 92;
+      const outer = i % 3 === 0 ? 260 : 232;
+      ctx.strokeStyle = i % 2 === 0 ? 'rgba(34, 255, 228, 0.42)' : 'rgba(255, 214, 102, 0.35)';
+      ctx.lineWidth = i % 3 === 0 ? 9 : 5;
+      ctx.beginPath();
+      ctx.moveTo(256 + Math.cos(angle) * inner, 256 + Math.sin(angle) * inner);
+      ctx.lineTo(256 + Math.cos(angle) * outer, 256 + Math.sin(angle) * outer);
+      ctx.stroke();
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    for (let r = 220; r >= 74; r -= 38) {
+      ctx.strokeStyle = r % 76 === 0 ? 'rgba(255,255,255,0.58)' : 'rgba(18,240,200,0.38)';
+      ctx.lineWidth = r === 220 ? 10 : 5;
+      ctx.beginPath();
+      ctx.arc(256, 256, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.save();
+    ctx.translate(256, 256);
+    for (let i = 0; i < 3; i += 1) {
+      ctx.rotate((Math.PI * 2) / 3);
+      const blade = ctx.createLinearGradient(-24, -46, 210, 46);
+      blade.addColorStop(0, 'rgba(255,255,255,0.92)');
+      blade.addColorStop(0.35, 'rgba(35,255,227,0.84)');
+      blade.addColorStop(0.72, 'rgba(255,61,172,0.78)');
+      blade.addColorStop(1, 'rgba(255,209,102,0.9)');
+      ctx.fillStyle = blade;
+      ctx.beginPath();
+      ctx.moveTo(0, -44);
+      ctx.lineTo(214, -24);
+      ctx.lineTo(244, 0);
+      ctx.lineTo(214, 24);
+      ctx.lineTo(0, 44);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.72)';
+      ctx.lineWidth = 7;
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.fillStyle = 'rgba(4,7,18,0.76)';
+    ctx.beginPath();
+    ctx.arc(256, 256, 70, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#fff7ad';
+    ctx.lineWidth = 8;
+    ctx.stroke();
+    ctx.font = '900 42px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(2,7,18,0.78)';
+    ctx.fillText('SPIN', 260, 260);
+    ctx.fillStyle = '#f8ffff';
+    ctx.fillText('SPIN', 256, 254);
     return this.finishTexture(canvas, 1, 1);
   }
 
@@ -2498,6 +2690,13 @@ class MarbleRace {
     geometry.computeVertexNormals();
     const mesh = new THREE.Mesh(geometry, material);
     mesh.receiveShadow = PERFORMANCE_TUNING.shadows;
+    mesh.userData = {
+      ...(mesh.userData || {}),
+      cameraOccluder: true,
+      cameraOccluderType: 'track-ribbon',
+      cameraOccluderDistanceStart: points[0]?.d ?? 0,
+      cameraOccluderDistanceEnd: points[points.length - 1]?.d ?? this.trackLength,
+    };
     this.trackGroup.add(mesh);
     this.trackStats.ribbonMeshes += 1;
     return mesh;
@@ -2568,6 +2767,14 @@ class MarbleRace {
       ), material);
       tube.castShadow = PERFORMANCE_TUNING.shadows;
       tube.receiveShadow = PERFORMANCE_TUNING.shadows;
+      tube.userData = {
+        ...(tube.userData || {}),
+        cameraOccluder: true,
+        cameraOccluderType: 'upper-rail-tube',
+        cameraOccluderDistanceStart: 0,
+        cameraOccluderDistanceEnd: this.trackLength,
+        railSide: side,
+      };
       this.trackGroup.add(tube);
       this.trackStats.railTubes += 1;
 
@@ -2581,6 +2788,14 @@ class MarbleRace {
       ), material);
       lowerTube.castShadow = PERFORMANCE_TUNING.shadows;
       lowerTube.receiveShadow = PERFORMANCE_TUNING.shadows;
+      lowerTube.userData = {
+        ...(lowerTube.userData || {}),
+        cameraOccluder: true,
+        cameraOccluderType: 'lower-rail-tube',
+        cameraOccluderDistanceStart: 0,
+        cameraOccluderDistanceEnd: this.trackLength,
+        railSide: side,
+      };
       this.trackGroup.add(lowerTube);
       this.trackStats.railTubes += 1;
     });
@@ -3434,6 +3649,38 @@ class MarbleRace {
     return new THREE.Vector3(x * cos + z * sin, y, -x * sin + z * cos);
   }
 
+  localToWorldOffsetOnSlope(x, y, z, yaw, pitch = 0) {
+    return new THREE.Vector3(x, y, z).applyEuler(new THREE.Euler(-pitch, yaw, 0, 'YXZ'));
+  }
+
+  applyTrackSlopeRotation(object, yaw, pitch = 0) {
+    object.rotation.set(-pitch, yaw, 0, 'YXZ');
+    object.userData.trackSlopePitch = pitch;
+    object.userData.trackYaw = yaw;
+  }
+
+  getTrackSlopeQuaternion(yaw, pitch = 0, localYaw = 0) {
+    const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(-pitch, yaw, 0, 'YXZ'));
+    if (localYaw) {
+      quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), localYaw));
+    }
+    return quaternion;
+  }
+
+  applyTrackSlopeTwistRotation(object, yaw, pitch = 0, localYaw = 0) {
+    object.quaternion.copy(this.getTrackSlopeQuaternion(yaw, pitch, localYaw));
+    object.userData.trackSlopePitch = pitch;
+    object.userData.trackYaw = yaw;
+    object.userData.localYaw = localYaw;
+  }
+
+  setSlopeBodyTransform(body, center, yaw, pitch = 0, localYaw = 0) {
+    body.position.copy(center);
+    const quaternion = this.getTrackSlopeQuaternion(yaw, pitch, localYaw);
+    body.quaternion.set(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
+    body.userData = { ...(body.userData || {}), trackSlopePitch: pitch, trackYaw: yaw, localYaw };
+  }
+
   addStaticBox(position, halfExtents, yaw, material) {
     const body = new CANNON.Body({ mass: 0, material });
     body.addShape(new CANNON.Box(new CANNON.Vec3(halfExtents.x, halfExtents.y, halfExtents.z)));
@@ -3636,7 +3883,6 @@ class MarbleRace {
       popBumperCap: new THREE.MeshPhysicalMaterial({ color: 0xfff1fa, roughness: 0.12, metalness: 0.02, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0xff5fb7, emissiveIntensity: 0.18 }),
       slingshot: new THREE.MeshPhysicalMaterial({ color: 0x12f0c8, roughness: 0.16, metalness: 0.06, clearcoat: 1, clearcoatRoughness: 0.07, emissive: 0x00685d, emissiveIntensity: 0.46 }),
       spinnerGate: new THREE.MeshPhysicalMaterial({ color: 0x8d7dff, roughness: 0.15, metalness: 0.16, clearcoat: 1, clearcoatRoughness: 0.06, emissive: 0x280090, emissiveIntensity: 0.38 }),
-      rolloverLane: new THREE.MeshPhysicalMaterial({ color: 0x7ee9ff, roughness: 0.2, metalness: 0.08, clearcoat: 1, clearcoatRoughness: 0.08, emissive: 0x00475f, emissiveIntensity: 0.32 }),
       dropTarget: new THREE.MeshPhysicalMaterial({ color: 0xff8f3f, roughness: 0.17, metalness: 0.05, clearcoat: 1, clearcoatRoughness: 0.08, emissive: 0x5a1900, emissiveIntensity: 0.36 }),
       rubber: new THREE.MeshPhysicalMaterial({ color: 0x101422, roughness: 0.32, metalness: 0.02, clearcoat: 0.45, clearcoatRoughness: 0.18, emissive: 0x061020, emissiveIntensity: 0.26 }),
       chrome: new THREE.MeshPhysicalMaterial({ color: 0xe6f2ff, roughness: 0.12, metalness: 0.9, clearcoat: 1, clearcoatRoughness: 0.04 }),
@@ -3729,26 +3975,26 @@ class MarbleRace {
 
   createPinballObstacle(type, frame, lane, localWidth, palette) {
     const yaw = Math.atan2(frame.tangent.x, frame.tangent.z);
-    const center = new THREE.Vector3(frame.p.x + frame.right.x * lane, frame.p.y, frame.p.z + frame.right.z * lane);
+    const pitch = Math.atan2(frame.tangent.y, Math.max(0.0001, Math.hypot(frame.tangent.x, frame.tangent.z)));
+    const trackSurface = new THREE.Vector3(frame.p.x + frame.right.x * lane, frame.p.y, frame.p.z + frame.right.z * lane);
     switch (type) {
       case 'popBumper':
         palette.popBumper.userData.capMaterial = palette.popBumperCap;
         palette.popBumper.userData.ringMaterial = palette.chrome;
-        return this.createPopBumperObstacle(center, palette.popBumper);
+        return this.createPopBumperObstacle(trackSurface, yaw, pitch, palette.popBumper);
       case 'slingshot':
         palette.slingshot.userData.insertMaterial = palette.yellowInsert;
         palette.slingshot.userData.chromeMaterial = palette.chrome;
-        return this.createSlingshotObstacle(center, yaw + (this.rng() < 0.5 ? -1 : 1) * Math.PI * 0.24, palette.slingshot);
+        return this.createSlingshotObstacle(trackSurface, yaw, pitch, (this.rng() < 0.5 ? -1 : 1) * Math.PI * 0.24, palette.slingshot);
       case 'spinnerGate':
         palette.spinnerGate.userData.yellowInsert = palette.yellowInsert;
         palette.spinnerGate.userData.redInsert = palette.redInsert;
-        return this.createSpinnerGateObstacle(center, yaw, palette.spinnerGate);
-      case 'rolloverLane':
-        return this.createRolloverLaneObstacle(center, yaw, palette.rolloverLane);
+        palette.spinnerGate.userData.chromeMaterial = palette.chrome;
+        return this.createSpinnerGateObstacle(trackSurface, yaw, pitch, palette.spinnerGate);
       case 'dropTarget':
       default:
         palette.rubber.userData.insertMaterial = palette.yellowInsert;
-        return this.createDropTargetObstacle(center, yaw, palette.dropTarget, palette.rubber);
+        return this.createDropTargetObstacle(trackSurface, yaw, pitch, palette.dropTarget, palette.rubber);
     }
   }
 
@@ -3758,52 +4004,61 @@ class MarbleRace {
     this.obstacleMeshes.push(meshOrGroup);
   }
 
-  createPopBumperObstacle(center, material) {
+  createPopBumperObstacle(trackSurface, yaw, pitch, material) {
     const capMaterial = material.userData?.capMaterial || material;
     const ringMaterial = material.userData?.ringMaterial || material;
     const radius = 0.55 + this.rng() * 0.35;
+    const group = new THREE.Group();
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation(group, yaw, pitch);
+    this.trackGroup.add(group);
+
     const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 0.56, 40), material);
-    mesh.position.set(center.x, center.y + 0.34, center.z);
+    mesh.position.y = 0.34;
     mesh.castShadow = PERFORMANCE_TUNING.shadows;
     mesh.receiveShadow = PERFORMANCE_TUNING.shadows;
-    this.trackGroup.add(mesh);
+    group.add(mesh);
 
     const skirt = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.08, 0.075, 8, 36), ringMaterial);
-    skirt.position.set(center.x, center.y + 0.64, center.z);
+    skirt.position.y = 0.64;
     skirt.rotation.x = Math.PI / 2;
     skirt.castShadow = PERFORMANCE_TUNING.shadows;
-    this.trackGroup.add(skirt);
+    group.add(skirt);
 
     const cap = new THREE.Mesh(new THREE.SphereGeometry(radius * 0.78, 24, 12), capMaterial);
-    cap.position.set(center.x, center.y + 0.78, center.z);
+    cap.position.y = 0.78;
     cap.scale.y = 0.38;
     cap.castShadow = PERFORMANCE_TUNING.shadows;
-    this.trackGroup.add(cap);
+    group.add(cap);
 
     const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
     body.addShape(new CANNON.Cylinder(radius, radius, 0.66, 28));
-    body.position.copy(mesh.position);
-    this.addObstacleBody(body, mesh);
+    this.setSlopeBodyTransform(body, trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, 0.34, 0, yaw, pitch)), yaw, pitch);
+    this.addObstacleBody(body, group);
     const obstacle = {
       type: 'popBumper',
-      center: mesh.position.clone(),
+      trackSurface: trackSurface.clone(),
+      center: trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, 0.34, 0, yaw, pitch)),
       radius: Math.max(PINBALL_PHYSICS.popBumperRadius, radius + 0.62),
       impulse: PINBALL_PHYSICS.popBumperImpulse,
       cooldown: new Map(),
       mesh,
+      group,
       cap,
       skirt,
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
       pulse: 0,
     };
     this.pinballObstacles.push(obstacle);
     return obstacle;
   }
 
-  createSlingshotObstacle(center, yaw, material) {
+  createSlingshotObstacle(trackSurface, yaw, pitch, localYaw, material) {
     const w = 2.1 + this.rng() * 0.65;
     const group = new THREE.Group();
-    group.position.copy(center);
-    group.rotation.y = yaw;
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeTwistRotation(group, yaw, pitch, localYaw);
     group.userData.visualStyle = 'aligned-modern-chrome-neon-slingshot';
     this.trackGroup.add(group);
 
@@ -3822,19 +4077,19 @@ class MarbleRace {
     const insertMat = material.userData?.insertMaterial || panelMat;
 
     const base = new THREE.Mesh(new THREE.BoxGeometry(w, 0.18, 0.5), chromeMat);
-    base.position.set(0, 0.25, 0);
+    base.position.set(0, 0.1, 0);
     base.castShadow = PERFORMANCE_TUNING.shadows;
     base.receiveShadow = PERFORMANCE_TUNING.shadows;
     group.add(base);
 
     const panel = new THREE.Mesh(new THREE.BoxGeometry(w * 0.84, 0.36, 0.16), panelMat);
-    panel.position.set(0, 0.49, 0);
+    panel.position.set(0, 0.33, 0);
     panel.castShadow = PERFORMANCE_TUNING.shadows;
     panel.receiveShadow = PERFORMANCE_TUNING.shadows;
     group.add(panel);
 
     const glow = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.84, 0.28), glowMat);
-    glow.position.set(0, 0.585, 0.085);
+    glow.position.set(0, 0.425, 0.085);
     glow.rotation.x = -Math.PI / 2;
     glow.renderOrder = 36;
     group.add(glow);
@@ -3842,7 +4097,7 @@ class MarbleRace {
     const bulbs = [];
     [-0.3, 0, 0.3].forEach((offset) => {
       const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.13, 18, 10), insertMat);
-      bulb.position.set(offset * w, 0.71, 0);
+      bulb.position.set(offset * w, 0.55, 0);
       bulb.scale.y = 0.44;
       bulb.castShadow = PERFORMANCE_TUNING.shadows;
       group.add(bulb);
@@ -3851,13 +4106,17 @@ class MarbleRace {
 
     const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
     body.addShape(new CANNON.Box(new CANNON.Vec3(w / 2, 0.22, 0.18)));
-    body.position.copy(center.clone().add(this.localToWorldOffset(0, 0.3, 0, yaw)));
-    body.quaternion.copy(group.quaternion);
+    const obstacleCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, 0.2, 0, yaw, pitch));
+    this.setSlopeBodyTransform(body, obstacleCenter, yaw, pitch, localYaw);
     this.addObstacleBody(body, group);
+    const slingshotForward = new THREE.Vector3(0, 0, 1).applyQuaternion(group.quaternion).normalize();
+    const slingshotNormal = new THREE.Vector3(1, 0, 0).applyQuaternion(group.quaternion).normalize();
     const obstacle = {
       type: 'slingshot',
-      center: center.clone().add(this.localToWorldOffset(0, 0.3, 0, yaw)),
-      normal: new THREE.Vector3(Math.sin(yaw + Math.PI / 2), 0, Math.cos(yaw + Math.PI / 2)).normalize(),
+      trackSurface: trackSurface.clone(),
+      center: obstacleCenter,
+      normal: slingshotNormal,
+      direction: slingshotForward,
       radius: PINBALL_PHYSICS.slingshotRadius,
       impulse: PINBALL_PHYSICS.slingshotImpulse,
       cooldown: new Map(),
@@ -3866,6 +4125,9 @@ class MarbleRace {
       base,
       bulbs,
       glow,
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
+      localYaw,
       visualStyle: 'aligned-modern-chrome-neon-slingshot',
       textureStyle: 'aligned-gradient-panel-neon-bulbs',
       pulse: 0,
@@ -3874,101 +4136,170 @@ class MarbleRace {
     return obstacle;
   }
 
-  createSpinnerGateObstacle(center, yaw, material) {
+  createSpinnerGateObstacle(trackSurface, yaw, pitch, material) {
     const group = new THREE.Group();
-    group.position.copy(center);
-    group.rotation.y = yaw;
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation(group, yaw, pitch);
+    group.userData.visualStyle = 'premium-neon-arcade-spinner-gate';
     this.trackGroup.add(group);
 
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.52, 20), material);
-    hub.position.y = 0.48;
+    const spinnerScale = 2;
+    const hubRadius = 0.24 * spinnerScale;
+    const hubHeight = 0.52 * spinnerScale;
+    const hubY = 0.28 * spinnerScale;
+    const armLength = 1.95 * spinnerScale;
+    const armHeight = 0.22 * spinnerScale;
+    const armDepth = 0.2 * spinnerScale;
+    const armY = 0.32 * spinnerScale;
+    const tipOffset = 0.72 * spinnerScale;
+    const tipRadius = 0.13 * spinnerScale;
+    const colliderRadius = 0.62 * spinnerScale;
+    const colliderHeight = 0.5 * spinnerScale;
+
+    const spinnerTexture = this.createSpinnerGateTexture();
+    const spinnerMat = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      map: spinnerTexture,
+      roughness: 0.1,
+      metalness: 0.26,
+      clearcoat: 1,
+      clearcoatRoughness: 0.035,
+      emissive: 0x4f21ff,
+      emissiveIntensity: 0.48,
+    });
+    const chromeMat = material.userData?.chromeMaterial || new THREE.MeshPhysicalMaterial({ color: 0xeaf7ff, roughness: 0.09, metalness: 0.92, clearcoat: 1, clearcoatRoughness: 0.035 });
+    const cyanMat = new THREE.MeshPhysicalMaterial({ color: 0x22ffe4, roughness: 0.12, metalness: 0.08, clearcoat: 1, clearcoatRoughness: 0.04, emissive: 0x00d8c2, emissiveIntensity: 0.68 });
+    const magentaMat = new THREE.MeshPhysicalMaterial({ color: 0xff3dac, roughness: 0.12, metalness: 0.08, clearcoat: 1, clearcoatRoughness: 0.04, emissive: 0xff1f8f, emissiveIntensity: 0.62 });
+    const amberMat = material.userData?.yellowInsert || new THREE.MeshPhysicalMaterial({ color: 0xffd166, roughness: 0.14, metalness: 0.05, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0x9d6500, emissiveIntensity: 0.52 });
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0x22ffe4, transparent: true, opacity: 0.24, depthWrite: false, side: THREE.DoubleSide });
+
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.05 * spinnerScale, 1.2 * spinnerScale, 0.12 * spinnerScale, 48), chromeMat);
+    base.position.y = 0.06 * spinnerScale;
+    base.castShadow = PERFORMANCE_TUNING.shadows;
+    base.receiveShadow = PERFORMANCE_TUNING.shadows;
+    group.add(base);
+
+    const lowerRing = new THREE.Mesh(new THREE.TorusGeometry(0.86 * spinnerScale, 0.045 * spinnerScale, 10, 56), chromeMat);
+    lowerRing.position.y = 0.17 * spinnerScale;
+    lowerRing.rotation.x = Math.PI / 2;
+    lowerRing.castShadow = PERFORMANCE_TUNING.shadows;
+    group.add(lowerRing);
+
+    const haloRing = new THREE.Mesh(new THREE.TorusGeometry(1.1 * spinnerScale, 0.035 * spinnerScale, 8, 64), cyanMat);
+    haloRing.position.y = 0.24 * spinnerScale;
+    haloRing.rotation.x = Math.PI / 2;
+    group.add(haloRing);
+
+    const glowDisc = new THREE.Mesh(new THREE.CircleGeometry(1.04 * spinnerScale, 64), glowMat);
+    glowDisc.position.y = 0.255 * spinnerScale;
+    glowDisc.rotation.x = -Math.PI / 2;
+    glowDisc.renderOrder = 35;
+    group.add(glowDisc);
+
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(hubRadius, hubRadius, hubHeight, 32), spinnerMat);
+    hub.position.y = hubY;
     hub.castShadow = PERFORMANCE_TUNING.shadows;
+    hub.receiveShadow = PERFORMANCE_TUNING.shadows;
     group.add(hub);
+
+    const hubCap = new THREE.Mesh(new THREE.SphereGeometry(hubRadius * 1.12, 28, 12), chromeMat);
+    hubCap.position.y = hubY + hubHeight * 0.55;
+    hubCap.scale.y = 0.28;
+    hubCap.castShadow = PERFORMANCE_TUNING.shadows;
+    group.add(hubCap);
+
+    const spinnerArms = [];
+    const armGlows = [];
+    const tips = [];
+    const bladeEdgeMat = [cyanMat, magentaMat, amberMat];
     for (let i = 0; i < 3; i += 1) {
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.22, 0.2), material);
-      arm.position.y = 0.5;
-      arm.rotation.y = (Math.PI * 2 * i) / 3;
+      const armGroup = new THREE.Group();
+      armGroup.position.y = armY;
+      armGroup.rotation.y = (Math.PI * 2 * i) / 3;
+      group.add(armGroup);
+      spinnerArms.push(armGroup);
+
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(armLength, armHeight, armDepth), spinnerMat);
       arm.castShadow = PERFORMANCE_TUNING.shadows;
-      group.add(arm);
-      const tipMat = i % 2 === 0 ? (material.userData?.yellowInsert || material) : (material.userData?.redInsert || material);
-      [-0.72, 0.72].forEach((x) => {
-        const tip = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), tipMat);
-        tip.position.set(x, 0.5, 0);
+      arm.receiveShadow = PERFORMANCE_TUNING.shadows;
+      armGroup.add(arm);
+
+      const edgeMat = bladeEdgeMat[i % bladeEdgeMat.length];
+      [-1, 1].forEach((side) => {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(armLength * 0.92, armHeight * 0.22, armDepth * 0.34), edgeMat);
+        rail.position.set(0, side * armHeight * 0.52, armDepth * 0.34);
+        rail.castShadow = PERFORMANCE_TUNING.shadows;
+        armGroup.add(rail);
+      });
+
+      const glow = new THREE.Mesh(new THREE.PlaneGeometry(armLength * 0.9, armHeight * 2.1), glowMat.clone());
+      glow.material.opacity = 0.2;
+      glow.position.set(0, 0, armDepth * 0.58);
+      glow.rotation.x = -Math.PI / 2;
+      glow.renderOrder = 36;
+      armGroup.add(glow);
+      armGlows.push(glow);
+
+      const tipMat = i % 2 === 0 ? (material.userData?.yellowInsert || amberMat) : (material.userData?.redInsert || magentaMat);
+      [-tipOffset, tipOffset].forEach((x) => {
+        const tip = new THREE.Mesh(new THREE.SphereGeometry(tipRadius, 18, 10), tipMat);
+        tip.position.set(x, 0, 0);
         tip.scale.y = 0.55;
-        arm.add(tip);
+        tip.castShadow = PERFORMANCE_TUNING.shadows;
+        armGroup.add(tip);
+        tips.push(tip);
       });
     }
 
     const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
-    body.addShape(new CANNON.Cylinder(0.62, 0.62, 0.5, 16));
-    body.position.set(center.x, center.y + 0.48, center.z);
+    body.addShape(new CANNON.Cylinder(colliderRadius, colliderRadius, colliderHeight, 16));
+    const obstacleCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, hubY, 0, yaw, pitch));
+    this.setSlopeBodyTransform(body, obstacleCenter, yaw, pitch);
     this.addObstacleBody(body, group);
     const obstacle = {
       type: 'spinnerGate',
-      center: center.clone().add(new THREE.Vector3(0, 0.48, 0)),
-      radius: PINBALL_PHYSICS.spinnerRadius,
+      trackSurface: trackSurface.clone(),
+      center: obstacleCenter,
+      radius: PINBALL_PHYSICS.spinnerRadius * spinnerScale,
       impulse: PINBALL_PHYSICS.spinnerImpulse,
       cooldown: new Map(),
       group,
+      base,
+      lowerRing,
+      haloRing,
+      glowDisc,
+      hub,
+      hubCap,
+      body,
+      spinnerArms,
+      armGlows,
+      tips,
+      spinnerScale,
+      spinnerDimensions: {
+        hubRadius,
+        hubHeight,
+        armLength,
+        armHeight,
+        armDepth,
+        tipOffset,
+        tipRadius,
+        colliderRadius,
+        colliderHeight,
+      },
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
+      visualStyle: 'premium-neon-arcade-spinner-gate',
+      textureStyle: 'radial-spin-circuit-texture-chrome-halo-glow',
       spinnerSpeed: PINBALL_PHYSICS.spinnerSpeed * (this.rng() < 0.5 ? -1 : 1),
     };
     this.pinballObstacles.push(obstacle);
     return obstacle;
   }
 
-  createRolloverLaneObstacle(center, yaw, material) {
+  createDropTargetObstacle(trackSurface, yaw, pitch, material, rubberMaterial) {
     const group = new THREE.Group();
-    group.position.copy(center);
-    group.rotation.y = yaw;
-    this.trackGroup.add(group);
-    [-0.72, 0.72].forEach((x) => {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.72, 16), material);
-      post.position.set(x, 0.42, 0);
-      post.castShadow = PERFORMANCE_TUNING.shadows;
-      group.add(post);
-      const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
-      body.addShape(new CANNON.Cylinder(0.16, 0.16, 0.72, 16));
-      body.position.copy(center.clone().add(this.localToWorldOffset(x, 0.42, 0, yaw)));
-      this.addObstacleBody(body, post);
-    });
-    const lanePlate = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.05, 1.1), material);
-    lanePlate.position.set(0, 0.08, 0);
-    lanePlate.receiveShadow = PERFORMANCE_TUNING.shadows;
-    group.add(lanePlate);
-
-    const insertTexture = this.createPinballInsertTexture('LANE', { mid: '#7ee9ff', edge: '#00324a', glow: '#f7fdff' });
-    const insertMat = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff,
-      map: insertTexture,
-      roughness: 0.16,
-      metalness: 0.02,
-      clearcoat: 1,
-      clearcoatRoughness: 0.05,
-      emissive: 0x2ddfff,
-      emissiveIntensity: 0.2,
-    });
-    const insertDisc = new THREE.Mesh(new THREE.CircleGeometry(0.48, 36), insertMat);
-    insertDisc.position.set(0, 0.115, 0);
-    insertDisc.rotation.x = -Math.PI / 2;
-    group.add(insertDisc);
-    const obstacle = {
-      type: 'rolloverLane',
-      center: center.clone().add(this.localToWorldOffset(0, 0.16, 0, yaw)),
-      direction: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).normalize(),
-      radius: PINBALL_PHYSICS.rolloverRadius,
-      boostImpulse: PINBALL_PHYSICS.rolloverBoostImpulse,
-      cooldown: new Map(),
-      mesh: lanePlate,
-      pulse: 0,
-    };
-    this.pinballObstacles.push(obstacle);
-    return obstacle;
-  }
-
-  createDropTargetObstacle(center, yaw, material, rubberMaterial) {
-    const group = new THREE.Group();
-    group.position.copy(center);
-    group.rotation.y = yaw;
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation(group, yaw, pitch);
     this.trackGroup.add(group);
     const targets = [];
     const bodies = [];
@@ -3981,8 +4312,8 @@ class MarbleRace {
       group.add(target);
       const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
       body.addShape(new CANNON.Box(new CANNON.Vec3(0.21, 0.5, 0.12)));
-      body.position.copy(center.clone().add(this.localToWorldOffset(x, 0.58, 0, yaw)));
-      body.quaternion.setFromEuler(-0.08, yaw, 0, 'XYZ');
+      const bodyCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(x, 0.58, 0, yaw, pitch));
+      this.setSlopeBodyTransform(body, bodyCenter, yaw, pitch - 0.08);
       this.addObstacleBody(body, target);
       targets.push(target);
       bodies.push(body);
@@ -3998,7 +4329,8 @@ class MarbleRace {
     group.add(jewel);
     const obstacle = {
       type: 'dropTarget',
-      center: center.clone().add(this.localToWorldOffset(0, 0.58, 0, yaw)),
+      trackSurface: trackSurface.clone(),
+      center: trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, 0.58, 0, yaw, pitch)),
       direction: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).normalize(),
       radius: PINBALL_PHYSICS.dropTargetRadius,
       impulse: PINBALL_PHYSICS.dropTargetImpulse,
@@ -4011,6 +4343,8 @@ class MarbleRace {
       group,
       targets,
       bodies,
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
       dropped: false,
       dropProgress: 0,
     };
@@ -4022,7 +4356,10 @@ class MarbleRace {
     if (!this.pinballObstacles.length) return;
     this.pinballObstacles.forEach((obstacle) => {
       if (obstacle.type === 'spinnerGate') {
-        obstacle.group.rotation.y += delta * obstacle.spinnerSpeed;
+        obstacle.spinAngle = (obstacle.spinAngle || 0) + delta * obstacle.spinnerSpeed;
+        obstacle.spinnerArms?.forEach((arm, index) => {
+          arm.rotation.y = obstacle.spinAngle + (Math.PI * 2 * index) / 3;
+        });
       }
       if (obstacle.type === 'dropTarget' && obstacle.dropped) {
         obstacle.dropProgress = Math.min(1, obstacle.dropProgress + delta * 3.4);
@@ -4050,7 +4387,6 @@ class MarbleRace {
         if (obstacle.type === 'popBumper') this.applyPopBumperImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'slingshot') this.applySlingshotImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'spinnerGate') this.applySpinnerGateImpulse(obstacle, data, dx, dz);
-        if (obstacle.type === 'rolloverLane') this.applyRolloverLaneBoost(obstacle, data);
         if (obstacle.type === 'dropTarget') this.applyDropTargetHit(obstacle, data);
       });
     });
@@ -4125,24 +4461,6 @@ class MarbleRace {
     this.pinballInteractions.spinnerGate += 1;
     this.spawnImpactEffect(obstacle.center, 0xffd166, 'ring');
     this.pushBroadcastEvent('Spinner Snap', `${data.name} spinner boost`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} spinner boost`, `${data.name} catches spin`, `${data.name} snaps forward`] });
-  }
-
-  applyRolloverLaneBoost(obstacle, data) {
-    const closest = this.findClosestProgress(data.body.position);
-    this.noteObstacleHit(data, obstacle, closest.distance);
-    const frame = this.getTrackFrameAt(Math.max(closest.distance, data.distance || 0) + this.finishDirectionAssist.lookAhead);
-    const rawImpulse = new THREE.Vector3(
-      obstacle.direction.x * obstacle.boostImpulse,
-      0,
-      obstacle.direction.z * obstacle.boostImpulse
-    );
-    data.body.wakeUp();
-    this.applyFinishDirectedImpulse(data, rawImpulse, frame, 0.22);
-    obstacle.cooldown.set(data.id, this.elapsed);
-    obstacle.pulse = 1;
-    this.pinballInteractions.rolloverLane += 1;
-    this.spawnImpactEffect(obstacle.center, 0x8cff66, 'spark');
-    this.pushBroadcastEvent('Lane Lit', `${data.name} lane boost`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} lane boost`, `${data.name} lights lane`, `${data.name} gains speed`] });
   }
 
   applyDropTargetHit(obstacle, data) {
@@ -4387,7 +4705,11 @@ class MarbleRace {
       if (!data.labelSprite) return;
       data.labelSprite.position.copy(data.mesh.position).add(new THREE.Vector3(0, data.radius + 0.72, 0));
       const cameraDistance = data.labelSprite.position.distanceTo(this.camera.position);
-      const scale = clamp(cameraDistance * 0.035, 0.62, 1.25);
+      const targetScale = clamp(cameraDistance * 0.035, 0.62, 1.25);
+      const previousBaseScale = Number.isFinite(data.labelBaseScale) ? data.labelBaseScale : targetScale;
+      const smoothing = clamp(this.performanceProfile?.nameLabelScaleSmoothing ?? PERFORMANCE_TUNING.nameLabelScaleSmoothing ?? 0.18, 0, 1);
+      const scale = previousBaseScale + (targetScale - previousBaseScale) * smoothing;
+      data.labelBaseScale = scale;
       data.labelSprite.scale.set(scale * 3.8, scale * 0.95, 1);
       const fallLabelAllowed = !data.pendingFallRespawn
         || this.elapsed - (data.pendingFallRespawn.detectedAt ?? this.elapsed) < MARBLE_LABEL_POLICY.hidePendingFallAfterSeconds;
@@ -4915,7 +5237,7 @@ class MarbleRace {
       if (data.labelSprite) {
         data.labelSprite.visible = data.mesh.visible;
         data.labelSprite.position.copy(data.mesh.position).add(new THREE.Vector3(0, data.radius + 0.82, 0));
-        data.labelSprite.scale.setScalar(1);
+        delete data.labelBaseScale;
       }
     });
     return ranking.length;
@@ -5047,6 +5369,21 @@ class MarbleRace {
     return clean;
   }
 
+  setTtsPitch(pitch = 1, { resetQueue = true, updateStatus = true } = {}) {
+    const numeric = Number.parseFloat(pitch);
+    const clean = clamp(Number.isFinite(numeric) ? numeric : 1, 0.7, 1.3);
+    this.ttsPitch = Number(clean.toFixed(2));
+    if (this.localTtsBridge) {
+      this.localTtsBridge.pitch = this.ttsPitch;
+      this.localTtsBridge.cachedAudio?.clear?.();
+    }
+    if (this.ui?.ttsPitchSlider) this.ui.ttsPitchSlider.value = this.ttsPitch.toFixed(2);
+    if (this.ui?.ttsPitchLabel) this.ui.ttsPitchLabel.textContent = `${this.ttsPitch.toFixed(2)}x`;
+    if (resetQueue) this.resetCommentaryVoiceQueue({ cancelCurrent: true, clearLastLine: false });
+    if (updateStatus && this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = `Pitch: ${this.ttsPitch.toFixed(2)}x`;
+    return this.ttsPitch;
+  }
+
   setCommentaryEnabled(enabled = true) {
     this.commentaryEnabled = Boolean(enabled);
     if (this.ui?.commentaryToggle) this.ui.commentaryToggle.checked = this.commentaryEnabled;
@@ -5069,6 +5406,7 @@ class MarbleRace {
     if (clearLastLine) this.lastCommentaryVoiceLine = null;
     this.commentaryVoiceQueue = [];
     this.commentaryVoiceSpeaking = false;
+    this.commentaryVoicePreparing = false;
     this.commentaryVoiceCurrentLine = null;
     this.commentaryVoiceStartedAt = 0;
     this.commentaryVoiceLastError = null;
@@ -5095,6 +5433,8 @@ class MarbleRace {
       localBridgeAvailable: this.localTtsBridge?.available,
       localBridgeStatus: this.localTtsBridge?.status || 'unknown',
       localBridgeVoice: this.localTtsBridge?.voice || null,
+      ttsPitch: this.ttsPitch,
+      localBridgePitch: this.localTtsBridge?.pitch || this.ttsPitch,
       pageAudioMixed: Boolean(this.recordingAudioDestination),
       captureStreamAvailable,
       directPageMixRecordable: Boolean(this.localTtsBridge?.available),
@@ -5192,6 +5532,7 @@ class MarbleRace {
     if (options.forceNow) {
       this.commentaryVoiceQueue = [item];
       this.commentaryVoiceSpeaking = false;
+      this.commentaryVoicePreparing = false;
       this.commentaryVoiceCurrentLine = null;
       window.speechSynthesis?.cancel?.();
       try { this.localTtsBridge?.audioElement?.pause?.(); } catch {}
@@ -5234,7 +5575,8 @@ class MarbleRace {
     const normalized = String(line || '').replace(/\s+/g, ' ').trim();
     if (!normalized) return null;
     const voice = this.localTtsBridge.voice || 'Alex';
-    const url = `/api/tts?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(normalized)}`;
+    const pitch = this.ttsPitch || this.localTtsBridge.pitch || 1;
+    const url = `/api/tts?voice=${encodeURIComponent(voice)}&pitch=${encodeURIComponent(pitch.toFixed(2))}&text=${encodeURIComponent(normalized)}`;
     const cached = this.localTtsBridge.cachedAudio?.get(url);
     if (cached?.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return { audio: cached, url, line: normalized, cached: true };
     const audio = cached || new Audio(url);
@@ -5345,7 +5687,7 @@ class MarbleRace {
       const browserVoice = window.speechSynthesis.getVoices().find((voice) => voice.name === desiredVoice);
       if (browserVoice) utterance.voice = browserVoice;
       utterance.rate = 1.08;
-      utterance.pitch = 0.92;
+      utterance.pitch = this.ttsPitch || 1;
       utterance.volume = 0.86;
       this.commentaryVoiceSpeaking = true;
       this.commentaryVoiceCurrentLine = next.line;
@@ -5381,15 +5723,22 @@ class MarbleRace {
   }
 
   async playNextCommentaryVoice() {
-    if (!this.commentaryVoiceEnabled || this.commentaryVoiceSpeaking || !this.commentaryVoiceQueue.length) return false;
+    if (!this.commentaryVoiceEnabled || this.commentaryVoiceSpeaking || this.commentaryVoicePreparing || !this.commentaryVoiceQueue.length) return false;
     const next = this.commentaryVoiceQueue.shift();
-    const localPlayed = await this.playLocalTtsLine(next);
+    this.commentaryVoicePreparing = true;
+    let localPlayed = false;
+    try {
+      localPlayed = await this.playLocalTtsLine(next);
+    } finally {
+      this.commentaryVoicePreparing = false;
+    }
     if (localPlayed) return true;
     const browserPlayed = this.playBrowserSpeechLine(next);
     if (!browserPlayed) {
       this.commentaryVoiceLastError = this.localTtsBridge?.lastError || 'tts-unavailable';
       if (typeof next.handlers?.onerror === 'function') next.handlers.onerror({ error: this.commentaryVoiceLastError });
       else if (this.ui?.ttsTestStatus) this.ui.ttsTestStatus.textContent = 'TTS unavailable';
+      if (this.commentaryVoiceQueue.length) queueMicrotask(() => this.playNextCommentaryVoice());
     }
     return browserPlayed;
   }
@@ -5735,7 +6084,11 @@ class MarbleRace {
       if (!data?.mesh) return;
       const pulse = 1 + Math.sin(this.podiumCeremony.spotlightPhase + index * 1.7) * 0.08;
       data.mesh.scale.setScalar(pulse);
-      if (data.labelSprite) data.labelSprite.scale.setScalar(1 + (pulse - 1) * 1.8);
+      if (data.labelSprite) {
+        const baseLabelScale = Number.isFinite(data.labelBaseScale) ? data.labelBaseScale : 1;
+        const pulseLabelScale = baseLabelScale * (1 + (pulse - 1) * 0.28);
+        data.labelSprite.scale.set(pulseLabelScale * 3.8, pulseLabelScale * 0.95, 1);
+      }
     });
     const confettiEverySeconds = this.podiumCeremony.isCupChampionCeremony
       ? PODIUM_CEREMONY.championConfettiEverySeconds
@@ -5752,7 +6105,10 @@ class MarbleRace {
       this.podiumCeremony.medalists.forEach((medalist) => {
         const data = this.marbleData.find((item) => item.id === medalist.id);
         data?.mesh?.scale.setScalar(1);
-        data?.labelSprite?.scale.setScalar(1);
+        if (data?.labelSprite) {
+          const baseLabelScale = Number.isFinite(data.labelBaseScale) ? data.labelBaseScale : 1;
+          data.labelSprite.scale.set(baseLabelScale * 3.8, baseLabelScale * 0.95, 1);
+        }
       });
     }
   }
@@ -5809,8 +6165,8 @@ class MarbleRace {
     const safeChuteFrontLocalZ = gateLocalZ - 0.55;
     const laneFrontLocalZ = clamp(gateLocalZ - 0.75, safeChuteBackLocalZ, safeChuteFrontLocalZ);
     const laneBackLocalZ = Math.max(safeChuteBackLocalZ, laneFrontLocalZ - (maxRowsInsideChute - 1) * laneRowSpacing);
-    const holdingPatternCols = Math.max(1, Math.ceil(Math.sqrt(Math.max(1, count - cols * maxRowsInsideChute))));
-    const holdingPatternLateralSpacing = Math.max(1.05, highCountStaging.lateralSpacing ?? 1.12);
+    const holdingPatternCols = laneCount;
+    const holdingPatternLateralSpacing = laneGap;
     const holdingPatternDepthGap = Math.max(1.05, highCountStaging.holdingPatternDepthGap ?? 1.18);
     const holdingPatternStartLocalZ = Math.max(safeChuteBackLocalZ, laneBackLocalZ - holdingPatternDepthGap);
     this.startStagingLayout = {
@@ -6110,9 +6466,17 @@ class MarbleRace {
   generateName(i) {
     const adjective = nameAdjectives[Math.floor(this.rng() * nameAdjectives.length)];
     const noun = nameNouns[Math.floor(this.rng() * nameNouns.length)];
-    const title = nameTitles[Math.floor(this.rng() * nameTitles.length)];
-    const variant = i >= 12 ? ` ${nameAdjectives[(i + Math.floor(this.rng() * nameAdjectives.length)) % nameAdjectives.length]}` : '';
-    return `${adjective} ${noun} ${title}${variant}`.replace(/[^A-Za-z ]/g, '').replace(/\s+/g, ' ').trim();
+    const fallback = `Marble ${i + 1}`;
+    return this.limitNameWords(`${adjective} ${noun}`, fallback, 2);
+  }
+
+  limitNameWords(name, fallback = 'Marble', maxWords = 2) {
+    const cleaned = String(name || fallback)
+      .replace(/[^A-Za-z0-9 ]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const words = cleaned.split(' ').filter(Boolean).slice(0, Math.max(1, maxWords));
+    return words.join(' ') || fallback;
   }
 
   startRace() {
@@ -6122,6 +6486,12 @@ class MarbleRace {
     if (this.autoCupRecording?.active && this.autoCupRecording.phase === 'countdown-open-gate') {
       this.autoCupRecording.phase = 'racing';
       this.autoCupRecording.currentStage = this.getCupStage();
+    }
+    if (this.continuousRecording?.active && this.continuousRecording.phase === 'countdown-open-gate') {
+      this.continuousRecording.phase = 'racing';
+    }
+    if (this.singleRecording?.active && this.singleRecording.phase === 'countdown-open-gate') {
+      this.singleRecording.phase = 'racing';
     }
     this.elapsed = 0;
     if (!this.activeCommentary || this.activeCommentary.kind !== 'start') {
@@ -6383,7 +6753,6 @@ class MarbleRace {
       dropTarget: { frequency: 180, duration: 0.12, type: 'sawtooth', gain: 0.12 },
       slingshot: { frequency: 260, duration: 0.09, type: 'square', gain: 0.09 },
       spinnerGate: { frequency: 320, duration: 0.08, type: 'triangle', gain: 0.08 },
-      rolloverLane: { frequency: 420, duration: 0.07, type: 'sine', gain: 0.08 },
       popBumper: { frequency: 520, duration: 0.06, type: 'triangle', gain: 0.08 },
       impact: { frequency: 240, duration: 0.08, type: 'square', gain: 0.08 },
     }[kind] || { frequency: 240, duration: 0.08, type: 'square', gain: 0.08 };
@@ -6415,6 +6784,20 @@ class MarbleRace {
     }
   }
 
+  isRecordingPresentationActive() {
+    return this.mediaRecorder?.state === 'recording'
+      || Boolean(this.singleRecording?.active)
+      || Boolean(this.continuousRecording?.active)
+      || Boolean(this.autoCupRecording?.active);
+  }
+
+  updateRecordingFpsVisibility() {
+    const fpsStat = this.ui?.fpsStat || this.ui?.fps?.closest?.('.stats-grid > div');
+    if (!fpsStat) return;
+    const hideFps = this.isRecordingPresentationActive();
+    fpsStat.classList.toggle('hidden', hideFps);
+  }
+
   toggleLeftUI() {
     this.leftUICollapsed = !this.leftUICollapsed;
     this.applyLeftUIState();
@@ -6425,6 +6808,45 @@ class MarbleRace {
     this.rightUICollapsed = !this.rightUICollapsed;
     this.applyRightUIState();
     this.updateUI();
+  }
+
+  beginRecordingUIPresentation(category, { instantHide = true } = {}) {
+    if (!['single', 'continuous'].includes(category)) return;
+    if (!this.recordingUIPresentation?.active) {
+      this.recordingUIPresentation = {
+        active: true,
+        category,
+        restoreLeftCollapsed: this.leftUICollapsed,
+        preserveRightUI: true,
+        restoreToggleVisibility: true,
+        instantHideLeft: Boolean(instantHide),
+      };
+    } else {
+      this.recordingUIPresentation.category = category;
+      this.recordingUIPresentation.instantHideLeft = this.recordingUIPresentation.instantHideLeft || Boolean(instantHide);
+    }
+    document.body.classList.add('recording-ui-presentation', RECORDING_CURSOR_SUPPRESSION.hidePageCursorClass);
+    document.body.classList.toggle('recording-ui-instant-hide', Boolean(this.recordingUIPresentation.instantHideLeft));
+    this.leftUICollapsed = true;
+    this.applyLeftUIState();
+  }
+
+  endRecordingUIPresentation(category = this.recordingUIPresentation?.category) {
+    if (!this.recordingUIPresentation?.active) return;
+    if (category && this.recordingUIPresentation.category && category !== this.recordingUIPresentation.category) return;
+    const restoreLeft = Boolean(this.recordingUIPresentation.restoreLeftCollapsed);
+    this.recordingUIPresentation = {
+      active: false,
+      category: null,
+      restoreLeftCollapsed: null,
+      preserveRightUI: true,
+      restoreToggleVisibility: true,
+      instantHideLeft: false,
+    };
+    document.body.classList.remove('recording-ui-presentation', 'recording-ui-instant-hide', RECORDING_CURSOR_SUPPRESSION.hidePageCursorClass);
+    this.leftUICollapsed = restoreLeft;
+    this.applyLeftUIState();
+    this.ui?.uiToggle?.classList.remove('hidden');
   }
 
   togglePanel(panel, button) {
@@ -6438,13 +6860,29 @@ class MarbleRace {
 
   getRecordingMimeType() {
     const candidates = [
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp8,opus',
-      'video/webm;codecs=vp9',
-      'video/webm;codecs=vp8',
+      ...RECORDING_AUDIO_QUALITY.mimeCodecPreference,
       'video/webm',
     ];
     return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+  }
+
+  getRecordingEncoderOptions() {
+    const mimeType = this.getRecordingMimeType();
+    const options = {};
+    if (mimeType) options.mimeType = mimeType;
+    if (Number.isFinite(RECORDING_AUDIO_QUALITY.audioBitsPerSecond) && RECORDING_AUDIO_QUALITY.audioBitsPerSecond > 0) {
+      options.audioBitsPerSecond = RECORDING_AUDIO_QUALITY.audioBitsPerSecond;
+    }
+    return options;
+  }
+
+  getRecordingAudioQualityDebug() {
+    return {
+      ...RECORDING_AUDIO_QUALITY,
+      mimeType: typeof MediaRecorder !== 'undefined' ? this.getRecordingMimeType() : null,
+      encoderOptions: typeof MediaRecorder !== 'undefined' ? this.getRecordingEncoderOptions() : null,
+      browserNote: 'MediaRecorder requests Opus WebM with 192kbps audio and 48kHz stereo tab/system audio constraints. Browser support and exact encoded values may still be clamped by Chrome.',
+    };
   }
 
   buildDisplayMediaOptions({ tabOnly = false, includeAudio = true } = {}) {
@@ -6454,7 +6892,7 @@ class MarbleRace {
       height: { ideal: 1080 },
       displaySurface: 'browser',
       logicalSurface: true,
-      cursor: 'never',
+      cursor: RECORDING_CURSOR_SUPPRESSION.cursor,
     };
     const audioConstraints = includeAudio
       ? {
@@ -6463,6 +6901,17 @@ class MarbleRace {
         autoGainControl: false,
       }
       : false;
+    if (audioConstraints) {
+      if (Number.isFinite(RECORDING_AUDIO_QUALITY.sampleRate) && RECORDING_AUDIO_QUALITY.sampleRate > 0) {
+        audioConstraints.sampleRate = RECORDING_AUDIO_QUALITY.sampleRate;
+      }
+      if (Number.isFinite(RECORDING_AUDIO_QUALITY.channelCount) && RECORDING_AUDIO_QUALITY.channelCount > 0) {
+        audioConstraints.channelCount = RECORDING_AUDIO_QUALITY.channelCount;
+      }
+      if (Number.isFinite(RECORDING_AUDIO_QUALITY.sampleSize) && RECORDING_AUDIO_QUALITY.sampleSize > 0) {
+        audioConstraints.sampleSize = RECORDING_AUDIO_QUALITY.sampleSize;
+      }
+    }
     const displayOptions = {
       video: videoConstraints,
       audio: audioConstraints,
@@ -6496,7 +6945,12 @@ class MarbleRace {
     this.recordingMixSourceNodes = [];
 
     if (includeAudio && this.audioContext?.createMediaStreamDestination && (originalAudioTracks.length || pageAudioTracks.length)) {
-      const mixDestination = this.audioContext.createMediaStreamDestination();
+      // Keep the app/WebAudio mix as the persistent final recorder track. Piping that
+      // track through a second temporary MediaStreamDestination can go silent in saved
+      // WebM after a few dynamic TTS <audio> sources, even though playback is audible.
+      // Instead, feed any display/tab audio into the same persistent destination and
+      // attach exactly that destination track to MediaRecorder.
+      const mixDestination = this.ensureRecordingAudioDestination();
       originalAudioTracks.forEach((track) => {
         try {
           const inputStream = new MediaStream([track]);
@@ -6508,17 +6962,7 @@ class MarbleRace {
           console.warn('Unable to mix display/tab audio into recording stream.', error);
         }
       });
-      pageAudioTracks.forEach((track) => {
-        try {
-          const inputStream = new MediaStream([track]);
-          const sourceNode = this.audioContext.createMediaStreamSource(inputStream);
-          sourceNode.connect(mixDestination);
-          this.recordingMixSourceNodes.push(sourceNode);
-          mixedInputs.page += 1;
-        } catch (error) {
-          console.warn('Unable to mix page audio into recording stream.', error);
-        }
-      });
+      mixedInputs.page = pageAudioTracks.length;
       originalAudioTracks.forEach((track) => {
         try {
           stream.removeTrack?.(track);
@@ -6527,9 +6971,13 @@ class MarbleRace {
           console.warn('Unable to remove original audio track before mixed recording.', error);
         }
       });
-      mixedAudioTracks.push(...(mixDestination.stream?.getAudioTracks?.() || []));
+      mixedAudioTracks.push(...(mixDestination?.stream?.getAudioTracks?.() || []));
       mixedAudioTracks.forEach((track) => {
-        try { stream.addTrack(track); } catch (error) { console.warn('Unable to add mixed audio track to recording stream.', error); }
+        try {
+          if (!stream.getAudioTracks?.().includes(track)) stream.addTrack(track);
+        } catch (error) {
+          console.warn('Unable to add persistent mixed audio track to recording stream.', error);
+        }
       });
     } else {
       pageAudioTracks.forEach((track) => {
@@ -6551,6 +6999,7 @@ class MarbleRace {
       mixedAudioTrackCount: mixedAudioTracks.length,
       mixedAudioInputs: mixedInputs,
       singleMixedAudioTrack: mixedAudioTracks.length === 1,
+      persistentPageMixTrack: mixedAudioTracks.length === 1 && mixedAudioTracks[0] === pageAudioTracks[0],
     };
   }
 
@@ -6562,6 +7011,8 @@ class MarbleRace {
         this.lastRecordingRequest = {
           mode: tabOnly ? 'tab-only-preferred' : 'screen-preferred',
           options: displayOptions,
+          cursorSuppression: RECORDING_CURSOR_SUPPRESSION,
+          audioQuality: this.getRecordingAudioQualityDebug(),
           audioRequested: includeAudio,
           pageAudioRequested: includeAudio,
           note: includeAudio
@@ -6597,6 +7048,7 @@ class MarbleRace {
           mixedAudioTrackCount: audioMerge.mixedAudioTrackCount,
           mixedAudioInputs: audioMerge.mixedAudioInputs,
           singleMixedAudioTrack: audioMerge.singleMixedAudioTrack,
+          persistentPageMixTrack: audioMerge.persistentPageMixTrack,
           pageAudioMixed: audioMerge.pageAudioMixed,
           displayAudioMixed: audioMerge.displayAudioMixed,
           audioGranted: audioTracks.length > 0,
@@ -6616,6 +7068,7 @@ class MarbleRace {
             mixedAudioTrackCount: audioMerge.mixedAudioTrackCount,
             mixedAudioInputs: audioMerge.mixedAudioInputs,
             singleMixedAudioTrack: audioMerge.singleMixedAudioTrack,
+            persistentPageMixTrack: audioMerge.persistentPageMixTrack,
             audioGranted: audioTracks.length > 0,
             displayAudioGranted: audioMerge.originalAudioTracks.length > 0,
             pageAudioMixed: audioMerge.pageAudioMixed,
@@ -6637,6 +7090,7 @@ class MarbleRace {
     this.lastRecordingRequest = {
       mode: 'canvas-fallback',
       options: { video: 'renderer.domElement.captureStream(60)', audio: includeAudio ? 'page-audio-mix' : false },
+      audioQuality: this.getRecordingAudioQualityDebug(),
       audioRequested: includeAudio,
       pageAudioRequested: includeAudio,
       audioTrackCount: audioMerge.mergedAudioTracks.length,
@@ -6645,6 +7099,7 @@ class MarbleRace {
       mixedAudioTrackCount: audioMerge.mixedAudioTrackCount,
       mixedAudioInputs: audioMerge.mixedAudioInputs,
       singleMixedAudioTrack: audioMerge.singleMixedAudioTrack,
+      persistentPageMixTrack: audioMerge.persistentPageMixTrack,
       pageAudioMixed: audioMerge.pageAudioMixed,
       displayAudioMixed: audioMerge.displayAudioMixed,
       audioGranted: audioMerge.mergedAudioTracks.length > 0,
@@ -6664,6 +7119,7 @@ class MarbleRace {
         mixedAudioTrackCount: audioMerge.mixedAudioTrackCount,
         mixedAudioInputs: audioMerge.mixedAudioInputs,
         singleMixedAudioTrack: audioMerge.singleMixedAudioTrack,
+        persistentPageMixTrack: audioMerge.persistentPageMixTrack,
         audioGranted: audioMerge.mergedAudioTracks.length > 0,
         displayAudioGranted: false,
         pageAudioMixed: audioMerge.pageAudioMixed,
@@ -6672,7 +7128,15 @@ class MarbleRace {
     };
   }
 
-  async toggleRecording({ preferScreenRecording = true, tabOnly = false, includeAudio = false } = {}) {
+  getRecordingCategoryLabel(category = this.recordingCategory) {
+    return {
+      single: 'Single',
+      continuous: 'Multiple',
+      cup: 'Cup Mode',
+    }[category] || 'Single';
+  }
+
+  async toggleRecording({ preferScreenRecording = true, tabOnly = false, includeAudio = false, recordingCategory = 'single' } = {}) {
     if (this.mediaRecorder?.state === 'recording') {
       this.mediaRecorder.stop();
       return false;
@@ -6682,18 +7146,30 @@ class MarbleRace {
       return false;
     }
 
+    this.beginRecordingUIPresentation(recordingCategory, { instantHide: true });
     const recording = await this.createRecordingStream({ preferScreenRecording, tabOnly, includeAudio });
     if (!recording) {
+      this.endRecordingUIPresentation(recordingCategory);
       this.ui.recordStatus.textContent = 'Recording is not supported in this browser';
       return false;
     }
     const { stream, source, settings } = recording;
-    const mimeType = this.getRecordingMimeType();
+    const recorderOptions = this.getRecordingEncoderOptions();
+    const mimeType = recorderOptions.mimeType || '';
     this.recordedChunks = [];
-    this.mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    this.mediaRecorder = new MediaRecorder(stream, recorderOptions);
     this.recordingStartedAt = performance.now();
     this.recordingSource = source;
-    this.recordingSettings = settings || null;
+    this.recordingCategory = recordingCategory;
+    this.recordingSettings = {
+      ...(settings || {}),
+      audioQuality: this.getRecordingAudioQualityDebug(),
+      recorderOptions,
+      recorderMimeType: this.mediaRecorder.mimeType || mimeType,
+      recorderAudioBitsPerSecond: this.mediaRecorder.audioBitsPerSecond || recorderOptions.audioBitsPerSecond,
+      requestedSampleRate: RECORDING_AUDIO_QUALITY.sampleRate,
+      requestedChannelCount: RECORDING_AUDIO_QUALITY.channelCount,
+    };
 
     [...stream.getVideoTracks(), ...stream.getAudioTracks()].forEach((track) => {
       track.addEventListener('ended', () => {
@@ -6706,15 +7182,26 @@ class MarbleRace {
     this.mediaRecorder.addEventListener('stop', () => this.saveRecording(mimeType, stream));
     this.mediaRecorder.start(1000);
     this.ui.record.classList.add('recording');
-    this.ui.record.textContent = 'Stop Recording';
-    const autoCupSuffix = this.autoCupRecording?.active ? ' · auto cup armed' : '';
+    const categoryLabel = this.getRecordingCategoryLabel(recordingCategory);
+    if (recordingCategory === 'continuous' && this.ui.continuousRecord) {
+      this.ui.continuousRecord.classList.add('recording');
+      this.ui.continuousRecord.textContent = 'Stop Multiple';
+    } else if (recordingCategory === 'cup' && this.ui.autoCupRecord) {
+      this.ui.autoCupRecord.classList.add('recording');
+      this.ui.autoCupRecord.textContent = 'Stop Cup Mode';
+    } else {
+      this.ui.record.textContent = 'Stop Single';
+    }
+    const autoCupSuffix = this.autoCupRecording?.active ? ' · Cup Mode active' : '';
+    const singleSuffix = this.singleRecording?.active ? ' · countdown starts in 2s' : '';
+    const continuousSuffix = this.continuousRecording?.active ? ` · Multiple ${this.continuousRecording.racesCompleted || 0}/${this.continuousRecording.totalRaces || MULTIPLE_RECORDING_DEFAULT_RACES} · next gate after 5s` : '';
     const sourceLabel = source === 'browser-tab'
       ? 'browser tab only'
       : source === 'screen'
         ? 'full page UI'
         : '3D only';
     const audioSuffix = settings?.audioGranted
-      ? ` + audio${settings?.displayAudioGranted ? '' : ' (page mix)'}`
+      ? ` + audio${settings?.displayAudioGranted ? '' : ' (page mix)'} · Opus 192kbps 48kHz stereo`
       : includeAudio ? ' · no audio granted' : '';
     const ttsPolicy = this.getTtsRecordingPolicy();
     const ttsSuffix = this.commentaryVoiceEnabled && ttsPolicy.tabAudioRequired && !settings?.displayAudioGranted
@@ -6723,7 +7210,7 @@ class MarbleRace {
         ? ' · TTS page-mixed'
         : '';
     const mixSuffix = settings?.singleMixedAudioTrack ? ' · mixed audio track' : '';
-    this.ui.recordStatus.textContent = `Recording: ${sourceLabel}${audioSuffix}${mixSuffix}${ttsSuffix}${autoCupSuffix}`;
+    this.ui.recordStatus.textContent = `Recording: ${categoryLabel} · ${sourceLabel}${audioSuffix}${mixSuffix}${ttsSuffix}${autoCupSuffix}${singleSuffix}${continuousSuffix}`;
     this.updateTtsRecordingNotice();
     this.updateUI();
     return true;
@@ -6736,13 +7223,22 @@ class MarbleRace {
     });
     this.recordingMixSourceNodes = [];
     this.ui.record.classList.remove('recording');
-    this.ui.record.textContent = 'Start Recording';
+    this.ui.record.textContent = 'Single';
+    this.ui.continuousRecord?.classList.remove('recording');
+    if (this.ui.continuousRecord) this.ui.continuousRecord.textContent = 'Multiple';
+    if (this.ui.multipleRaceCount) this.ui.multipleRaceCount.disabled = false;
+    this.ui.autoCupRecord?.classList.remove('recording');
+    if (this.ui.autoCupRecord) this.ui.autoCupRecord.textContent = 'Cup Mode';
+    this.endRecordingUIPresentation(this.recordingCategory);
     const duration = (performance.now() - this.recordingStartedAt) / 1000;
     if (!this.recordedChunks.length) {
       this.ui.recordStatus.textContent = 'No video was recorded';
       this.mediaRecorder = null;
       this.recordingSource = null;
+      this.recordingCategory = null;
       this.recordingSettings = null;
+      if (this.continuousRecording?.active) this.stopContinuousRecording({ stopRecorder: false, reason: 'no-video-recorded' });
+      if (this.singleRecording?.active) this.stopSingleRecording({ stopRecorder: false, reason: 'no-video-recorded' });
       if (this.autoCupRecording?.active) this.stopAutoCupRecording({ stopRecorder: false, reason: 'no-video-recorded' });
       this.updateUI();
       return;
@@ -6760,14 +7256,32 @@ class MarbleRace {
     this.ui.recordStatus.textContent = `Downloaded ${duration.toFixed(1)}s video`;
     this.mediaRecorder = null;
     this.recordingSource = null;
+    this.recordingCategory = null;
     this.recordingSettings = null;
+    if (this.singleRecording?.active) {
+      this.singleRecording.active = false;
+      this.singleRecording.phase = 'idle';
+      this.singleRecording.nextActionAt = null;
+      this.clearSingleRecordingTimer();
+    }
+    if (this.continuousRecording?.active) {
+      this.continuousRecording.active = false;
+      this.continuousRecording.phase = 'idle';
+      this.continuousRecording.nextActionAt = null;
+      this.clearContinuousRecordingTimer();
+      if (this.ui.multipleRaceCount) this.ui.multipleRaceCount.disabled = false;
+      if (this.ui.continuousRecord) {
+        this.ui.continuousRecord.classList.remove('recording');
+        this.ui.continuousRecord.textContent = 'Multiple';
+      }
+    }
     if (this.autoCupRecording?.active) {
       this.autoCupRecording.active = false;
       this.autoCupRecording.phase = 'idle';
       this.autoCupRecording.nextActionAt = null;
       if (this.ui.autoCupRecord) {
         this.ui.autoCupRecord.classList.remove('recording');
-        this.ui.autoCupRecord.textContent = 'Auto Record Cup';
+        this.ui.autoCupRecord.textContent = 'Cup Mode';
       }
     }
     this.updateUI();
@@ -6779,6 +7293,236 @@ class MarbleRace {
       this.autoCupRecording.pendingTimer = null;
       this.autoCupRecording.nextActionAt = null;
     }
+  }
+
+  clearSingleRecordingTimer() {
+    if (this.singleRecording?.pendingTimer) clearTimeout(this.singleRecording.pendingTimer);
+    if (this.singleRecording) {
+      this.singleRecording.pendingTimer = null;
+      this.singleRecording.nextActionAt = null;
+    }
+  }
+
+  scheduleSingleRecordingAction(delaySeconds, phase, action) {
+    if (!this.singleRecording?.active) return;
+    this.clearSingleRecordingTimer();
+    this.singleRecording.phase = phase;
+    this.singleRecording.nextActionAt = performance.now() + delaySeconds * 1000;
+    this.singleRecording.pendingTimer = setTimeout(() => {
+      if (!this.singleRecording?.active) return;
+      this.singleRecording.pendingTimer = null;
+      this.singleRecording.nextActionAt = null;
+      action();
+      this.updateUI();
+    }, delaySeconds * 1000);
+    this.updateUI();
+  }
+
+  async toggleSingleRecording() {
+    if (this.singleRecording?.active) {
+      this.stopSingleRecording({ stopRecorder: true, reason: 'manual-stop' });
+      return;
+    }
+    if (this.mediaRecorder?.state === 'recording') {
+      this.mediaRecorder.stop();
+      return;
+    }
+    await this.startSingleRecording({ includeAudio: true });
+  }
+
+  async startSingleRecording({ preferScreenRecording = true, tabOnly = false, includeAudio = true } = {}) {
+    this.clearSingleRecordingTimer();
+    this.singleRecording = {
+      ...this.singleRecording,
+      active: true,
+      mode: 'single',
+      label: 'Single',
+      phase: 'preparing-recording',
+      startedAt: performance.now(),
+      pendingTimer: null,
+      nextActionAt: null,
+      gateDelaySeconds: RECORDING_GATE_DELAY_SECONDS,
+      startedCountdownAt: null,
+      finalStopDelaySeconds: SINGLE_RECORDING_FINAL_STOP_SECONDS,
+      lastError: null,
+    };
+    if (this.state === 'finished') this.newRace({ regenerateTrack: false });
+    const recordingStarted = this.mediaRecorder?.state === 'recording'
+      ? true
+      : await this.toggleRecording({ preferScreenRecording, tabOnly, includeAudio, recordingCategory: 'single' });
+    if (!recordingStarted) {
+      this.stopSingleRecording({ stopRecorder: false, reason: 'recording-unavailable' });
+      this.singleRecording.lastError = 'recording-unavailable';
+      this.ui.recordStatus.textContent = 'Single recording unavailable';
+      return false;
+    }
+    this.scheduleSingleRecordingAction(this.singleRecording.gateDelaySeconds, 'waiting-open-gate', () => this.startSingleRecordingRace());
+    return true;
+  }
+
+  startSingleRecordingRace() {
+    if (!this.singleRecording?.active) return;
+    if (this.state === 'finished') this.newRace({ regenerateTrack: false });
+    if (this.state !== 'ready') return;
+    this.singleRecording.phase = 'countdown-open-gate';
+    this.singleRecording.startedCountdownAt = performance.now();
+    this.startCountdownAndGateOpen();
+  }
+
+  handleSingleRecordingRaceComplete() {
+    if (!this.singleRecording?.active) return;
+    const finalStopDelaySeconds = Number(this.singleRecording.finalStopDelaySeconds ?? SINGLE_RECORDING_FINAL_STOP_SECONDS) || 0;
+    this.scheduleSingleRecordingAction(finalStopDelaySeconds, 'waiting-final-stop', () => {
+      if (!this.singleRecording?.active) return;
+      this.stopSingleRecording({ stopRecorder: true, reason: 'completed-single-race' });
+    });
+  }
+
+  stopSingleRecording({ stopRecorder = true, reason = 'stopped' } = {}) {
+    this.clearSingleRecordingTimer();
+    if (this.singleRecording) {
+      this.singleRecording.active = false;
+      this.singleRecording.phase = reason;
+      this.singleRecording.nextActionAt = null;
+    }
+    this.ui.record.classList.remove('recording');
+    this.ui.record.textContent = 'Single';
+    this.endRecordingUIPresentation('single');
+    if (stopRecorder && this.mediaRecorder?.state === 'recording') this.mediaRecorder.stop();
+    else this.updateUI();
+  }
+
+  clearContinuousRecordingTimer() {
+    if (this.continuousRecording?.pendingTimer) clearTimeout(this.continuousRecording.pendingTimer);
+    if (this.continuousRecording) {
+      this.continuousRecording.pendingTimer = null;
+      this.continuousRecording.nextActionAt = null;
+    }
+  }
+
+  scheduleContinuousRecordingAction(delaySeconds, phase, action) {
+    if (!this.continuousRecording?.active) return;
+    this.clearContinuousRecordingTimer();
+    this.continuousRecording.phase = phase;
+    this.continuousRecording.nextActionAt = performance.now() + delaySeconds * 1000;
+    this.continuousRecording.pendingTimer = setTimeout(() => {
+      if (!this.continuousRecording?.active) return;
+      this.continuousRecording.pendingTimer = null;
+      this.continuousRecording.nextActionAt = null;
+      action();
+      this.updateUI();
+    }, delaySeconds * 1000);
+    this.updateUI();
+  }
+
+  getMultipleRecordingTotalRaces() {
+    const raw = Number(this.ui.multipleRaceCount?.value);
+    const count = Number.isFinite(raw) ? Math.round(raw) : MULTIPLE_RECORDING_DEFAULT_RACES;
+    return clamp(count, 1, 99);
+  }
+
+  async toggleContinuousRecording() {
+    if (this.continuousRecording?.active) {
+      this.stopContinuousRecording({ stopRecorder: true, reason: 'manual-stop' });
+      return;
+    }
+    await this.startContinuousRecording({ includeAudio: true });
+  }
+
+  async startContinuousRecording({ preferScreenRecording = true, tabOnly = false, includeAudio = true } = {}) {
+    this.clearContinuousRecordingTimer();
+    const totalRaces = this.getMultipleRecordingTotalRaces();
+    if (this.ui.multipleRaceCount) this.ui.multipleRaceCount.value = String(totalRaces);
+    this.continuousRecording = {
+      ...this.continuousRecording,
+      active: true,
+      mode: 'continuous',
+      label: 'Multiple',
+      phase: 'preparing-multiple-recording',
+      startedAt: performance.now(),
+      racesCompleted: 0,
+      pendingTimer: null,
+      nextActionAt: null,
+      preserveCurrentSettings: false,
+      totalRaces,
+      nextRaceDelaySeconds: MULTIPLE_RECORDING_CEREMONY_HOLD_SECONDS,
+      gateDelaySeconds: MULTIPLE_RECORDING_NEXT_GATE_SECONDS,
+      initialGateDelaySeconds: RECORDING_GATE_DELAY_SECONDS,
+      finalStopDelaySeconds: MULTIPLE_RECORDING_FINAL_STOP_SECONDS,
+      lastGeneratedTrackAfterRace: 0,
+      lastError: null,
+    };
+    if (this.ui.continuousRecord) {
+      this.ui.continuousRecord.classList.add('recording');
+      this.ui.continuousRecord.textContent = 'Stop Multiple';
+    }
+    if (this.ui.multipleRaceCount) this.ui.multipleRaceCount.disabled = true;
+    if (this.ui.raceMode && this.ui.raceMode.value === 'cup') this.ui.raceMode.value = 'single';
+    if (this.cupMode?.active) {
+      this.cupMode = { ...this.cupMode, active: false, status: 'idle', stageIndex: 0, currentEntrants: [], results: [], lastQualified: [], champion: null, podium: [] };
+      this.ui.count.disabled = false;
+      this.hideMatchCard();
+      this.newRace({ regenerateTrack: false });
+    }
+    const recordingStarted = this.mediaRecorder?.state === 'recording'
+      ? true
+      : await this.toggleRecording({ preferScreenRecording, tabOnly, includeAudio, recordingCategory: 'continuous' });
+    if (!recordingStarted) {
+      this.stopContinuousRecording({ stopRecorder: false, reason: 'recording-unavailable' });
+      this.continuousRecording.lastError = 'recording-unavailable';
+      this.ui.recordStatus.textContent = 'Multiple recording unavailable';
+      return false;
+    }
+    this.scheduleContinuousRecordingAction(this.continuousRecording.initialGateDelaySeconds, 'waiting-open-gate', () => this.startContinuousRecordingRace());
+    return true;
+  }
+
+  startContinuousRecordingRace() {
+    if (!this.continuousRecording?.active) return;
+    if (this.state === 'finished') this.newRace({ regenerateTrack: false });
+    if (this.state !== 'ready') return;
+    this.continuousRecording.phase = 'countdown-open-gate';
+    this.startCountdownAndGateOpen();
+  }
+
+  handleContinuousRecordingRaceComplete() {
+    if (!this.continuousRecording?.active) return;
+    this.continuousRecording.racesCompleted += 1;
+    const completed = Number(this.continuousRecording.racesCompleted) || 0;
+    const totalRaces = Math.max(1, Number(this.continuousRecording.totalRaces) || MULTIPLE_RECORDING_DEFAULT_RACES);
+    if (completed >= totalRaces) {
+      const finalStopDelaySeconds = Number(this.continuousRecording.finalStopDelaySeconds ?? MULTIPLE_RECORDING_FINAL_STOP_SECONDS) || 0;
+      this.scheduleContinuousRecordingAction(finalStopDelaySeconds, 'waiting-final-stop', () => {
+        if (!this.continuousRecording?.active) return;
+        this.stopContinuousRecording({ stopRecorder: true, reason: 'completed-all-races' });
+      });
+      return;
+    }
+
+    const ceremonyHoldSeconds = Number(this.continuousRecording.nextRaceDelaySeconds ?? MULTIPLE_RECORDING_CEREMONY_HOLD_SECONDS) || 0;
+    this.scheduleContinuousRecordingAction(ceremonyHoldSeconds, 'ceremony-hold', () => {
+      if (!this.continuousRecording?.active) return;
+      this.continuousRecording.lastGeneratedTrackAfterRace = completed;
+      this.newRace({ regenerateTrack: true });
+      this.scheduleContinuousRecordingAction(this.continuousRecording.gateDelaySeconds, 'waiting-open-gate', () => this.startContinuousRecordingRace());
+    });
+  }
+
+  stopContinuousRecording({ stopRecorder = true, reason = 'stopped' } = {}) {
+    this.clearContinuousRecordingTimer();
+    if (this.continuousRecording) {
+      this.continuousRecording.active = false;
+      this.continuousRecording.phase = reason;
+      this.continuousRecording.nextActionAt = null;
+    }
+    if (this.ui.continuousRecord) {
+      this.ui.continuousRecord.classList.remove('recording');
+      this.ui.continuousRecord.textContent = 'Multiple';
+    }
+    if (this.ui.multipleRaceCount) this.ui.multipleRaceCount.disabled = false;
+    this.endRecordingUIPresentation('continuous');
+    if (stopRecorder && this.mediaRecorder?.state === 'recording') this.mediaRecorder.stop();
+    else this.updateUI();
   }
 
   scheduleAutoCupRecordingAction(delaySeconds, phase, action) {
@@ -6810,6 +7554,8 @@ class MarbleRace {
     this.autoCupRecording = {
       ...this.autoCupRecording,
       active: true,
+      mode: 'cup',
+      label: 'Cup Mode',
       phase: 'preparing-cup-track',
       startedAt: performance.now(),
       currentStage: null,
@@ -6829,18 +7575,18 @@ class MarbleRace {
     };
     if (this.ui.autoCupRecord) {
       this.ui.autoCupRecord.classList.add('recording');
-      this.ui.autoCupRecord.textContent = 'Stop Auto Cup';
+      this.ui.autoCupRecord.textContent = 'Stop Cup Mode';
     }
     if (this.ui.raceMode) this.ui.raceMode.value = 'cup';
     this.startCupMode(cupSize, { preserveCurrentSettings: true });
     if (!this.leftUICollapsed) this.toggleLeftUI();
     const recordingStarted = this.mediaRecorder?.state === 'recording'
       ? true
-      : await this.toggleRecording({ preferScreenRecording, tabOnly, includeAudio });
+      : await this.toggleRecording({ preferScreenRecording, tabOnly, includeAudio, recordingCategory: 'cup' });
     if (!recordingStarted) {
       this.stopAutoCupRecording({ stopRecorder: false, reason: 'recording-unavailable' });
       this.autoCupRecording.lastError = tabOnly ? 'browser-tab-recording-required' : 'recording-unavailable';
-      this.ui.recordStatus.textContent = tabOnly ? 'Auto Record Cup needs Current Tab / This Tab selected' : 'Recording unavailable';
+      this.ui.recordStatus.textContent = tabOnly ? 'Cup Mode needs Current Tab / This Tab selected' : 'Recording unavailable';
       return false;
     }
     // Keep recorder automation out of the LIVE EVENT caption; this is background control state, not viewer-facing race commentary.
@@ -6899,7 +7645,7 @@ class MarbleRace {
     }
     if (this.ui.autoCupRecord) {
       this.ui.autoCupRecord.classList.remove('recording');
-      this.ui.autoCupRecord.textContent = 'Auto Record Cup';
+      this.ui.autoCupRecord.textContent = 'Cup Mode';
     }
     if (stopRecorder && this.mediaRecorder?.state === 'recording') this.mediaRecorder.stop();
     else this.updateUI();
@@ -6914,7 +7660,7 @@ class MarbleRace {
     this.updateStartGateAnimation(rawDelta);
     this.updateFinishSpinner(rawDelta);
     this.updatePinballObstacles(delta);
-    this.updateSpectacleEffects(rawDelta);
+    if (!this.performanceProfile?.renderSkipSpectacleEffects) this.updateSpectacleEffects(rawDelta);
     this.updatePodiumCeremony(rawDelta);
     this.updateMarbleTrails(delta);
     if (this.state === 'running') {
@@ -6925,6 +7671,7 @@ class MarbleRace {
       this.recordRaceHistorySample();
       this.updatePreFinishSlowMotionTrigger();
       this.checkFinishers();
+      this.applyPostFirstFinishDnfCutoff();
       this.updateBroadcastDirector();
     } else if (this.state === 'ready') {
       this.updateCountdown(delta);
@@ -6932,9 +7679,13 @@ class MarbleRace {
       this.syncMarbles();
     }
     this.updateCamera(delta);
-    this.updateMarbleNameLabels();
+    const labelUpdateMs = this.performanceProfile?.renderNameLabelUpdateMs || 0;
+    if (!labelUpdateMs || performance.now() - (this.lastNameLabelUpdate || 0) >= labelUpdateMs) {
+      this.lastNameLabelUpdate = performance.now();
+      this.updateMarbleNameLabels();
+    }
     this.controls.enabled = true;
-    this.controls.update();
+    if (!this.performanceProfile?.renderSkipOrbitControlsUpdate) this.controls.update();
     this.fpsFrames += 1;
     this.fpsTime += delta;
     if (this.fpsTime >= 0.5) {
@@ -6954,7 +7705,7 @@ class MarbleRace {
           ? 'full page UI'
           : '3D only';
       const audioSuffix = this.recordingSettings?.audioGranted
-        ? ` + audio${this.recordingSettings?.displayAudioGranted ? '' : ' (page mix)'}`
+        ? ` + audio${this.recordingSettings?.displayAudioGranted ? '' : ' (page mix)'} · Opus 192kbps 48kHz stereo`
         : this.recordingSettings?.audioRequested ? ' · no audio granted' : '';
       const ttsPolicy = this.getTtsRecordingPolicy();
       const ttsSuffix = this.commentaryVoiceEnabled && ttsPolicy.tabAudioRequired && !this.recordingSettings?.displayAudioGranted
@@ -7776,11 +8527,13 @@ class MarbleRace {
     data.lastVisualPosition = resetPos.clone();
   }
 
-  eliminateStalledMarble(data, currentDistance = 0, reason = 'no-forward-progress-timeout') {
+  eliminateStalledMarble(data, currentDistance = 0, reason = 'no-forward-progress-timeout', options = {}) {
     if (!data || data.finished || data.defeated) return;
+    const { broadcast = true, dnfOrder = null, suppressCompletionCheck = false } = options;
     data.defeated = true;
     data.defeatTime = this.elapsed;
     data.defeatReason = reason;
+    data.dnfOrder = Number.isFinite(dnfOrder) ? dnfOrder : null;
     data.finished = true;
     data.finishTime = Number.POSITIVE_INFINITY;
     data.distance = Math.max(data.distance || 0, currentDistance || 0);
@@ -7807,8 +8560,51 @@ class MarbleRace {
     this.stuckResetCount += 1;
     this.cachedRanking = null;
     this.cachedRankingAt = 0;
-    this.pushBroadcastEvent('DNF Eliminated', `${data.name} DNF`, { kind: 'dnf', force: true, marbleId: data.id, lines: [`${data.name} DNF`, `${data.name} no progress`, `${data.name} out`] });
+    if (broadcast) this.pushBroadcastEvent('DNF Eliminated', `${data.name} DNF`, { kind: 'dnf', force: true, marbleId: data.id, lines: [`${data.name} DNF`, `${data.name} no progress`, `${data.name} out`] });
+    if (!suppressCompletionCheck) this.checkFinishers();
+  }
+
+  applyPostFirstFinishDnfCutoff() {
+    const policy = this.postFirstFinishDnfCutoff || POST_FIRST_FINISH_DNF_CUTOFF;
+    if (!policy.enabled || policy.triggered || this.state !== 'running' || !this.firstFinishTime) return 0;
+    const delaySeconds = policy.delaySeconds ?? 15;
+    const elapsedSinceFirstFinish = this.firstFinishRealTimeMs
+      ? (performance.now() - this.firstFinishRealTimeMs) / 1000
+      : this.elapsed - this.firstFinishTime;
+    if (elapsedSinceFirstFinish < delaySeconds) return 0;
+    const unfinishedRanking = this.getRanking({ force: true }).filter((data) => !data.finished && !data.defeated);
+    if (!unfinishedRanking.length) return 0;
+    const finishedPodiumCount = this.finishers.filter((item) => item && !item.defeated && !item.removedFromRace).length;
+    unfinishedRanking.forEach((data, index) => {
+      data.postFirstFinishDnfRank = finishedPodiumCount + index + 1;
+      this.eliminateStalledMarble(data, data.distance || data.driveDistance || 0, policy.reason || 'post-first-finish-cutoff', {
+        broadcast: false,
+        dnfOrder: index + 1,
+        suppressCompletionCheck: true,
+      });
+    });
+    this.postFirstFinishDnfCutoff = {
+      ...policy,
+      triggered: true,
+      triggeredAt: this.elapsed,
+      triggeredAtRealTimeMs: performance.now(),
+      dnfCount: unfinishedRanking.length,
+      unfinishedOrder: unfinishedRanking.map((data, index) => ({
+        rank: finishedPodiumCount + index + 1,
+        dnfOrder: index + 1,
+        id: data.id,
+        name: data.name,
+        progress: data.progress || 0,
+        distance: data.distance || 0,
+      })),
+    };
+    const names = unfinishedRanking.slice(0, 4).map((data) => data.name).join(', ');
+    const suffix = unfinishedRanking.length > 4 ? ` +${unfinishedRanking.length - 4}` : '';
+    this.pushBroadcastEvent('DNF cutoff', `${unfinishedRanking.length} DNF after ${delaySeconds}s${names ? `: ${names}${suffix}` : ''}`, { kind: 'dnf', force: true, lines: [`${unfinishedRanking.length} DNF after ${delaySeconds}s`] });
+    this.cachedRanking = null;
+    this.cachedRankingAt = 0;
     this.checkFinishers();
+    return unfinishedRanking.length;
   }
 
   syncMarbles() {
@@ -7905,6 +8701,7 @@ class MarbleRace {
         this.finishers.push(data);
         if (this.finishers.length === 1) {
           this.firstFinishTime = this.elapsed;
+          this.firstFinishRealTimeMs = performance.now();
           this.defaultCameraPhaseUntil = this.elapsed + 3.2;
           this.ui.winner.textContent = `🏆 ${data.name} wins! ${data.finishTime.toFixed(2)}s`;
           this.ui.winner.classList.remove('hidden');
@@ -7921,6 +8718,8 @@ class MarbleRace {
       this.cameraMode = 'default';
       const finalRanking = this.getRanking({ force: true });
       this.handleCupRaceComplete(finalRanking);
+      this.handleSingleRecordingRaceComplete();
+      this.handleContinuousRecordingRaceComplete();
       this.handleAutoCupRaceComplete();
       this.startPodiumCeremony(finalRanking.slice(0, 3));
       this.showFinalShowcase();
@@ -7943,7 +8742,11 @@ class MarbleRace {
     const ranking = [...this.marbleData]
       .filter((data) => includeDefeated || !data.defeated)
       .sort((a, b) => {
-        if (a.defeated && b.defeated) return (b.progress || 0) - (a.progress || 0) || (a.defeatTime ?? Infinity) - (b.defeatTime ?? Infinity);
+        if (a.defeated && b.defeated) {
+          const aDnfOrder = Number.isFinite(a.dnfOrder) ? a.dnfOrder : Infinity;
+          const bDnfOrder = Number.isFinite(b.dnfOrder) ? b.dnfOrder : Infinity;
+          return aDnfOrder - bDnfOrder || (b.progress || 0) - (a.progress || 0) || (a.defeatTime ?? Infinity) - (b.defeatTime ?? Infinity);
+        }
         if (a.defeated) return 1;
         if (b.defeated) return -1;
         if (a.finished && b.finished) return a.finishTime - b.finishTime;
@@ -7989,6 +8792,8 @@ class MarbleRace {
   getReusableRaceResults() {
     return this.getRanking({ force: true }).map((data, index) => ({
       rank: data.finished ? index + 1 : null,
+      dnfOrder: data.dnfOrder ?? null,
+      postFirstFinishDnfRank: data.postFirstFinishDnfRank ?? null,
       defeated: Boolean(data.defeated),
       defeatTime: data.defeatTime ?? null,
       defeatReason: data.defeatReason || null,
@@ -8076,7 +8881,7 @@ class MarbleRace {
           : `${Math.round(data.progress * 100)}%${data.timePenalty ? ` +${data.timePenalty}s` : ''}`);
       const gapLabel = index === 0
         ? 'Leader'
-        : (data.defeated ? 'Out' : (data.finished ? `#${index + 1}` : `+${gapToLeader.toFixed(1)}m`));
+        : (data.defeated ? 'DNF' : (data.finished ? `#${index + 1}` : `+${gapToLeader.toFixed(1)}m`));
       li.innerHTML = `<div class="racer-row"><span class="rank-badge">#${index + 1}</span><span class="swatch" style="background:${color};color:${color}"></span><span class="racer-name">${data.name}</span><span class="racer-progress">${label}</span><span class="racer-gap">${gapLabel}</span></div>`;
       li.addEventListener('click', () => {
         this.selectedIndex = data.id;
@@ -8090,6 +8895,13 @@ class MarbleRace {
   }
 
   updateUI() {
+    if (!this.mediaRecorder && this.recordingCategory) this.recordingCategory = null;
+    this.updateRecordingFpsVisibility();
+    if (this.ui.record && this.mediaRecorder?.state !== 'recording') this.ui.record.textContent = 'Single';
+    if (this.ui.record && this.singleRecording?.active) this.ui.record.textContent = 'Stop Single';
+    if (this.ui.continuousRecord && !this.continuousRecording?.active) this.ui.continuousRecord.textContent = 'Multiple';
+    if (this.ui.multipleRaceCount) this.ui.multipleRaceCount.disabled = Boolean(this.continuousRecording?.active);
+    if (this.ui.autoCupRecord && !this.autoCupRecording?.active) this.ui.autoCupRecord.textContent = 'Cup Mode';
     const labels = { idle: 'Idle', ready: this.countdownActive ? 'Countdown' : 'Waiting for Gate', running: 'Racing', paused: 'Paused', finished: 'Finished' };
     this.ui.state.textContent = labels[this.state] || this.state;
     this.ui.elapsed.textContent = `${this.elapsed.toFixed(1)}s`;
@@ -8099,6 +8911,13 @@ class MarbleRace {
       trackPreset: this.trackPresetKey,
       customTrackLength: this.customTrackLength || null,
       trackLengthPresets: TRACK_PRESETS,
+      recordingCategories: {
+        single: { label: 'Single', buttonId: 'record-btn', active: Boolean(this.singleRecording?.active), phase: this.singleRecording?.phase || 'idle', gateDelaySeconds: this.singleRecording?.gateDelaySeconds ?? RECORDING_GATE_DELAY_SECONDS, nextActionAt: this.singleRecording?.nextActionAt || null },
+        continuous: { label: 'Multiple', buttonId: 'continuous-record-btn', active: Boolean(this.continuousRecording?.active), phase: this.continuousRecording?.phase || 'idle', racesCompleted: this.continuousRecording?.racesCompleted || 0, totalRaces: this.continuousRecording?.active ? this.continuousRecording.totalRaces : this.getMultipleRecordingTotalRaces(), ceremonyHoldSeconds: this.continuousRecording?.nextRaceDelaySeconds ?? MULTIPLE_RECORDING_CEREMONY_HOLD_SECONDS, gateDelaySeconds: this.continuousRecording?.gateDelaySeconds ?? MULTIPLE_RECORDING_NEXT_GATE_SECONDS, initialGateDelaySeconds: this.continuousRecording?.initialGateDelaySeconds ?? RECORDING_GATE_DELAY_SECONDS, finalStopDelaySeconds: this.continuousRecording?.finalStopDelaySeconds ?? MULTIPLE_RECORDING_FINAL_STOP_SECONDS, nextActionAt: this.continuousRecording?.nextActionAt || null, regeneratesTrackBetweenRaces: true },
+        cup: { label: 'Cup Mode', buttonId: 'auto-cup-record-btn', active: Boolean(this.autoCupRecording?.active), phase: this.autoCupRecording?.phase || 'idle', racesCompleted: this.autoCupRecording?.racesCompleted || 0 },
+      },
+      recordingCategory: this.recordingCategory || null,
+      recordingCategoryLabel: this.recordingCategory ? this.getRecordingCategoryLabel(this.recordingCategory) : null,
       speedIndex: this.speedIndex,
       speedLabel: this.speedPreset.label,
       speedPreset: this.speedPreset,
@@ -8506,10 +9325,10 @@ class MarbleRace {
         resultCount: this.cupMode?.results?.length || 0,
       },
       obstacleForcePolicy: 'only pinball obstacle handlers may call applyImpulse/applyForce during racing',
-      functionalPinballObstacles: ['popBumper impulse', 'slingshot kick', 'spinnerGate spin impulse', 'rolloverLane boost', 'dropTarget knockdown'],
+      functionalPinballObstacles: ['popBumper impulse', 'slingshot kick', 'spinnerGate spin impulse', 'dropTarget knockdown'],
       removedObstacleDesigns: ['ramp', 'slanted/curved rail bumpers'],
       replacementObstacleDesigns: [],
-      pinballMaterialStyle: 'pinball-table skin: clearcoat plastics, chrome bumper rings, neon rubber, lit rollover inserts',
+      pinballMaterialStyle: 'pinball-table skin: clearcoat plastics, chrome bumper rings, neon rubber accents',
       branchesDisabled: true,
       curvedBranches: 0,
       branchSegments: this.branchSegments,
@@ -8567,6 +9386,13 @@ class MarbleRace {
       },
       stallElimination: {
         ...this.stallElimination,
+        postFirstFinishCutoff: {
+          ...this.postFirstFinishDnfCutoff,
+          secondsSinceFirstFinish: this.firstFinishTime ? Number(Math.max(0, this.elapsed - this.firstFinishTime).toFixed(2)) : 0,
+          remainingSeconds: this.firstFinishTime && !this.postFirstFinishDnfCutoff?.triggered
+            ? Number(Math.max(0, (this.postFirstFinishDnfCutoff?.delaySeconds ?? 15) - (this.elapsed - this.firstFinishTime)).toFixed(2))
+            : 0,
+        },
         total: this.stallEliminationCount,
         activeRacerCount: this.marbleData.filter((d) => !d.finished && !d.defeated).length,
         defeatedCount: this.defeatedMarbles.length,
@@ -8577,6 +9403,8 @@ class MarbleRace {
           progress: d.progress || 0,
           progressPercent: Math.round((d.progress || 0) * 100),
           defeatTime: d.defeatTime ?? null,
+          dnfOrder: d.dnfOrder ?? null,
+          postFirstFinishDnfRank: d.postFirstFinishDnfRank ?? null,
           reason: d.defeatReason || null,
           removedFromRace: Boolean(d.removedFromRace),
         })),
@@ -8613,6 +9441,19 @@ class MarbleRace {
         : 'web-audio-bgm + left-ui-commentary-status + optional-browser-tts; BGM/SFX are page-mixed into recording, but browser speechSynthesis TTS is recordable only through Chrome tab audio with Share tab audio enabled',
       leftUICollapsed: this.leftUICollapsed,
       rightUICollapsed: this.rightUICollapsed,
+      recordingUIPresentation: this.recordingUIPresentation ? {
+        active: Boolean(this.recordingUIPresentation.active),
+        category: this.recordingUIPresentation.category || null,
+        restoreLeftCollapsed: this.recordingUIPresentation.restoreLeftCollapsed,
+        preserveRightUI: this.recordingUIPresentation.preserveRightUI !== false,
+        instantHideLeft: Boolean(this.recordingUIPresentation.instantHideLeft),
+        leftToggleHidden: Boolean(this.ui.uiToggle?.classList.contains('hidden')),
+        rightToggleHidden: Boolean(this.ui.rightUiToggle?.classList.contains('hidden')),
+        cursorHidden: Boolean(document.body.classList.contains(RECORDING_CURSOR_SUPPRESSION.hidePageCursorClass)),
+        cursorSuppression: RECORDING_CURSOR_SUPPRESSION,
+        bodyClassActive: Boolean(document.body.classList.contains('recording-ui-presentation')),
+        instantHideBodyClass: Boolean(document.body.classList.contains('recording-ui-instant-hide')),
+      } : null,
       rightUIToggleLocation: 'bottom-left stacked above left UI toggle',
       controlsPanelDefaultCollapsed: true,
       controlsPanelCollapsed: this.ui.controlsPanel?.classList.contains('collapsed') || false,
@@ -8642,8 +9483,12 @@ class MarbleRace {
         commentaryDisplay: 'left-ui-only',
         viewerOverlayHidden: this.ui.commentaryCaption?.classList.contains('hidden') !== false,
         ttsTestStatus: this.ui.ttsTestStatus?.textContent || null,
+        ttsPitch: this.ttsPitch,
+        ttsPitchSliderValue: this.ui.ttsPitchSlider?.value || null,
+        ttsPitchLabel: this.ui.ttsPitchLabel?.textContent || null,
         ttsSupported: Boolean(window.speechSynthesis && typeof SpeechSynthesisUtterance !== 'undefined'),
         ttsSpeaking: this.commentaryVoiceSpeaking,
+        ttsPreparing: this.commentaryVoicePreparing,
         ttsQueueLength: this.commentaryVoiceQueue?.length || 0,
         ttsCurrentLine: this.commentaryVoiceCurrentLine,
         ttsLastLine: this.lastCommentaryVoiceLine,
@@ -8659,6 +9504,8 @@ class MarbleRace {
       recordingState: this.mediaRecorder?.state || 'inactive',
       recordingSource: this.recordingSource || null,
       recordingSettings: this.recordingSettings || null,
+      recordingAudioQuality: this.getRecordingAudioQualityDebug(),
+      fpsHudHiddenForRecording: Boolean(this.ui?.fpsStat?.classList.contains('hidden')),
       lastRecordingRequest: this.lastRecordingRequest || null,
       autoCupRecording: this.autoCupRecording ? {
         active: Boolean(this.autoCupRecording.active),
@@ -8736,6 +9583,11 @@ class MarbleRace {
       defaultCameraSequence: BROADCAST_CAMERA.sequence,
       defaultCameraTrackingDirection: 'xy/xz direction sampled from next tracking point back toward previous tracking point',
       defaultCameraOffsets: { leader: BROADCAST_CAMERA.leader, leadPack: BROADCAST_CAMERA.leadPack },
+      cameraLineOfSight: {
+        config: BROADCAST_CAMERA.lineOfSight,
+        state: this.cameraLineOfSightState || null,
+        occluderCount: this.getCameraOccluderMeshes?.().length || 0,
+      },
       cinematicLeaderCamera: this.cinematicLeaderCameraState || null,
       leadPackCamera: this.leadPackCameraState || null,
       autoCameraDirector: BROADCAST_CAMERA.angleStyle,
@@ -9067,6 +9919,168 @@ class MarbleRace {
     return best;
   }
 
+  getCameraOccluderMeshes() {
+    const meshes = [];
+    this.trackGroup?.traverse?.((object) => {
+      if (object?.isMesh && object.userData?.cameraOccluder && object.geometry?.boundingSphere == null) {
+        object.geometry.computeBoundingSphere?.();
+      }
+      if (object?.isMesh && object.userData?.cameraOccluder) meshes.push(object);
+    });
+    return meshes;
+  }
+
+  getCameraOccluderDistance(object) {
+    const data = object?.userData || {};
+    if (Number.isFinite(data.cameraOccluderDistance)) return data.cameraOccluderDistance;
+    if (Number.isFinite(data.cameraOccluderDistanceStart) && Number.isFinite(data.cameraOccluderDistanceEnd)) {
+      return (data.cameraOccluderDistanceStart + data.cameraOccluderDistanceEnd) / 2;
+    }
+    const sphere = object?.geometry?.boundingSphere;
+    if (!sphere) return null;
+    const center = sphere.center.clone();
+    object.localToWorld(center);
+    return this.findClosestProgress(center)?.distance ?? null;
+  }
+
+  getCameraLineOfSightHits(desired, target, occluders, cfg) {
+    const offset = target.clone().sub(desired);
+    const distance = offset.length();
+    const direction = offset.clone().normalize();
+    const raycaster = this.cameraLineOfSightRaycaster || new THREE.Raycaster();
+    this.cameraLineOfSightRaycaster = raycaster;
+    raycaster.set(desired, direction);
+    raycaster.near = 0.4;
+    raycaster.far = Math.max(0.4, distance - (cfg.minClearance || 4.8));
+    let hits = raycaster.intersectObjects(occluders, true).filter((hit) => hit.distance < raycaster.far);
+    if (!hits.length) {
+      const segment = target.clone().sub(desired);
+      const segmentLengthSq = Math.max(0.0001, segment.lengthSq());
+      hits = occluders
+        .map((object) => {
+          const sphere = object.geometry?.boundingSphere;
+          if (!sphere) return null;
+          const center = sphere.center.clone();
+          object.localToWorld(center);
+          const t = clamp(center.clone().sub(desired).dot(segment) / segmentLengthSq, 0, 1);
+          const closest = desired.clone().lerp(target, t);
+          const clearance = center.distanceTo(closest) - sphere.radius;
+          return { object, distance: desired.distanceTo(closest), clearance };
+        })
+        .filter((hit) => hit && hit.clearance <= (cfg.minClearance || 4.8) && hit.distance < raycaster.far)
+        .sort((a, b) => a.distance - b.distance);
+    }
+    return hits.map((hit) => ({
+      ...hit,
+      occluderDistance: this.getCameraOccluderDistance(hit.object),
+    }));
+  }
+
+  isPassedTrackCameraHit(hit, targetDistance, cfg) {
+    const hitDistance = Number.isFinite(hit?.occluderDistance) ? hit.occluderDistance : null;
+    if (hitDistance == null || !Number.isFinite(targetDistance)) return false;
+    return hitDistance <= targetDistance - (cfg.passedTrackBehindDistance ?? 7);
+  }
+
+  applyRaceFollowPassedTrackGuard(desired, target, activeCameraMode, cfg) {
+    const protectedModes = cfg?.raceFollowProtectedModes || [];
+    if (!protectedModes.includes(activeCameraMode)) return null;
+    const targetProgress = this.findClosestProgress(target);
+    const targetDistance = targetProgress?.distance ?? null;
+    const offset = target.clone().sub(desired);
+    const distance = offset.length();
+    if (distance <= (cfg.minClearance || 0) + 0.5) {
+      this.cameraLineOfSightState = { active: false, mode: activeCameraMode, reason: 'target-too-close-race-follow', raceFollowGuard: true };
+      return desired;
+    }
+    const occluders = this.getCameraOccluderMeshes();
+    if (!occluders.length) {
+      this.cameraLineOfSightState = { active: false, mode: activeCameraMode, reason: 'no-occluders-race-follow', raceFollowGuard: true };
+      return desired;
+    }
+    const hits = this.getCameraLineOfSightHits(desired, target, occluders, cfg);
+    const passedHits = hits.filter((hit) => this.isPassedTrackCameraHit(hit, targetDistance, cfg));
+    if (!passedHits.length) {
+      this.cameraLineOfSightState = {
+        active: false,
+        mode: activeCameraMode,
+        reason: hits.length ? 'occluder-not-passed-track' : 'clear-line-of-sight',
+        raceFollowGuard: true,
+        hitCount: hits.length,
+        targetDistance: Number((targetDistance ?? 0).toFixed(2)),
+        nearestOccluderDistance: hits[0]?.occluderDistance != null ? Number(hits[0].occluderDistance.toFixed(2)) : null,
+      };
+      return desired;
+    }
+    let boost = Math.min(cfg.raceFollowMaxHeightBoost || cfg.maxHeightBoost || 0, (cfg.raceFollowBoostStep || cfg.boostStep || 2.5) * Math.min(passedHits.length, cfg.sampleCount || 2));
+    if (boost > 0 && cfg.maxElevationDegrees) {
+      const currentOffset = desired.clone().sub(target);
+      const horizontalDistance = Math.max(0.001, Math.hypot(currentOffset.x, currentOffset.z));
+      const currentLift = currentOffset.y;
+      const maxLift = Math.tan(THREE.MathUtils.degToRad(cfg.maxElevationDegrees)) * horizontalDistance;
+      boost = Math.max(0, Math.min(boost, maxLift - currentLift));
+    }
+    const boosted = boost > 0 ? desired.clone().add(new THREE.Vector3(0, boost, 0)) : desired;
+    this.cameraLineOfSightState = {
+      active: boost > 0,
+      mode: activeCameraMode,
+      boost: Number(boost.toFixed(2)),
+      hitCount: passedHits.length,
+      totalHitCount: hits.length,
+      raceFollowGuard: true,
+      targetDistance: Number((targetDistance ?? 0).toFixed(2)),
+      nearestHitDistance: passedHits[0] ? Number(passedHits[0].distance.toFixed(2)) : null,
+      nearestOccluderDistance: passedHits[0]?.occluderDistance != null ? Number(passedHits[0].occluderDistance.toFixed(2)) : null,
+      nearestOccluderType: passedHits[0]?.object?.userData?.cameraOccluderType || null,
+      protectedModes,
+      label: cfg.passedTrackLabel,
+    };
+    return boosted;
+  }
+
+  applyCameraLineOfSightBoost(desired, target, activeCameraMode) {
+    const cfg = BROADCAST_CAMERA.lineOfSight;
+    const raceFollowGuardDesired = this.applyRaceFollowPassedTrackGuard(desired, target, activeCameraMode, cfg);
+    if (raceFollowGuardDesired) return raceFollowGuardDesired;
+    const protectedModes = cfg?.protectedModes || ['cinematicLeader', 'leadBattle', 'selected', 'unfinishedOrder', 'replayHighlight'];
+    if (!cfg?.enabled || !protectedModes.includes(activeCameraMode)) {
+      this.cameraLineOfSightState = { active: false, mode: activeCameraMode, reason: 'mode-not-protected' };
+      return desired;
+    }
+    const offset = target.clone().sub(desired);
+    const distance = offset.length();
+    if (distance <= (cfg.minClearance || 0) + 0.5) {
+      this.cameraLineOfSightState = { active: false, mode: activeCameraMode, reason: 'target-too-close' };
+      return desired;
+    }
+    const occluders = this.getCameraOccluderMeshes();
+    if (!occluders.length) {
+      this.cameraLineOfSightState = { active: false, mode: activeCameraMode, reason: 'no-occluders' };
+      return desired;
+    }
+    let hits = this.getCameraLineOfSightHits(desired, target, occluders, cfg);
+    let boost = hits.length ? Math.min(cfg.maxHeightBoost || 0, (cfg.boostStep || 3.5) * Math.min(hits.length, cfg.sampleCount || 2)) : 0;
+    if (boost > 0 && cfg.maxElevationDegrees) {
+      const currentOffset = desired.clone().sub(target);
+      const horizontalDistance = Math.max(0.001, Math.hypot(currentOffset.x, currentOffset.z));
+      const currentLift = currentOffset.y;
+      const maxLift = Math.tan(THREE.MathUtils.degToRad(cfg.maxElevationDegrees)) * horizontalDistance;
+      boost = Math.max(0, Math.min(boost, maxLift - currentLift));
+    }
+    const boosted = boost > 0 ? desired.clone().add(new THREE.Vector3(0, boost, 0)) : desired;
+    this.cameraLineOfSightState = {
+      active: boost > 0,
+      mode: activeCameraMode,
+      boost: Number(boost.toFixed(2)),
+      hitCount: hits.length,
+      nearestHitDistance: hits[0] ? Number(hits[0].distance.toFixed(2)) : null,
+      nearestOccluderType: hits[0]?.object?.userData?.cameraOccluderType || null,
+      protectedModes,
+      label: cfg.label,
+    };
+    return boosted;
+  }
+
   getDefaultCameraMode() {
     const leader = this.getAutoCameraRanking({ includeFinished: true })[0] || this.getRanking({ force: false })[0];
     if (this.state === 'finished') return BROADCAST_CAMERA.podium360.enabled ? 'podium360' : 'finish';
@@ -9178,7 +10192,9 @@ class MarbleRace {
       const targetLead = clamp(lookAhead * (cfg.targetLookAheadScale ?? 0.2), 1.4, 5.2);
       const guideTarget = this.getTrackPointAt(clamp(this.leadPackDistanceSmoothed + targetLead, 0, this.trackLength));
       const guideBlend = clamp(cfg.targetGuideBlend ?? 0.28, 0, 1);
-      const packTarget = this.cameraTargetSmoothed.clone().lerp(guideTarget, guideBlend).add(new THREE.Vector3(0, cfg.targetLift ?? 1.7, 0));
+      const packTarget = this.cameraTargetSmoothed.clone().lerp(guideTarget, guideBlend);
+      const trackTargetY = this.getTrackPointAt(clamp(this.leadPackDistanceSmoothed, 0, this.trackLength)).y || 0;
+      packTarget.y = lerp(packTarget.y, trackTargetY + (cfg.targetLift ?? 1.7), 0.92);
       target.copy(packTarget);
       const packZoom = clamp((leadPack.size || 1) - 1, 0, 4);
       const t = this.elapsed || 0;
@@ -9243,17 +10259,19 @@ class MarbleRace {
       const frame = this.getCameraTrackFrameAt(leaderDistance, lookAhead);
       const targetLead = clamp(lookAhead * (cfg.targetLookAheadScale ?? 0.22), 1.5, 5.5);
       const guideTarget = this.getTrackPointAt(clamp(leaderDistance + targetLead, 0, this.trackLength));
-      const guideBlend = clamp(cfg.targetGuideBlend ?? 0.35, 0, 1);
+      const guideBlend = clamp(cfg.targetGuideBlend ?? 0.18, 0, 1);
       const lookPoint = leader.mesh.position.clone().lerp(guideTarget, guideBlend);
-      const sideWave = Math.sin(t * (cfg.sideWaveSpeed || 0.35)) * (cfg.maxSideWave || 0);
+      const trackTargetY = this.getTrackPointAt(clamp(leaderDistance, 0, this.trackLength)).y || 0;
+      lookPoint.y = lerp(lookPoint.y, trackTargetY + (cfg.targetLift ?? 1.15), 0.72);
+      const sideWave = Math.sin(t * (cfg.sideWaveSpeed || 0.24)) * (cfg.maxSideWave || 0);
       const desiredBack = cfg.back - obstacleFactor * (cfg.obstaclePullback || 0);
       const desiredSide = cfg.side + sideWave;
       const desiredHeight = cfg.height + obstacleFactor * (cfg.obstacleHeightBoost || 0);
-      target.copy(lookPoint).add(new THREE.Vector3(0, cfg.targetLift ?? 0.9, 0));
+      target.copy(lookPoint);
       this.cameraTargetSmoothed.lerp(target, cfg.targetSmoothing || 0.075);
       target.copy(this.cameraTargetSmoothed);
       desired.copy(leader.mesh.position)
-        .add(frame.tangent.clone().multiplyScalar(desiredBack))
+        .add((frame.horizontalTangent || frame.tangent).clone().multiplyScalar(desiredBack))
         .add(frame.right.clone().multiplyScalar(desiredSide))
         .add(new THREE.Vector3(0, desiredHeight, 0));
       this.cinematicLeaderCameraState = {
@@ -9269,6 +10287,8 @@ class MarbleRace {
         desiredBack: Number(desiredBack.toFixed(2)),
         desiredSide: Number(desiredSide.toFixed(2)),
         desiredHeight: Number(desiredHeight.toFixed(2)),
+        targetYMode: 'track-anchored-leader-target',
+        trackTargetY: Number(trackTargetY.toFixed(2)),
         fov: cfg.fov,
       };
     } else if (activeCameraMode === 'finish') {
@@ -9304,6 +10324,7 @@ class MarbleRace {
     }
     desired.copy(this.applyDefaultCameraPitch(desired, target, activeCameraMode));
     desired.copy(this.getMouseOrbitAdjustedCamera(desired, target));
+    desired.copy(this.applyCameraLineOfSightBoost(desired, target, activeCameraMode));
     const desiredFov = activeCameraMode === 'cinematicLeader'
       ? (BROADCAST_CAMERA.leader.fov || 40)
       : (activeCameraMode === 'leadPack'

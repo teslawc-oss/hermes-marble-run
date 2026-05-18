@@ -2,11 +2,17 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const dashboard = readFileSync(new URL('../scripts/render-dashboard-server.js', import.meta.url), 'utf8');
+const renderAutoCup = readFileSync(new URL('../scripts/render-auto-cup-playwright.js', import.meta.url), 'utf8');
 const js = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 
 assert.match(html, /id="ui-toggle-btn"/, 'index.html should include a left UI hide/show toggle button');
-assert.match(html, /id="record-btn"/, 'index.html should include a video recording toggle button');
+assert.match(html, /class="record-group"[^>]*aria-label="Record"[\s\S]*class="record-group-title">Record</, 'index.html should include a Record subcategory for recording options');
+assert.match(html, /id="record-btn"[^>]*data-recording-category="single"[^>]*>Single</, 'index.html should include a Single recording option');
+assert.match(html, /id="continuous-record-btn"[^>]*data-recording-category="continuous"[^>]*>Multiple</, 'index.html should include a Multiple recording option');
+assert.match(html, /id="multiple-race-count-input"[^>]*type="number"[^>]*min="1"[^>]*max="99"[^>]*value="5"/, 'index.html should include a Multiple race-count input defaulting to 5');
+assert.match(html, /id="auto-cup-record-btn"[^>]*data-recording-category="cup"[^>]*>Cup Mode</, 'index.html should include a Cup Mode recording option');
 assert.match(html, /id="record-status"/, 'index.html should include recording status text');
 assert.match(js, /toggleLeftUI\(/, 'main.js should implement toggleLeftUI');
 assert.match(js, /toggleRecording\(/, 'main.js should implement toggleRecording');
@@ -15,11 +21,47 @@ assert.match(js, /getDisplayMedia/, 'main.js should support full-page/screen rec
 assert.match(js, /preferScreenRecording/, 'main.js should default to screen recording when available');
 assert.match(css, /\.hud-left\.collapsed/, 'styles.css should style the collapsed left HUD state');
 assert.match(css, /\.ui-toggle/, 'styles.css should style the UI toggle button');
-assert.match(css, /\.recording/, 'styles.css should style recording state');
+assert.match(css, /\.record-group-title/, 'styles.css should style the Record subcategory title');
+assert.match(css, /\.record-row\s*{[\s\S]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/, 'styles.css should present the three recording categories as equal columns');
+assert.match(css, /#record-status\s*{[\s\S]*grid-column:\s*1 \/ -1/, 'styles.css should place recording status under all recording category buttons');
+assert.match(css, /\.multiple-race-count-row\s*{[\s\S]*grid-column:\s*1 \/ -1/, 'styles.css should place the Multiple race-count input under all recording category buttons');
+assert.match(js, /continuousRecord:\s*document\.querySelector\('#continuous-record-btn'\)/, 'main.js should wire the continuous recording button');
+assert.match(js, /multipleRaceCount:\s*document\.querySelector\('#multiple-race-count-input'\)/, 'main.js should wire the Multiple race-count input');
+assert.match(js, /recordingCategory = 'single'/, 'main.js should default manual recording to the single recording category');
+assert.match(js, /recordingCategory:\s*'continuous'/, 'main.js should tag continuous recordings separately');
+assert.match(js, /recordingCategory:\s*'cup'/, 'main.js should tag cup recordings separately');
+assert.match(js, /recordingCategories:\s*{[\s\S]*single:[\s\S]*continuous:[\s\S]*cup:/, 'debug payload should expose the three recording categories');
+assert.match(js, /const RECORDING_GATE_DELAY_SECONDS = 2/, 'recording modes should wait exactly 2 seconds after recording starts before countdown/open gate');
+assert.match(js, /const MULTIPLE_RECORDING_DEFAULT_RACES = 5/, 'Multiple recording should default to 5 total races');
+assert.match(js, /const MULTIPLE_RECORDING_CEREMONY_HOLD_SECONDS = 10/, 'Multiple recording should hold the ceremony for 10 seconds after each non-final race');
+assert.match(js, /const MULTIPLE_RECORDING_NEXT_GATE_SECONDS = 10/, 'Multiple recording should wait 10 seconds before countdown/open gate on generated next tracks');
+assert.match(js, /const MULTIPLE_RECORDING_FINAL_STOP_SECONDS = 10/, 'Multiple recording should stop recording 10 seconds after the final race ceremony');
+assert.match(dashboard, /data-dashboard-section="background-record-categories"/, 'dashboard should include a Background Record categories section');
+assert.doesNotMatch(dashboard, /name="recordMode" value="single"/, 'dashboard should keep Single recording on the in-game page only');
+assert.match(dashboard, /value:\s*'continuous'[\s\S]*label:\s*'Multiple'/, 'dashboard should expose Multiple recording mode');
+assert.match(dashboard, /id="multipleRaceCount" name="multipleRaceCount" type="number" min="1" max="99" value="5"/, 'dashboard should expose Multiple race-count input');
+assert.match(dashboard, /value:\s*'cup'[\s\S]*label:\s*'Cup Mode'[\s\S]*mode\.value === 'cup' \? 'checked'/, 'dashboard should expose Cup Mode recording mode as default');
+assert.match(dashboard, /recordMode: selectedRecordMode\(\)/, 'dashboard render payload should include selected record mode');
+assert.match(dashboard, /multipleRaceCount: normalizeMultipleRaceCount\(\)/, 'dashboard render payload should include Multiple race count');
+assert.match(dashboard, /`--mode=\$\{options\.recordMode\}`/, 'dashboard should pass record mode to Playwright render script');
+assert.match(dashboard, /`--multiple-race-count=\$\{options\.multipleRaceCount\}`/, 'dashboard should pass Multiple race count to Playwright render script');
+assert.match(renderAutoCup, /mode:[\s\S]*MARBLE_RENDER_MODE/, 'Playwright render script should accept a recording mode');
+assert.match(renderAutoCup, /multipleRaceCount:[\s\S]*MARBLE_RENDER_MULTIPLE_RACE_COUNT/, 'Playwright render script should accept Multiple race count');
+assert.match(renderAutoCup, /mode === 'single'[\s\S]*scheduleSingleRecordingAction/, 'Playwright render script should wire Single recording lifecycle');
+assert.match(renderAutoCup, /mode === 'continuous'[\s\S]*scheduleContinuousRecordingAction/, 'Playwright render script should wire Multiple recording lifecycle');
+assert.match(renderAutoCup, /mode === 'cup'[\s\S]*startCupMode/, 'Playwright render script should keep Cup Mode lifecycle');
+assert.match(js, /this\.ui\.record\.addEventListener\('click', \(\) => this\.toggleSingleRecording\(\)\)/, 'Single recording button should use the recording-then-gate flow');
+assert.match(js, /async startSingleRecording\([\s\S]*toggleRecording\([\s\S]*recordingCategory:\s*'single'[\s\S]*scheduleSingleRecordingAction\(this\.singleRecording\.gateDelaySeconds, 'waiting-open-gate', \(\) => this\.startSingleRecordingRace\(\)\)/, 'Single recording should start MediaRecorder before scheduling the 2s gate countdown');
+assert.match(js, /startSingleRecordingRace\([\s\S]*this\.singleRecording\.phase = 'countdown-open-gate';[\s\S]*this\.startCountdownAndGateOpen\(\)/, 'Single recording should trigger countdown/open gate after its delay');
+assert.match(js, /initialGateDelaySeconds:\s*RECORDING_GATE_DELAY_SECONDS/, 'Multiple recording should use a 2s delay only for the first recording start');
+assert.match(js, /scheduleContinuousRecordingAction\(this\.continuousRecording\.initialGateDelaySeconds, 'waiting-open-gate', \(\) => this\.startContinuousRecordingRace\(\)\)/, 'Multiple recording should schedule the first gate countdown after recording starts');
+assert.match(js, /completed >= totalRaces[\s\S]*finalStopDelaySeconds[\s\S]*waiting-final-stop[\s\S]*stopContinuousRecording\(\{ stopRecorder: true, reason: 'completed-all-races' \}\)/, 'Multiple recording should stop 5 seconds after all configured races complete');
+assert.match(js, /ceremonyHoldSeconds[\s\S]*'ceremony-hold'[\s\S]*newRace\(\{ regenerateTrack: true \}\);[\s\S]*scheduleContinuousRecordingAction\(this\.continuousRecording\.gateDelaySeconds, 'waiting-open-gate'/, 'Multiple recording should hold ceremony, generate a new track, then wait 5s before countdown/open gate');
+assert.match(js, /recordingCategories:\s*{[\s\S]*single:[\s\S]*gateDelaySeconds[\s\S]*continuous:[\s\S]*totalRaces[\s\S]*ceremonyHoldSeconds[\s\S]*finalStopDelaySeconds[\s\S]*cup:/, 'debug payload should expose Multiple race-count and lifecycle timing state');
 
 assert.match(html, /id="obstacle-slider"/, 'index.html should include obstacle density slider');
 assert.match(html, /id="curve-select"/, 'index.html should include curve style selector');
-assert.match(js, /const SPEED_SCALE = 4/, 'main.js should double the overall speed scale');
+assert.match(js, /const SPEED_SCALE = 1/, 'main.js should use the current calibrated overall speed scale');
 assert.match(js, /OBSTACLE_PRESETS/, 'main.js should define obstacle density presets');
 assert.match(js, /CURVE_PRESETS/, 'main.js should define curve style presets');
 assert.match(js, /updateObstaclePreset\(/, 'main.js should implement obstacle density UI handling');
@@ -61,7 +103,9 @@ assert.doesNotMatch(js, /'jumpRamp'/, 'pinball obstacle type list should no long
 assert.doesNotMatch(js, /createCurveRailObstacle\(/, 'main.js should remove slanted/curved rail replacement obstacles');
 assert.doesNotMatch(js, /curveRail/, 'main.js should no longer generate curveRail obstacle bumpers');
 assert.match(js, /spinnerGate/, 'pinball obstacles should include spinner gates');
-assert.match(js, /rolloverLane/, 'pinball obstacles should include rollover lanes');
+assert.doesNotMatch(js, /rolloverLane/, 'pinball obstacles should no longer include rollover lanes');
+assert.doesNotMatch(html, /Rollover Lane/, 'index.html should not expose rollover lane toggles');
+assert.doesNotMatch(dashboard, /rolloverLane/, 'dashboard should not expose rollover lane render options');
 assert.match(js, /dropTarget/, 'pinball obstacles should include drop targets');
 assert.match(js, /createPinballObstacle\(/, 'main.js should route obstacle creation through pinball-style obstacle builders');
 assert.doesNotMatch(js, /createJumpRampObstacle\(/, 'main.js should remove jump ramp obstacle implementation');
@@ -73,7 +117,7 @@ assert.match(js, /applyPopBumperImpulse\(/, 'pop bumpers should actively apply a
 assert.match(js, /applySlingshotImpulse\(/, 'slingshots should actively kick marbles sideways like pinball slingshots');
 assert.match(js, /replacementObstacleDesigns: \[\]/, 'debug state should show no replacement rail obstacles after removing slanted/curved rails');
 assert.match(js, /applySpinnerGateImpulse\(/, 'spinner gates should actively apply a rotating tangential impulse');
-assert.match(js, /applyRolloverLaneBoost\(/, 'rollover lanes should actively boost marbles and count interactions');
+assert.doesNotMatch(js, /applyRolloverLaneBoost\(/, 'rollover lane boost handler should be removed');
 assert.match(js, /applyDropTargetHit\(/, 'drop targets should knock down and remove their blocking bodies when hit');
 assert.match(js, /hairpinTurnCount/, 'debug state should expose generated hairpin turn count');
 assert.match(js, /hairpinTurns/, 'debug state should expose generated hairpin turn metadata');
@@ -103,7 +147,7 @@ assert.match(js, /lowerFinisherSlots/, 'podium collector should expose lower fin
 assert.match(js, /PODIUM_COLLECTOR/, 'finish collector should identify itself as a podium collector');
 
 assert.match(html, /data-camera="default"/, 'index.html should add a default auto camera mode button');
-assert.match(js, /defaultCameraMode: 'default'/, 'debug state should expose default auto camera mode');
+assert.match(js, /cameraMode = 'default'/, 'debug state should expose default auto camera mode');
 assert.match(js, /getDefaultCameraMode\(/, 'main.js should choose default camera shots automatically');
 assert.match(js, /defaultCameraSequence/, 'debug state should expose default camera sequence');
 assert.match(js, /unfinishedOrder/, 'default camera should track unfinished marbles in remaining-order after finish view');
@@ -118,28 +162,46 @@ assert.match(html, /id="custom-length-input"/, 'index.html should support typed 
 assert.match(js, /getCustomTrackLength\(/, 'main.js should read and clamp typed custom track length');
 assert.match(js, /customTrackLength/, 'debug state should expose the custom track length');
 assert.match(js, /railMomentumAssist/, 'main.js should add rail momentum assist to preserve forward inertia after rail scrapes');
-assert.match(js, /optimized-dense-overlapped-smooth/, 'main.js should use optimized dense overlapped guardrail joins');
+assert.match(js, /optimized-rounded-corner-frame-sampled-overlapped/, 'main.js should use optimized overlapped guardrail joins');
 assert.match(js, /optimizedRailBodies/, 'debug track stats should expose optimized guardrail body count');
 assert.match(js, /performanceProfile/, 'debug state should expose performance profile throttles');
 assert.match(js, /performanceOptimizations/, 'debug state should list applied performance optimizations');
 assert.match(js, /rankingCacheMs/, 'ranking sorts should be cached briefly for per-frame performance');
 assert.match(js, /applyRailMomentumAssist\(/, 'main.js should apply anti-stall rail momentum assist during drive');
 assert.match(js, /birdEyeCameraAngle/, 'debug state should expose the more bird-eye camera angle');
-assert.match(js, /closer-to-bird-eye overhead follow/, 'debug state should describe the overhead camera style');
+assert.match(js, /defaultCameraPitchUpDegrees/, 'debug state should describe the overhead camera pitch style');
 assert.match(js, /MARBLE_COLOR_STYLES/, 'main.js should define reusable marble color identities');
 assert.match(js, /MARBLE_PATTERN_STYLES/, 'main.js should define reusable marble pattern identities');
 assert.match(js, /MARBLE_SIZE_STYLES/, 'main.js should define reusable marble size identities');
 assert.match(js, /createMarbleIdentity\(/, 'main.js should create unique reusable marble codes');
+assert.match(js, /limitNameWords\([^)]*2\)/, 'generated marble names should be capped at maximum two words');
 assert.match(js, /marbleIdentitySystem: 'reusable-code-name-color-pattern-size'/, 'debug state should expose the reusable identity system');
 assert.match(js, /reusableMarbleRegistry/, 'debug state should expose a reusable marble registry');
 assert.match(js, /reusableRaceResults/, 'debug state should expose post-race reusable result lines');
 assert.match(js, /MB-##-RGB-PAT-SIZE/, 'debug state should document the marble code format');
 assert.match(js, /copyReusableMarble\(/, 'main.js should copy one reusable marble identity from the leaderboard');
 assert.match(js, /navigator\.clipboard\?\.writeText/, 'copy button should use the Clipboard API when available');
-assert.match(js, /class="copy-marble-btn"/, 'leaderboard rows should show a copy button beside the racer name');
+assert.match(js, /showcase-racer-name/, 'winner showcase rows should expose copyable racer names');
 assert.doesNotMatch(js, /<span class="racer-code">/, 'leaderboard overlay should not show marble codes directly');
 assert.match(css, /\.copy-marble-btn/, 'leaderboard copy button should be styled');
 assert.doesNotMatch(css, /\.racer-code/, 'hidden overlay code styling should be removed');
+
+assert.match(js, /const holdingPatternCols = laneCount/, 'high-count start staging should keep holding rows aligned to the same lane count');
+assert.match(js, /const holdingPatternLateralSpacing = laneGap/, 'high-count holding grid should use the same lateral spacing as gate lanes');
+assert.match(js, /startSlotStagingMode/, 'debug diagnostics should expose whether each marble starts in lane rows or holding rows');
+assert.doesNotMatch(js, /const holdingPatternCols = Math\.max\(1, Math\.ceil\(Math\.sqrt/, 'holding rows should not switch to a square grid after 25 marbles');
+
+assert.match(js, /POST_FIRST_FINISH_DNF_CUTOFF = \{[\s\S]*delaySeconds: 15/, 'first finisher should start a 15 second DNF cutoff window');
+assert.match(js, /applyPostFirstFinishDnfCutoff\(/, 'main.js should implement post-first-finish DNF cutoff');
+assert.match(js, /elapsedSinceFirstFinish < delaySeconds/, 'post-first-finish DNF cutoff should wait for the configured delay');
+assert.match(js, /unfinishedRanking = this\.getRanking\(\{ force: true \}\)\.filter\(\(data\) => !data\.finished && !data\.defeated\)/, 'post-first-finish DNF should use current unfinished ranking order');
+assert.match(js, /dnfOrder: index \+ 1/, 'post-first-finish DNF should persist each unfinished marble DNF order');
+assert.match(js, /postFirstFinishCutoff/, 'debug state should expose post-first-finish DNF cutoff status');
+
+assert.match(js, /SINGLE_RECORDING_FINAL_STOP_SECONDS = MULTIPLE_RECORDING_FINAL_STOP_SECONDS/, 'single recording should share the multiple recording final stop delay');
+assert.match(js, /handleSingleRecordingRaceComplete\(/, 'single recording should handle race completion automatically');
+assert.match(js, /stopSingleRecording\(\{ stopRecorder: true, reason: 'completed-single-race' \}\)/, 'single recording should stop recorder after final completion delay');
+assert.match(js, /this\.handleSingleRecordingRaceComplete\(\);\n\s*this\.handleContinuousRecordingRaceComplete\(\);/, 'single completion should run beside multiple completion when the race finishes');
 
 console.log('static feature checks passed');
 

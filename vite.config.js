@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ttsCacheDir = path.join(__dirname, '.cache', 'tts');
 const defaultVoice = process.env.MARBLE_TTS_VOICE || 'Alex';
+const defaultTtsPitch = Number.parseFloat(process.env.MARBLE_TTS_PITCH || '1') || 1;
 const maxTtsChars = 220;
 
 function execFilePromise(command, args, options = {}) {
@@ -45,23 +46,36 @@ async function commandExists(command) {
   }
 }
 
-async function ensureMacTtsAudio({ text, voice = defaultVoice }) {
+function sanitizePitch(value = defaultTtsPitch) {
+  const numeric = Number.parseFloat(value);
+  if (!Number.isFinite(numeric)) return 1;
+  return Math.min(1.3, Math.max(0.7, numeric));
+}
+
+async function ensureMacTtsAudio({ text, voice = defaultVoice, pitch = defaultTtsPitch }) {
   const cleanText = sanitizeTtsText(text);
   if (!cleanText) throw new Error('Missing TTS text');
   const cleanVoice = sanitizeVoice(voice);
+  const cleanPitch = sanitizePitch(pitch);
   await fs.mkdir(ttsCacheDir, { recursive: true });
-  const hash = crypto.createHash('sha256').update(`${cleanVoice}\n${cleanText}`).digest('hex').slice(0, 24);
+  const hash = crypto.createHash('sha256').update(`${cleanVoice}\n${cleanPitch.toFixed(2)}\n${cleanText}`).digest('hex').slice(0, 24);
   const aiffPath = path.join(ttsCacheDir, `${hash}.aiff`);
   const mp3Path = path.join(ttsCacheDir, `${hash}.mp3`);
   try {
     await fs.access(mp3Path);
-    return { mp3Path, hash, voice: cleanVoice, text: cleanText, cached: true };
+    return { mp3Path, hash, voice: cleanVoice, pitch: cleanPitch, text: cleanText, cached: true };
   } catch {}
 
   await execFilePromise('/usr/bin/say', ['-v', cleanVoice, '-o', aiffPath, cleanText]);
-  await execFilePromise('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', aiffPath, '-codec:a', 'libmp3lame', '-b:a', '96k', mp3Path]);
+  const ffmpegArgs = ['-y', '-hide_banner', '-loglevel', 'error', '-i', aiffPath];
+  if (Math.abs(cleanPitch - 1) > 0.005) {
+    const cents = Math.round(1200 * Math.log2(cleanPitch));
+    ffmpegArgs.push('-af', `rubberband=pitch=${cents}`);
+  }
+  ffmpegArgs.push('-codec:a', 'libmp3lame', '-b:a', '96k', mp3Path);
+  await execFilePromise('ffmpeg', ffmpegArgs);
   await fs.rm(aiffPath, { force: true });
-  return { mp3Path, hash, voice: cleanVoice, text: cleanText, cached: false };
+  return { mp3Path, hash, voice: cleanVoice, pitch: cleanPitch, text: cleanText, cached: false };
 }
 
 function sendJson(res, statusCode, payload) {
@@ -81,6 +95,9 @@ function macTtsBridgePlugin() {
             ok: sayAvailable && ffmpegAvailable,
             engine: 'macos-say-ffmpeg',
             voice: defaultVoice,
+            pitch: sanitizePitch(defaultTtsPitch),
+            pitchRange: { min: 0.7, max: 1.3, step: 0.01 },
+            pitchEngine: 'ffmpeg-rubberband-cents',
             sayAvailable,
             ffmpegAvailable,
             maxChars: maxTtsChars,
@@ -93,13 +110,15 @@ function macTtsBridgePlugin() {
         }
         const text = url.searchParams.get('text') || '';
         const voice = url.searchParams.get('voice') || defaultVoice;
-        const result = await ensureMacTtsAudio({ text, voice });
+        const pitch = url.searchParams.get('pitch') || defaultTtsPitch;
+        const result = await ensureMacTtsAudio({ text, voice, pitch });
         const stat = await fs.stat(result.mp3Path);
         res.statusCode = 200;
         res.setHeader('Content-Type', 'audio/mpeg');
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         res.setHeader('X-TTS-Engine', 'macos-say-ffmpeg');
         res.setHeader('X-TTS-Voice', result.voice);
+        res.setHeader('X-TTS-Pitch', result.pitch.toFixed(2));
         res.setHeader('X-TTS-Cache', result.cached ? 'hit' : 'miss');
         res.setHeader('Content-Length', String(stat.size));
         const file = await fs.readFile(result.mp3Path);
