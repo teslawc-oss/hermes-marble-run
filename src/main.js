@@ -245,6 +245,13 @@ const FINAL_APPROACH_ASSIST = {
 
 const FALL_TIME_PENALTY_SECONDS = 2;
 
+const FALL_RESPAWN_POLICY = {
+  finishGuardDistanceMeters: 1.25,
+  trackEdgeMarginMeters: 0.85,
+  maxVerticalClearanceMeters: 2.4,
+  label: 'Out-of-bounds respawn uses last confirmed on-track progress only; falling/off-track marbles cannot snap to finish or respawn ahead by closest-path percentage.',
+};
+
 const FINISH_LINE_RULE = {
   mode: 'single-line-crossing',
   threshold: 0.08,
@@ -383,6 +390,13 @@ const OBSTACLE_DISTRIBUTION_MODES = {
     minZoneMeters: 70,
   },
 };
+const OBSTACLE_PLACEMENT = {
+  minSpacingMeters: 8,
+  minSpacingFloorMeters: 4,
+  startPaddingMeters: 12,
+  finishPaddingMeters: 16,
+  label: 'obstacle placements are sorted and relaxed along the track with a minimum distance gap so generated obstacles do not overlap or cluster on top of each other',
+};
 const OBSTACLE_CATEGORIES = {
   normal: {
     label: '普通障礙物',
@@ -432,6 +446,12 @@ const BROADCAST_CAMERA = {
   outOfBoundsIgnoreAfterSeconds: 1.0,
   outOfBoundsIgnoreLabel: 'auto camera: if a marble is outside the track for more than 1 second, stop targeting it until it respawns/returns',
   cinematicLeaderFromProgress: 0.6,
+  postFirstFinish: {
+    finishHoldSeconds: 4,
+    followModeAfterHold: 'cinematicLeader',
+    snapOnLeadPackSwitch: true,
+    label: 'after the first marble finishes, hold the finisher for 4 seconds, then snap to a close-up of the leading unfinished marble until every racer completes',
+  },
   lineOfSight: {
     enabled: true,
     minClearance: 3.2,
@@ -443,19 +463,27 @@ const BROADCAST_CAMERA = {
     raceFollowProtectedModes: ['leadPack', 'cinematicLeader'],
     raceFollowMaxHeightBoost: 5,
     raceFollowBoostStep: 2.5,
+    raceFollowAvoidance: {
+      enabled: true,
+      modes: ['leadPack'],
+      strategy: 'rotate-around-target-then-small-lift',
+      angleDegrees: [18, -18, 32, -32, 48, -48, 64, -64],
+      maxAcceptedHits: 0,
+      label: 'lead-pack camera first rotates around the current target when passed track blocks line of sight; only falls back to a small lift if every sampled angle is still blocked',
+    },
     passedTrackBehindDistance: 7,
     passedTrackLabel: 'Default Auto race-follow modes only lift when an already-passed track/rail section sits between the camera and the current target, avoiding full overhead line-of-sight boosting',
     label: 'auto camera applies a bounded lift on real line-of-sight blockers; lead-pack and 60%+ cinematic leader only use the smaller passed-track guard so the shot stays readable without being blocked by old track sections',
   },
   leader: {
-    back: -15.5,
-    side: 0.35,
-    height: 16,
-    lookAhead: 6,
-    targetLookAheadScale: 0.1,
-    targetGuideBlend: 0.12,
-    targetLift: 0.9,
-    dynamicLookAheadBySpeed: 2,
+    back: -11.5,
+    side: 0.9,
+    height: 28,
+    lookAhead: 8,
+    targetLookAheadScale: 0.18,
+    targetGuideBlend: 0.28,
+    targetLift: 1.15,
+    dynamicLookAheadBySpeed: 6,
     maxSideWave: 0.08,
     sideWaveSpeed: 0.2,
     positionSmoothing: 0.07,
@@ -470,12 +498,15 @@ const BROADCAST_CAMERA = {
   leadPack: {
     back: -8.5,
     side: 0.9,
-    height: 38,
-    packHeightStep: 0.55,
+    height: 34,
+    packHeightStep: 0.5,
     lookAhead: 11,
-    targetLookAheadScale: 0.2,
-    targetGuideBlend: 0.28,
+    targetLookAheadScale: 0.34,
+    targetGuideBlend: 0.38,
     targetLift: 1.7,
+    useTrackNormalHeight: true,
+    flatTrackHeightBoost: 8,
+    flatSlopeYThreshold: 0.18,
     dynamicLookAheadBySpeed: 5,
     maxSideWave: 0.28,
     sideWaveSpeed: 0.28,
@@ -484,9 +515,9 @@ const BROADCAST_CAMERA = {
     fov: 28,
     obstacleAwareDistance: 38,
     obstaclePullback: 3.5,
-    obstacleHeightBoost: 4,
+    obstacleHeightBoost: 3,
     obstacleLookAheadBoost: 5,
-    label: 'cinematic lead-pack hero shot: follows the pack center while using track direction, small guide blend, obstacle-aware height/pullback, and gentle side drift',
+    label: 'cinematic lead-pack hero shot: follows the pack center while using track-local normal height over uneven slopes, track direction, small guide blend, obstacle-aware height/pullback, and gentle side drift',
   },
   leadBattle: {
     enabled: true,
@@ -542,9 +573,13 @@ const PODIUM_CEREMONY = {
   enabled: true,
   confettiEverySeconds: 1.15,
   championConfettiEverySeconds: 0.45,
+  confettiDurationSeconds: 4.8,
+  championConfettiDurationSeconds: 7.5,
+  maxConfettiBursts: 5,
+  championMaxConfettiBursts: 14,
   duration: 9,
   championDuration: Infinity,
-  label: 'race-complete podium ceremony with medal overlay, spotlight pulses, and confetti bursts',
+  label: 'race-complete podium ceremony with medal overlay, spotlight pulses, bounded confetti bursts, and a continuing podium orbit',
 };
 
 const MARBLE_LABEL_POLICY = {
@@ -1064,7 +1099,7 @@ class MarbleRace {
       endedAt: null,
     };
     this.showcaseStats = null;
-    this.podiumCeremony = { active: false, startedAt: 0, lastConfettiAt: -Infinity, medalists: [], spotlightPhase: 0 };
+    this.podiumCeremony = { active: false, startedAt: 0, elapsedSeconds: 0, lastConfettiAt: -Infinity, confettiBurstCount: 0, confettiComplete: false, medalists: [], spotlightPhase: 0 };
     this.cupMode = {
       active: false,
       status: 'idle',
@@ -1693,6 +1728,7 @@ class MarbleRace {
       this.rng = mulberry32(cyrb128(`${this.seed}-${this.trackPresetKey}-${this.customTrackLength || 'preset'}-${this.widthPresetKey}-${this.curveStyleKey}-${this.obstacleIndex}-${this.obstacleDistributionMode}`)[0]);
       this.clearTrack();
       this.createTrack();
+      this.updateTrackDebugCode();
       this.refreshStallEliminationPolicy();
       this.buildGuidePointMarkers();
       this.guidePointGroup.visible = this.showGuidePoints;
@@ -1813,6 +1849,7 @@ class MarbleRace {
       obstacleDistributionMode: this.obstacleDistributionMode,
       obstacleDistributionLabel: OBSTACLE_DISTRIBUTION_MODES[this.obstacleDistributionMode]?.label || OBSTACLE_DISTRIBUTION_MODES.random.label,
       obstacleDistributionSummary: this.obstacleDistributionSummary,
+      obstaclePlacement: OBSTACLE_PLACEMENT,
       obstacleCategories: OBSTACLE_CATEGORIES,
       obstacleTypeMetadata: PINBALL_OBSTACLE_TYPE_METADATA,
       obstacleCatalog: PINBALL_OBSTACLE_CATALOG,
@@ -3902,6 +3939,7 @@ class MarbleRace {
       label: OBSTACLE_DISTRIBUTION_MODES[mode]?.label || OBSTACLE_DISTRIBUTION_MODES.random.label,
       obstacleCount: placements.length,
       enabledTypes,
+      placementSpacing: this.getObstaclePlacementSpacingSummary(placements),
       zones: zones.map((zone) => ({
         index: zone.index,
         type: zone.type,
@@ -3933,9 +3971,40 @@ class MarbleRace {
     });
   }
 
+  getObstaclePlacementSpacingSummary(placements) {
+    const distances = placements
+      .map((placement) => Number(placement.distance))
+      .filter((distance) => Number.isFinite(distance))
+      .sort((a, b) => a - b);
+    const gaps = distances.slice(1).map((distance, index) => distance - distances[index]);
+    const minObservedGap = gaps.length ? Math.min(...gaps) : null;
+    const zoneGaps = new Map();
+    placements.forEach((placement) => {
+      if (placement.zoneIndex == null || !Number.isFinite(placement.distance)) return;
+      const list = zoneGaps.get(placement.zoneIndex) || [];
+      list.push(placement.distance);
+      zoneGaps.set(placement.zoneIndex, list);
+    });
+    const minObservedZoneGap = [...zoneGaps.values()].reduce((best, zoneDistances) => {
+      zoneDistances.sort((a, b) => a - b);
+      const zoneMin = zoneDistances.slice(1).reduce((gap, distance, index) => Math.min(gap, distance - zoneDistances[index]), Infinity);
+      return Number.isFinite(zoneMin) ? Math.min(best, zoneMin) : best;
+    }, Infinity);
+    return {
+      configuredMinSpacing: OBSTACLE_PLACEMENT.minSpacingMeters,
+      minSpacingFloor: OBSTACLE_PLACEMENT.minSpacingFloorMeters,
+      startPadding: OBSTACLE_PLACEMENT.startPaddingMeters,
+      finishPadding: OBSTACLE_PLACEMENT.finishPaddingMeters,
+      minObservedGap: minObservedGap == null ? null : Number(minObservedGap.toFixed(2)),
+      minObservedZoneGap: Number.isFinite(minObservedZoneGap) ? Number(minObservedZoneGap.toFixed(2)) : null,
+      sampleDistances: distances.slice(0, 20).map((distance) => Number(distance.toFixed(2))),
+      label: OBSTACLE_PLACEMENT.label,
+    };
+  }
+
   buildObstacleDistributionZones(enabledTypes) {
-    const usableStart = 12;
-    const usableEnd = Math.max(usableStart + 8, this.trackLength - 16);
+    const usableStart = OBSTACLE_PLACEMENT.startPaddingMeters;
+    const usableEnd = Math.max(usableStart + 8, this.trackLength - OBSTACLE_PLACEMENT.finishPaddingMeters);
     const usableLength = Math.max(1, usableEnd - usableStart);
     const maxZonesByLength = Math.max(1, Math.floor(usableLength / (OBSTACLE_DISTRIBUTION_MODES.zoned.minZoneMeters || 70)));
     const zoneCount = Math.max(1, Math.min(enabledTypes.length, maxZonesByLength));
@@ -3946,31 +4015,92 @@ class MarbleRace {
     });
   }
 
+  getObstaclePlacementMinSpacing(count, minD = OBSTACLE_PLACEMENT.startPaddingMeters, maxD = Math.max(minD + 0.5, this.trackLength - OBSTACLE_PLACEMENT.finishPaddingMeters)) {
+    const usableLength = Math.max(0.5, maxD - minD);
+    const requested = Number(OBSTACLE_PLACEMENT.minSpacingMeters) || 8;
+    const floor = Number(OBSTACLE_PLACEMENT.minSpacingFloorMeters) || 4;
+    const maxEvenSpacing = count > 1 ? usableLength / (count - 1) : requested;
+    return clamp(Math.min(requested, maxEvenSpacing * 0.92), Math.min(floor, maxEvenSpacing), requested);
+  }
+
+  applyObstaclePlacementSpacing(placements, { minD = OBSTACLE_PLACEMENT.startPaddingMeters, maxD = Math.max(minD + 0.5, this.trackLength - OBSTACLE_PLACEMENT.finishPaddingMeters), minSpacing = null } = {}) {
+    if (!placements.length) return placements;
+    const spacing = minSpacing ?? this.getObstaclePlacementMinSpacing(placements.length, minD, maxD);
+    const sorted = placements
+      .map((placement, index) => ({ ...placement, originalIndex: index, distance: clamp(placement.distance, minD, maxD) }))
+      .sort((a, b) => a.distance - b.distance);
+    const span = Math.max(0.5, maxD - minD);
+    let cursor = minD;
+    sorted.forEach((placement, sortedIndex) => {
+      const remaining = sorted.length - sortedIndex - 1;
+      const upper = maxD - spacing * Math.max(0, remaining);
+      const relaxed = clamp(placement.distance, cursor, Math.max(cursor, upper));
+      placement.distance = clamp(relaxed, minD, maxD);
+      cursor = Math.min(maxD, placement.distance + spacing);
+    });
+    if (sorted.length > 1 && sorted[sorted.length - 1].distance > maxD) {
+      const overflow = sorted[sorted.length - 1].distance - maxD;
+      sorted.forEach((placement) => { placement.distance -= overflow; });
+    }
+    const minGap = sorted.length > 1
+      ? sorted.slice(1).reduce((gap, placement, index) => Math.min(gap, placement.distance - sorted[index].distance), Infinity)
+      : null;
+    this.obstaclePlacementSpacingState = {
+      configuredMinSpacing: OBSTACLE_PLACEMENT.minSpacingMeters,
+      appliedMinSpacing: Number(spacing.toFixed(2)),
+      minObservedGap: minGap == null || !Number.isFinite(minGap) ? null : Number(minGap.toFixed(2)),
+      startPadding: OBSTACLE_PLACEMENT.startPaddingMeters,
+      finishPadding: OBSTACLE_PLACEMENT.finishPaddingMeters,
+      placementCount: sorted.length,
+      usableSpan: Number(span.toFixed(2)),
+      relaxed: true,
+      label: OBSTACLE_PLACEMENT.label,
+    };
+    return sorted.sort((a, b) => a.originalIndex - b.originalIndex).map(({ originalIndex, ...placement }) => placement);
+  }
+
   buildObstaclePlacements(count, enabledTypes, mode = this.obstacleDistributionMode) {
     if (count <= 0 || !enabledTypes.length) return [];
     if (mode === 'zoned') {
       const zones = this.buildObstacleDistributionZones(enabledTypes);
+      const perZoneIndex = new Map();
+      const zoneCounts = new Map();
+      Array.from({ length: count }, (_, i) => zones[i % zones.length]).forEach((zone) => {
+        zoneCounts.set(zone.index, (zoneCounts.get(zone.index) || 0) + 1);
+      });
       return Array.from({ length: count }, (_, i) => {
         const zone = zones[i % zones.length];
         const zonePadding = Math.min(5, Math.max(1.2, (zone.end - zone.start) * 0.12));
         const minD = Math.min(zone.end - 0.5, zone.start + zonePadding);
         const maxD = Math.max(minD + 0.5, zone.end - zonePadding);
+        const zoneSlot = perZoneIndex.get(zone.index) || 0;
+        perZoneIndex.set(zone.index, zoneSlot + 1);
+        const countInZone = zoneCounts.get(zone.index) || 1;
+        const spacing = this.getObstaclePlacementMinSpacing(countInZone, minD, maxD);
+        const jitterWindow = Math.min(Math.max(0.25, spacing * 0.35), Math.max(0.25, (maxD - minD) / Math.max(1, countInZone * 2)));
+        const baseDistance = countInZone > 1
+          ? minD + (zoneSlot * (maxD - minD)) / Math.max(1, countInZone - 1)
+          : (minD + maxD) / 2;
         return {
           type: zone.type,
-          distance: clamp(minD + this.rng() * Math.max(0.5, maxD - minD), 12, Math.max(12, this.trackLength - 16)),
+          distance: clamp(baseDistance + (this.rng() - 0.5) * jitterWindow, minD, maxD),
           zoneIndex: zone.index,
           zoneStart: zone.start,
           zoneEnd: zone.end,
+          minSpacing: spacing,
         };
       });
     }
-    return Array.from({ length: count }, () => ({
+    const minD = OBSTACLE_PLACEMENT.startPaddingMeters;
+    const maxD = Math.max(minD + 0.5, this.trackLength - OBSTACLE_PLACEMENT.finishPaddingMeters);
+    const placements = Array.from({ length: count }, () => ({
       type: enabledTypes[Math.floor(this.rng() * enabledTypes.length)] || enabledTypes[0],
-      distance: 12 + this.rng() * Math.max(8, this.trackLength - 28),
+      distance: minD + this.rng() * Math.max(0.5, maxD - minD),
       zoneIndex: null,
       zoneStart: null,
       zoneEnd: null,
     }));
+    return this.applyObstaclePlacementSpacing(placements, { minD, maxD });
   }
 
   createPinballObstacle(type, frame, lane, localWidth, palette) {
@@ -6047,7 +6177,16 @@ class MarbleRace {
   }
 
   resetPodiumCeremony() {
-    this.podiumCeremony = { active: false, startedAt: 0, lastConfettiAt: -Infinity, medalists: [], spotlightPhase: 0 };
+    this.podiumCeremony = {
+      active: false,
+      startedAt: 0,
+      elapsedSeconds: 0,
+      lastConfettiAt: -Infinity,
+      confettiBurstCount: 0,
+      confettiComplete: false,
+      medalists: [],
+      spotlightPhase: 0,
+    };
   }
 
   startPodiumCeremony() {
@@ -6061,7 +6200,10 @@ class MarbleRace {
     this.podiumCeremony = {
       active: true,
       startedAt: this.elapsed,
+      elapsedSeconds: 0,
       lastConfettiAt: -Infinity,
+      confettiBurstCount: 0,
+      confettiComplete: false,
       medalists,
       spotlightPhase: 0,
       duration,
@@ -6077,7 +6219,8 @@ class MarbleRace {
 
   updatePodiumCeremony(delta) {
     if (!this.podiumCeremony?.active || !this.finishRankingContainer) return;
-    const age = this.elapsed - this.podiumCeremony.startedAt;
+    this.podiumCeremony.elapsedSeconds = (this.podiumCeremony.elapsedSeconds || 0) + Math.max(0, delta || 0);
+    const age = this.podiumCeremony.elapsedSeconds;
     this.podiumCeremony.spotlightPhase += delta * 2.2;
     this.podiumCeremony.medalists.forEach((medalist, index) => {
       const data = this.marbleData.find((item) => item.id === medalist.id);
@@ -6093,12 +6236,22 @@ class MarbleRace {
     const confettiEverySeconds = this.podiumCeremony.isCupChampionCeremony
       ? PODIUM_CEREMONY.championConfettiEverySeconds
       : PODIUM_CEREMONY.confettiEverySeconds;
-    if (this.elapsed - this.podiumCeremony.lastConfettiAt >= confettiEverySeconds) {
-      this.podiumCeremony.lastConfettiAt = this.elapsed;
+    const confettiDurationSeconds = this.podiumCeremony.isCupChampionCeremony
+      ? PODIUM_CEREMONY.championConfettiDurationSeconds
+      : PODIUM_CEREMONY.confettiDurationSeconds;
+    const maxConfettiBursts = this.podiumCeremony.isCupChampionCeremony
+      ? PODIUM_CEREMONY.championMaxConfettiBursts
+      : PODIUM_CEREMONY.maxConfettiBursts;
+    const confettiAllowedByAge = !Number.isFinite(confettiDurationSeconds) || age <= confettiDurationSeconds;
+    const confettiAllowedByCount = !Number.isFinite(maxConfettiBursts) || (this.podiumCeremony.confettiBurstCount || 0) < maxConfettiBursts;
+    if (confettiAllowedByAge && confettiAllowedByCount && age - this.podiumCeremony.lastConfettiAt >= confettiEverySeconds) {
+      this.podiumCeremony.lastConfettiAt = age;
+      this.podiumCeremony.confettiBurstCount = (this.podiumCeremony.confettiBurstCount || 0) + 1;
       const collector = this.finishRankingContainer;
       const origin = collector.center.clone().add(this.localToWorldOffset(0, 2.1, -0.2, collector.yaw));
       this.spawnFinishConfetti(origin, this.podiumCeremony.isCupChampionCeremony ? 48 : 34, { cannon: true });
     }
+    this.podiumCeremony.confettiComplete = !(confettiAllowedByAge && confettiAllowedByCount);
     const ceremonyDuration = this.podiumCeremony.duration ?? PODIUM_CEREMONY.duration;
     if (Number.isFinite(ceremonyDuration) && age >= ceremonyDuration) {
       this.podiumCeremony.active = false;
@@ -8461,19 +8614,67 @@ class MarbleRace {
 
   scheduleFallRespawn(data, currentDistance = 0) {
     if (data.finished || data.pendingFallRespawn) return;
-    const safeDistance = Math.max(0, Math.min(data.lastSafeDistanceBeforeFall ?? data.lastDistance ?? data.distance ?? currentDistance, currentDistance));
-    const respawnDistance = Math.max(0, safeDistance - this.stuckResetPenalty);
+    const confirmedSafeDistance = this.getFallRespawnSafeDistance(data, currentDistance);
+    const respawnDistance = Math.max(0, confirmedSafeDistance - this.stuckResetPenalty);
     data.pendingFallRespawn = {
       detectedAt: this.elapsed,
       respawnAt: this.elapsed + this.fallRespawnDelay,
-      safeDistance,
+      closestDistanceAtFall: Number.isFinite(currentDistance) ? currentDistance : null,
+      safeDistance: confirmedSafeDistance,
       respawnDistance,
+      policy: FALL_RESPAWN_POLICY.label,
     };
     data.body.velocity.set(0, -0.2, 0);
     data.body.angularVelocity.set(0, 0, 0);
     data.body.force.set(0, 0, 0);
     data.body.torque.set(0, 0, 0);
     data.body.wakeUp();
+  }
+
+  getConfirmedOnTrackDistance(data, closest = null) {
+    if (!data || data.pendingFallRespawn || data.finished || data.defeated || !data.body) return null;
+    const progress = closest || this.findClosestProgress(data.body.position);
+    if (!progress || !Number.isFinite(progress.distance)) return null;
+    const frame = this.getTrackFrameAt(progress.distance);
+    const localWidth = this.getTrackWidthAt(progress.distance);
+    const dx = data.body.position.x - frame.p.x;
+    const dz = data.body.position.z - frame.p.z;
+    const lateral = Math.hypot(dx, dz);
+    const edgeLimit = localWidth / 2 + (FALL_RESPAWN_POLICY.trackEdgeMarginMeters ?? 0.85);
+    const verticalClearance = Math.abs(data.body.position.y - frame.p.y);
+    if (lateral > edgeLimit) return null;
+    if (verticalClearance > (FALL_RESPAWN_POLICY.maxVerticalClearanceMeters ?? 2.4)) return null;
+    return clamp(progress.distance, 0, Math.max(0, this.trackLength - (FALL_RESPAWN_POLICY.finishGuardDistanceMeters ?? 1.25)));
+  }
+
+  getConfirmedFinishDistance(data, closest = null) {
+    if (!data || data.pendingFallRespawn || data.finished || data.defeated || !data.body) return null;
+    const progress = closest || this.findClosestProgress(data.body.position);
+    if (!progress || !Number.isFinite(progress.distance)) return null;
+    const finishThreshold = FINISH_LINE_RULE.threshold ?? 0.08;
+    if (progress.distance < this.trackLength - finishThreshold) return null;
+    const frame = this.getTrackFrameAt(this.trackLength);
+    const localWidth = this.getTrackWidthAt(this.trackLength);
+    const dx = data.body.position.x - frame.p.x;
+    const dz = data.body.position.z - frame.p.z;
+    const lateral = Math.hypot(dx, dz);
+    const edgeLimit = localWidth / 2 + (FALL_RESPAWN_POLICY.trackEdgeMarginMeters ?? 0.85);
+    const verticalClearance = Math.abs(data.body.position.y - frame.p.y);
+    if (lateral > edgeLimit) return null;
+    if (verticalClearance > (FALL_RESPAWN_POLICY.maxVerticalClearanceMeters ?? 2.4)) return null;
+    return clamp(progress.distance, 0, this.trackLength);
+  }
+
+  getFallRespawnSafeDistance(data, currentDistance = 0) {
+    const finishGuardDistance = FALL_RESPAWN_POLICY.finishGuardDistanceMeters ?? 1.25;
+    const maxSafeBeforeFinish = Math.max(0, this.trackLength - finishGuardDistance);
+    const lastConfirmedSafeDistance = Number.isFinite(data?.lastSafeDistanceBeforeFall)
+      ? data.lastSafeDistanceBeforeFall
+      : 0;
+    // Never trust the closest-path percentage measured while the marble is already falling/off-track.
+    // Hairpins and the finish catcher can make an escaped marble's nearest sample jump forward;
+    // respawn must use only the last confirmed on-track progress recorded before the fall.
+    return clamp(lastConfirmedSafeDistance, 0, maxSafeBeforeFinish);
   }
 
   applyFallTimePenalty(data) {
@@ -8508,11 +8709,12 @@ class MarbleRace {
     data.body.wakeUp();
 
     data.pendingFallRespawn = null;
-    data.distance = Math.min(data.distance || 0, penaltyDistance);
-    data.lastSafeDistanceBeforeFall = penaltyDistance;
+    const boundedPenaltyDistance = Math.min(penaltyDistance, Math.max(0, this.trackLength - (FALL_RESPAWN_POLICY.finishGuardDistanceMeters ?? 1.25)));
+    data.distance = Math.min(data.distance || 0, boundedPenaltyDistance);
+    data.lastSafeDistanceBeforeFall = boundedPenaltyDistance;
     data.progress = clamp(data.distance / this.trackLength, 0, 1);
-    data.lastDistance = penaltyDistance;
-    data.lastDriveMovementDistance = penaltyDistance;
+    data.lastDistance = boundedPenaltyDistance;
+    data.lastDriveMovementDistance = boundedPenaltyDistance;
     data.lastMovementTime = this.elapsed;
     data.lastDriveMovementTime = this.elapsed;
     data.hasObservedForwardProgress = false;
@@ -8637,13 +8839,18 @@ class MarbleRace {
       if (data.labelSprite) data.labelSprite.position.copy(nextPos).add(new THREE.Vector3(0, data.radius + 0.82, 0));
       data.lastVisualPosition = nextPos;
       const closest = this.findClosestProgress(data.body.position);
-      if (!data.pendingFallRespawn && closest.lateralSq <= (this.trackWidth * this.trackWidth * 0.9)) {
-        data.lastSafeDistanceBeforeFall = Math.max(data.lastSafeDistanceBeforeFall || 0, closest.distance);
+      const trackDistanceForSafety = this.getConfirmedOnTrackDistance(data, closest);
+      const finishDistance = this.getConfirmedFinishDistance(data, closest);
+      if (Number.isFinite(finishDistance)) {
+        data.distance = Math.max(data.distance || 0, finishDistance);
       }
-      data.distance = Math.max(data.distance || 0, closest.distance);
+      if (Number.isFinite(trackDistanceForSafety)) {
+        data.lastSafeDistanceBeforeFall = Math.max(data.lastSafeDistanceBeforeFall || 0, trackDistanceForSafety);
+        data.distance = Math.max(data.distance || 0, trackDistanceForSafety);
+      }
       data.progress = clamp(data.distance / this.trackLength, 0, 1);
-      if (!data.finished && closest.distance > (data.lastDistance || 0) + 0.45) {
-        data.lastDistance = closest.distance;
+      if (!data.finished && Number.isFinite(trackDistanceForSafety) && trackDistanceForSafety > (data.lastDistance || 0) + 0.45) {
+        data.lastDistance = trackDistanceForSafety;
         data.lastMovementTime = this.elapsed;
       }
     });
@@ -8673,7 +8880,7 @@ class MarbleRace {
   checkFinishers() {
     this.marbleData.forEach((data) => {
       const finishThreshold = FINISH_LINE_RULE.threshold ?? 0.08;
-      if (!data.finished && !data.defeated && data.distance >= this.trackLength - finishThreshold) {
+      if (!data.finished && !data.defeated && !data.pendingFallRespawn && data.distance >= this.trackLength - finishThreshold) {
         data.finishTime = this.elapsed + (data.timePenalty || 0);
         data.body.linearDamping = 0.72;
         data.body.angularDamping = 0.78;
@@ -8702,7 +8909,7 @@ class MarbleRace {
         if (this.finishers.length === 1) {
           this.firstFinishTime = this.elapsed;
           this.firstFinishRealTimeMs = performance.now();
-          this.defaultCameraPhaseUntil = this.elapsed + 3.2;
+          this.defaultCameraPhaseUntil = this.elapsed + (BROADCAST_CAMERA.postFirstFinish?.finishHoldSeconds ?? 4);
           this.ui.winner.textContent = `🏆 ${data.name} wins! ${data.finishTime.toFixed(2)}s`;
           this.ui.winner.classList.remove('hidden');
           this.pushBroadcastEvent('Winner', `${data.name} wins`, { kind: 'winner', force: true, marbleId: data.id, lines: [`${data.name} wins`, `${data.name} takes flag`, `${data.name} first home`] });
@@ -8931,6 +9138,7 @@ class MarbleRace {
       obstacleDistributionMode: this.obstacleDistributionMode,
       obstacleDistributionLabel: OBSTACLE_DISTRIBUTION_MODES[this.obstacleDistributionMode]?.label || OBSTACLE_DISTRIBUTION_MODES.random.label,
       obstacleDistributionSummary: this.obstacleDistributionSummary,
+      obstaclePlacement: OBSTACLE_PLACEMENT,
       obstacleCategories: OBSTACLE_CATEGORIES,
       obstacleTypeMetadata: PINBALL_OBSTACLE_TYPE_METADATA,
       obstacleCatalog: PINBALL_OBSTACLE_CATALOG,
@@ -8995,6 +9203,7 @@ class MarbleRace {
       midTrackSpeedAssistCount: this.midTrackSpeedAssistCount,
       finalApproachAssist: this.finalApproachAssist,
       finishLineRule: FINISH_LINE_RULE,
+      fallRespawnPolicy: FALL_RESPAWN_POLICY,
       guidePointBiasSlider: { value: this.slopeDrive?.guidePointBias ?? null, percent: Math.round((this.slopeDrive?.guidePointBias ?? 0) * 100) },
       finalApproachAssistCount: this.finalApproachAssistCount,
       minForwardSpeedAssist: this.minForwardSpeedAssist,
@@ -9590,6 +9799,12 @@ class MarbleRace {
       },
       cinematicLeaderCamera: this.cinematicLeaderCameraState || null,
       leadPackCamera: this.leadPackCameraState || null,
+      postFirstFinishCamera: {
+        config: BROADCAST_CAMERA.postFirstFinish,
+        firstFinishTime: this.firstFinishTime || 0,
+        defaultCameraPhaseUntil: this.defaultCameraPhaseUntil || 0,
+        snapState: this.postFirstFinishCameraSnapState || null,
+      },
       autoCameraDirector: BROADCAST_CAMERA.angleStyle,
       autoCameraOutOfBoundsIgnoreAfterSeconds: BROADCAST_CAMERA.outOfBoundsIgnoreAfterSeconds,
       autoCameraOutOfBoundsIgnoreLabel: BROADCAST_CAMERA.outOfBoundsIgnoreLabel,
@@ -9875,16 +10090,26 @@ class MarbleRace {
       previous = this.getTrackPointAt(clamp(distance - 1.2, 0, this.trackLength));
     }
     const nextToPrevious = new THREE.Vector3(previous.x - next.x, previous.y - next.y, previous.z - next.z).normalize();
-    const horizontalBack = new THREE.Vector3(nextToPrevious.x, 0, nextToPrevious.z).normalize();
+    const horizontalBack = new THREE.Vector3(nextToPrevious.x, 0, nextToPrevious.z);
+    if (horizontalBack.lengthSq() < 0.0001) horizontalBack.set(0, 0, 1);
+    horizontalBack.normalize();
     const forward = horizontalBack.clone().multiplyScalar(-1);
     const right = new THREE.Vector3(-forward.z, 0, forward.x).normalize();
+    const trackForward = new THREE.Vector3(next.x - previous.x, next.y - previous.y, next.z - previous.z).normalize();
+    let localUp = new THREE.Vector3().crossVectors(right, trackForward).normalize();
+    if (localUp.lengthSq() < 0.0001 || localUp.y < 0.05) {
+      localUp = new THREE.Vector3(0, 1, 0);
+    }
     return {
       ...this.getTrackFrameAt(distance),
       p: current,
       tangent: nextToPrevious,
       horizontalTangent: horizontalBack,
       right,
+      up: localUp,
+      trackForward,
       cameraDirection: 'next-tracking-point-to-previous-tracking-point',
+      heightReference: 'track-local-up-from-slope-normal',
       nextDistance,
       previousDistance,
     };
@@ -9982,6 +10207,36 @@ class MarbleRace {
     return hitDistance <= targetDistance - (cfg.passedTrackBehindDistance ?? 7);
   }
 
+  rotateCameraAroundTarget(desired, target, angleDegrees) {
+    const offset = desired.clone().sub(target);
+    const horizontal = new THREE.Vector3(offset.x, 0, offset.z);
+    if (horizontal.lengthSq() < 0.0001) return desired.clone();
+    const rotatedOffset = offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(angleDegrees));
+    return target.clone().add(rotatedOffset);
+  }
+
+  findRaceFollowAvoidanceCamera(desired, target, activeCameraMode, cfg, targetDistance, baseHits) {
+    const avoidance = cfg?.raceFollowAvoidance;
+    if (!avoidance?.enabled || !(avoidance.modes || []).includes(activeCameraMode)) return null;
+    const occluders = this.getCameraOccluderMeshes();
+    if (!occluders.length) return null;
+    const maxAcceptedHits = avoidance.maxAcceptedHits ?? 0;
+    const candidateAngles = Array.isArray(avoidance.angleDegrees) && avoidance.angleDegrees.length
+      ? avoidance.angleDegrees
+      : [18, -18, 32, -32, 48, -48];
+    let best = null;
+    for (const angle of candidateAngles) {
+      const candidate = this.rotateCameraAroundTarget(desired, target, angle);
+      const hits = this.getCameraLineOfSightHits(candidate, target, occluders, cfg);
+      const passedHits = hits.filter((hit) => this.isPassedTrackCameraHit(hit, targetDistance, cfg));
+      const score = passedHits.length * 100 + hits.length + Math.abs(angle) / 100;
+      const entry = { candidate, angle, hits, passedHits, score };
+      if (!best || entry.score < best.score) best = entry;
+      if (passedHits.length <= maxAcceptedHits) return entry;
+    }
+    return best && best.passedHits.length < (baseHits?.length ?? Infinity) ? best : null;
+  }
+
   applyRaceFollowPassedTrackGuard(desired, target, activeCameraMode, cfg) {
     const protectedModes = cfg?.raceFollowProtectedModes || [];
     if (!protectedModes.includes(activeCameraMode)) return null;
@@ -10011,6 +10266,27 @@ class MarbleRace {
         nearestOccluderDistance: hits[0]?.occluderDistance != null ? Number(hits[0].occluderDistance.toFixed(2)) : null,
       };
       return desired;
+    }
+    const rotated = this.findRaceFollowAvoidanceCamera(desired, target, activeCameraMode, cfg, targetDistance, passedHits);
+    if (rotated) {
+      this.cameraLineOfSightState = {
+        active: rotated.passedHits.length < passedHits.length,
+        mode: activeCameraMode,
+        raceFollowGuard: true,
+        avoidanceStrategy: cfg.raceFollowAvoidance?.strategy || 'rotate-around-target',
+        rotationApplied: true,
+        rotationDegrees: Number(rotated.angle.toFixed(2)),
+        hitCount: rotated.passedHits.length,
+        totalHitCount: rotated.hits.length,
+        basePassedHitCount: passedHits.length,
+        targetDistance: Number((targetDistance ?? 0).toFixed(2)),
+        nearestHitDistance: rotated.passedHits[0] ? Number(rotated.passedHits[0].distance.toFixed(2)) : null,
+        nearestOccluderDistance: rotated.passedHits[0]?.occluderDistance != null ? Number(rotated.passedHits[0].occluderDistance.toFixed(2)) : null,
+        nearestOccluderType: rotated.passedHits[0]?.object?.userData?.cameraOccluderType || null,
+        protectedModes,
+        label: cfg.raceFollowAvoidance?.label || cfg.passedTrackLabel,
+      };
+      return rotated.candidate;
     }
     let boost = Math.min(cfg.raceFollowMaxHeightBoost || cfg.maxHeightBoost || 0, (cfg.raceFollowBoostStep || cfg.boostStep || 2.5) * Math.min(passedHits.length, cfg.sampleCount || 2));
     if (boost > 0 && cfg.maxElevationDegrees) {
@@ -10082,10 +10358,16 @@ class MarbleRace {
   }
 
   getDefaultCameraMode() {
-    const leader = this.getAutoCameraRanking({ includeFinished: true })[0] || this.getRanking({ force: false })[0];
+    const leader = this.getAutoCameraRanking({ includeFinished: false })[0]
+      || this.getAutoCameraRanking({ includeFinished: true })[0]
+      || this.getRanking({ force: false })[0];
     if (this.state === 'finished') return BROADCAST_CAMERA.podium360.enabled ? 'podium360' : 'finish';
     if (this.countdownActive || this.state === 'ready' || this.state === 'idle') return 'leadPack';
-    if (this.finishers.length > 0) return 'leadPack';
+    if (this.finishers.length > 0) {
+      const holdUntil = Number.isFinite(this.defaultCameraPhaseUntil) ? this.defaultCameraPhaseUntil : 0;
+      if ((this.elapsed || 0) < holdUntil) return 'finish';
+      return BROADCAST_CAMERA.postFirstFinish?.followModeAfterHold || 'cinematicLeader';
+    }
     if (BROADCAST_CAMERA.highAngleBattleEnabled && this.getLeadBattleTarget()) return 'leadBattle';
     const leaderProgress = this.trackLength && leader ? clamp((leader.distance || 0) / this.trackLength, 0, 1) : 0;
     if (leaderProgress >= BROADCAST_CAMERA.cinematicLeaderFromProgress) return 'cinematicLeader';
@@ -10112,9 +10394,19 @@ class MarbleRace {
     if (this.state === 'finished' && this.cameraMode !== 'default' && !this.replayHighlight?.active) {
       this.cameraMode = 'default';
     }
+    const previousActiveCameraMode = this.activeCameraMode || null;
     const activeCameraMode = this.replayHighlight?.active ? 'replayHighlight' : (requestedMode === 'default' ? this.getDefaultCameraMode() : requestedMode);
+    const shouldSnapPostFirstFinishLeadPack = Boolean(
+      BROADCAST_CAMERA.postFirstFinish?.snapOnLeadPackSwitch
+      && previousActiveCameraMode === 'finish'
+      && (activeCameraMode === 'leadPack' || activeCameraMode === 'cinematicLeader')
+      && this.finishers.length > 0
+      && this.state !== 'finished'
+    );
     this.activeCameraMode = activeCameraMode;
-    const leader = this.getAutoCameraRanking({ includeFinished: true })[0] || this.getRanking({ force: false })[0];
+    const leader = this.getAutoCameraRanking({ includeFinished: false })[0]
+      || this.getAutoCameraRanking({ includeFinished: true })[0]
+      || this.getRanking({ force: false })[0];
     const selectedCandidate = this.marbleData[this.selectedIndex];
     const selected = selectedCandidate && !this.isMarbleIgnoredByAutoCamera(selectedCandidate) ? selectedCandidate : leader;
     const unfinishedTarget = this.getNextUnfinishedTarget();
@@ -10189,23 +10481,33 @@ class MarbleRace {
         + speedFactor * (cfg.dynamicLookAheadBySpeed || 0)
         + obstacleFactor * (cfg.obstacleLookAheadBoost || 0);
       const frame = this.getCameraTrackFrameAt(this.leadPackDistanceSmoothed, lookAhead);
-      const targetLead = clamp(lookAhead * (cfg.targetLookAheadScale ?? 0.2), 1.4, 5.2);
+      const targetLead = clamp(lookAhead * (cfg.targetLookAheadScale ?? 0.2), 2.8, 7.2);
       const guideTarget = this.getTrackPointAt(clamp(this.leadPackDistanceSmoothed + targetLead, 0, this.trackLength));
       const guideBlend = clamp(cfg.targetGuideBlend ?? 0.28, 0, 1);
+      const trackUp = cfg.useTrackNormalHeight ? (frame.up || new THREE.Vector3(0, 1, 0)).clone().normalize() : new THREE.Vector3(0, 1, 0);
       const packTarget = this.cameraTargetSmoothed.clone().lerp(guideTarget, guideBlend);
-      const trackTargetY = this.getTrackPointAt(clamp(this.leadPackDistanceSmoothed, 0, this.trackLength)).y || 0;
-      packTarget.y = lerp(packTarget.y, trackTargetY + (cfg.targetLift ?? 1.7), 0.92);
+      const trackTarget = this.getTrackPointAt(clamp(this.leadPackDistanceSmoothed, 0, this.trackLength));
+      const trackLiftTarget = new THREE.Vector3(trackTarget.x, trackTarget.y, trackTarget.z).add(trackUp.clone().multiplyScalar(cfg.targetLift ?? 1.7));
+      packTarget.lerp(trackLiftTarget, 0.92);
       target.copy(packTarget);
       const packZoom = clamp((leadPack.size || 1) - 1, 0, 4);
       const t = this.elapsed || 0;
       const sideWave = Math.sin(t * (cfg.sideWaveSpeed || 0.28)) * (cfg.maxSideWave || 0);
       const desiredBack = cfg.back - packZoom * 0.35 - obstacleFactor * (cfg.obstaclePullback || 0);
       const desiredSide = cfg.side + sideWave;
-      const desiredHeight = cfg.height + packZoom * cfg.packHeightStep + obstacleFactor * (cfg.obstacleHeightBoost || 0);
+      const slopeAmount = clamp(Math.abs(frame.trackForward?.y ?? frame.slopeY ?? 0), 0, 1);
+      const flatnessFactor = clamp(1 - slopeAmount / Math.max(0.001, cfg.flatSlopeYThreshold ?? 0.18), 0, 1);
+      const dynamicSlopeHeightBoost = flatnessFactor * (cfg.flatTrackHeightBoost || 0);
+      const desiredHeight = cfg.height
+        + packZoom * cfg.packHeightStep
+        + obstacleFactor * (cfg.obstacleHeightBoost || 0)
+        + dynamicSlopeHeightBoost;
       desired.copy(this.cameraTargetSmoothed)
         .add(frame.tangent.clone().multiplyScalar(desiredBack))
         .add(frame.right.clone().multiplyScalar(desiredSide))
-        .add(new THREE.Vector3(0, desiredHeight, 0));
+        .add(trackUp.clone().multiplyScalar(desiredHeight));
+      const relativeToTrack = desired.clone().sub(trackTarget);
+      const normalHeight = relativeToTrack.dot(trackUp);
       this.leadPackCameraState = {
         size: leadPack.size,
         avgSpeed: Number(avgSpeed.toFixed(2)),
@@ -10220,6 +10522,21 @@ class MarbleRace {
         desiredBack: Number(desiredBack.toFixed(2)),
         desiredSide: Number(desiredSide.toFixed(2)),
         desiredHeight: Number(desiredHeight.toFixed(2)),
+        baseHeight: cfg.height,
+        slopeAmount: Number(slopeAmount.toFixed(3)),
+        flatnessFactor: Number(flatnessFactor.toFixed(2)),
+        dynamicSlopeHeightBoost: Number(dynamicSlopeHeightBoost.toFixed(2)),
+        flatTrackHeightBoost: cfg.flatTrackHeightBoost || 0,
+        flatSlopeYThreshold: cfg.flatSlopeYThreshold ?? 0.18,
+        useTrackNormalHeight: Boolean(cfg.useTrackNormalHeight),
+        heightReference: cfg.useTrackNormalHeight ? 'track-local-up' : 'world-y',
+        normalHeight: Number(normalHeight.toFixed(2)),
+        trackUp: {
+          x: Number(trackUp.x.toFixed(3)),
+          y: Number(trackUp.y.toFixed(3)),
+          z: Number(trackUp.z.toFixed(3)),
+        },
+        targetLiftMode: cfg.useTrackNormalHeight ? 'track-local-up' : 'world-y',
         fov: cfg.fov,
       };
     } else if (activeCameraMode === 'selected' && selected) {
@@ -10261,8 +10578,10 @@ class MarbleRace {
       const guideTarget = this.getTrackPointAt(clamp(leaderDistance + targetLead, 0, this.trackLength));
       const guideBlend = clamp(cfg.targetGuideBlend ?? 0.18, 0, 1);
       const lookPoint = leader.mesh.position.clone().lerp(guideTarget, guideBlend);
-      const trackTargetY = this.getTrackPointAt(clamp(leaderDistance, 0, this.trackLength)).y || 0;
-      lookPoint.y = lerp(lookPoint.y, trackTargetY + (cfg.targetLift ?? 1.15), 0.72);
+      const trackTarget = this.getTrackPointAt(clamp(leaderDistance, 0, this.trackLength));
+      const leaderTrackUp = (frame.up || new THREE.Vector3(0, 1, 0)).clone().normalize();
+      const trackLiftTarget = new THREE.Vector3(trackTarget.x, trackTarget.y, trackTarget.z).add(leaderTrackUp.clone().multiplyScalar(cfg.targetLift ?? 1.15));
+      lookPoint.lerp(trackLiftTarget, 0.52);
       const sideWave = Math.sin(t * (cfg.sideWaveSpeed || 0.24)) * (cfg.maxSideWave || 0);
       const desiredBack = cfg.back - obstacleFactor * (cfg.obstaclePullback || 0);
       const desiredSide = cfg.side + sideWave;
@@ -10271,9 +10590,9 @@ class MarbleRace {
       this.cameraTargetSmoothed.lerp(target, cfg.targetSmoothing || 0.075);
       target.copy(this.cameraTargetSmoothed);
       desired.copy(leader.mesh.position)
-        .add((frame.horizontalTangent || frame.tangent).clone().multiplyScalar(desiredBack))
+        .add(frame.tangent.clone().multiplyScalar(desiredBack))
         .add(frame.right.clone().multiplyScalar(desiredSide))
-        .add(new THREE.Vector3(0, desiredHeight, 0));
+        .add(leaderTrackUp.clone().multiplyScalar(desiredHeight));
       this.cinematicLeaderCameraState = {
         speed: Number(speed.toFixed(2)),
         speedFactor: Number(speedFactor.toFixed(2)),
@@ -10287,8 +10606,14 @@ class MarbleRace {
         desiredBack: Number(desiredBack.toFixed(2)),
         desiredSide: Number(desiredSide.toFixed(2)),
         desiredHeight: Number(desiredHeight.toFixed(2)),
-        targetYMode: 'track-anchored-leader-target',
-        trackTargetY: Number(trackTargetY.toFixed(2)),
+        angleReference: 'lead-pack-style track-local tangent/right/up',
+        trackUp: {
+          x: Number(leaderTrackUp.x.toFixed(3)),
+          y: Number(leaderTrackUp.y.toFixed(3)),
+          z: Number(leaderTrackUp.z.toFixed(3)),
+        },
+        targetYMode: 'track-local-up-leader-target',
+        trackTargetY: Number(trackTarget.y.toFixed(2)),
         fov: cfg.fov,
       };
     } else if (activeCameraMode === 'finish') {
@@ -10301,8 +10626,8 @@ class MarbleRace {
       const podiumTarget = this.getPodiumCameraTarget() || new THREE.Vector3(0, 1.2, 0);
       const collector = this.finishRankingContainer;
       const isChampionCeremony = Boolean(this.podiumCeremony?.active && this.podiumCeremony?.isCupChampionCeremony);
-      const ceremonyAge = Math.max(0, this.elapsed - (this.podiumCeremony?.startedAt || this.elapsed));
-      const t = (isChampionCeremony ? ceremonyAge : this.elapsed) * (isChampionCeremony ? cfg.championAngularSpeed : cfg.angularSpeed);
+      const ceremonyAge = Math.max(0, this.podiumCeremony?.elapsedSeconds ?? ((this.elapsed || 0) - (this.podiumCeremony?.startedAt || this.elapsed || 0)));
+      const t = ceremonyAge * (isChampionCeremony ? cfg.championAngularSpeed : cfg.angularSpeed);
       const radius = isChampionCeremony ? cfg.championRadius : cfg.radius;
       const height = isChampionCeremony ? cfg.championHeight : cfg.height;
       const heightBob = isChampionCeremony ? cfg.championHeightBob : cfg.heightBob;
@@ -10352,8 +10677,23 @@ class MarbleRace {
           ? (BROADCAST_CAMERA.leadPack.targetSmoothing || 0.08)
           : (isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 4.2 : 2.8)) : 1 - Math.pow(0.001, delta))));
     const cameraBlend = activeCameraMode === 'replayHighlight' ? 1 : (activeCameraMode === 'leadBattle' ? 0.78 : isCinematicLeadPack ? 0.84 : isCinematicLeader ? 0.82 : 0.72);
-    this.camera.position.lerp(desired, positionSmooth * cameraBlend);
-    this.controls.target.lerp(target, targetSmooth);
+    if (shouldSnapPostFirstFinishLeadPack) {
+      this.camera.position.copy(desired);
+      this.controls.target.copy(target);
+      this.postFirstFinishCameraSnapState = {
+        active: true,
+        from: previousActiveCameraMode,
+        to: activeCameraMode,
+        elapsed: Number((this.elapsed || 0).toFixed(2)),
+        firstFinishTime: Number((this.firstFinishTime || 0).toFixed(2)),
+        delaySeconds: BROADCAST_CAMERA.postFirstFinish?.finishHoldSeconds ?? 4,
+        label: BROADCAST_CAMERA.postFirstFinish?.label,
+      };
+    } else {
+      this.postFirstFinishCameraSnapState = this.postFirstFinishCameraSnapState ? { ...this.postFirstFinishCameraSnapState, active: false } : null;
+      this.camera.position.lerp(desired, positionSmooth * cameraBlend);
+      this.controls.target.lerp(target, targetSmooth);
+    }
     this.camera.lookAt(this.controls.target);
   }
 
