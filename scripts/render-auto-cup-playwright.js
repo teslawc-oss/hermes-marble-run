@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { chromium } from 'playwright';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -48,6 +48,11 @@ const config = {
   thumbnailFrameStrategy: args.get('thumbnail-frame-strategy') || process.env.MARBLE_RENDER_THUMBNAIL_FRAME_STRATEGY || 'early-highlight',
   thumbnailSafeCrop: args.get('thumbnail-safe-crop') || process.env.MARBLE_RENDER_THUMBNAIL_SAFE_CROP || 'hud-safe',
   thumbnailMaxWords: Number(args.get('thumbnail-max-words') || process.env.MARBLE_RENDER_THUMBNAIL_MAX_WORDS || 6),
+  eventMarkersOutput: args.get('event-markers-output') || process.env.MARBLE_RENDER_EVENT_MARKERS_OUTPUT || '',
+  eventMarkerIntervalSeconds: Number(args.get('event-marker-interval-seconds') || process.env.MARBLE_RENDER_EVENT_MARKER_INTERVAL_SECONDS || 5),
+  youtubeMetadata: args.get('youtube-metadata') !== 'false' && process.env.MARBLE_RENDER_YOUTUBE_METADATA !== 'false',
+  youtubeMetadataOutput: args.get('youtube-metadata-output') || process.env.MARBLE_RENDER_YOUTUBE_METADATA_OUTPUT || '',
+  youtubeMetadataTemplate: args.get('youtube-metadata-template') || process.env.MARBLE_RENDER_YOUTUBE_METADATA_TEMPLATE || path.join(rootDir, 'config/youtube-video-metadata-template.json'),
   renderPerformanceMode: args.get('render-performance-mode') !== 'false' && process.env.MARBLE_RENDER_PERFORMANCE_MODE !== 'false',
   audioOutput: path.resolve(args.get('audio-output') || process.env.MARBLE_RENDER_AUDIO_OUTPUT || path.join(recordingsDir, `auto-cup-${defaultStamp}.wav`)),
   mode: ['cup', 'continuous', 'single'].includes(args.get('mode') || process.env.MARBLE_RENDER_MODE) ? (args.get('mode') || process.env.MARBLE_RENDER_MODE) : 'cup',
@@ -65,6 +70,8 @@ config.trackLength = Number.isFinite(config.trackLength) ? Math.max(80, Math.min
 config.captureWidth = Math.round(config.width * config.captureScale);
 config.captureHeight = Math.round(config.height * config.captureScale);
 config.thumbnailMaxWords = Number.isFinite(config.thumbnailMaxWords) ? Math.max(2, Math.min(10, Math.round(config.thumbnailMaxWords))) : 6;
+config.eventMarkerIntervalSeconds = Number.isFinite(config.eventMarkerIntervalSeconds) ? Math.max(1, Math.min(60, Math.round(config.eventMarkerIntervalSeconds))) : 5;
+config.eventMarkersOutput = config.eventMarkersOutput ? path.resolve(config.eventMarkersOutput) : '';
 
 config.ttsVoice = String(config.ttsVoice || 'Alex').replace(/[^\w .'-]/g, '').trim().slice(0, 48) || 'Alex';
 config.multipleRaceCount = Number.isFinite(config.multipleRaceCount) ? Math.max(1, Math.min(99, Math.round(config.multipleRaceCount))) : 5;
@@ -78,6 +85,13 @@ const fail = (message, error = null) => {
 };
 
 const commandExists = (command) => spawnSync('sh', ['-lc', `command -v ${command}`], { stdio: 'ignore' }).status === 0;
+const sanitizeSingleLine = (value, fallback = '') => String(value || fallback)
+  .replace(/[\r\n\t]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+const sanitizeHashtags = (hashtags) => Array.isArray(hashtags)
+  ? hashtags.map((tag) => sanitizeSingleLine(tag)).filter((tag) => /^#[\w-]+$/i.test(tag))
+  : [];
 const run = (command, args, options = {}) => {
   log(`$ ${command} ${args.join(' ')}`);
   const result = spawnSync(command, args, { cwd: rootDir, stdio: 'inherit', ...options });
@@ -90,6 +104,83 @@ const ffprobeJson = (file) => JSON.parse(execFileSync('ffprobe', [
   '-of', 'json',
   file,
 ], { encoding: 'utf8' }));
+
+function readYoutubeMetadataTemplate(templatePath) {
+  const fallback = {
+    descriptionTemplate: 'Get ready for {raceCountLabel} exciting races with {marbleCount} marbles competing for victory! Every race is full of speed, chaos, close finishes, and unpredictable moments as the marbles battle their way through the track. Watch to see which marble comes out on top and whether your favorite can win it all.\nComment below with your favorite marble, your predictions, or ideas for future race challenges. Your suggestions help make every video more fun and exciting.\nLike, subscribe, and stay tuned for more Marble Rush races!',
+    hashtags: ['#marblerace', '#marblerush', '#30marbles', '#10races', '#gameplay', '#games', '#fun', '#gameforkids', '#marblegame', '#racing', '#challenge', '#kidsvideos', '#obstacles', '#indiegame', '#gamedev'],
+    defaults: { marbleCount: 30, raceCount: 10, fallbackTitle: '30 Marbles, 10 Races, Total Chaos!' },
+  };
+  const resolved = path.resolve(templatePath || path.join(rootDir, 'config/youtube-video-metadata-template.json'));
+  if (!existsSync(resolved)) return { ...fallback, templatePath: resolved, templateFound: false };
+  try {
+    const parsed = JSON.parse(readFileSync(resolved, 'utf8'));
+    return {
+      descriptionTemplate: String(parsed.descriptionTemplate || fallback.descriptionTemplate),
+      hashtags: sanitizeHashtags(parsed.hashtags).length ? sanitizeHashtags(parsed.hashtags) : fallback.hashtags,
+      defaults: { ...fallback.defaults, ...(parsed.defaults || {}) },
+      templatePath: resolved,
+      templateFound: true,
+    };
+  } catch (error) {
+    fail(`could not parse YouTube metadata template JSON: ${resolved}`, error);
+  }
+}
+
+function makeClickbaitVideoTitle(baseTitle, context = {}) {
+  const fallbackTitle = context.fallbackTitle || '30 Marbles, 10 Races, Total Chaos!';
+  const title = sanitizeSingleLine(baseTitle, fallbackTitle).replace(/[.!?]+$/g, '');
+  if (/[!?]|\b(insane|crazy|chaos|shocking|epic|wild|unbelievable|last second)\b/i.test(title)) return title.slice(0, 100);
+  const suffixes = [
+    'Total Chaos!',
+    'Insane Finish!',
+    'You Won’t Believe It!',
+    'Wild Marble Battle!',
+  ];
+  const seed = [...title].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const suffix = suffixes[seed % suffixes.length];
+  const candidate = `${title} — ${suffix}`;
+  return (candidate.length <= 100 ? candidate : `${title}!`).slice(0, 100);
+}
+
+function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput, metadataOutput, companionWebmOutput }) {
+  const markerOutput = config.eventMarkersOutput || renderSummary.eventMarkersOutput || '';
+  const template = readYoutubeMetadataTemplate(config.youtubeMetadataTemplate);
+  const raceCount = config.mode === 'continuous'
+    ? config.multipleRaceCount
+    : Number(renderSummary.raceCount || renderSummary.stageSummaries?.length || template.defaults.raceCount || 10);
+  const marbleCount = Number(renderSummary.marbleCount || config.cupSize || template.defaults.marbleCount || 30);
+  const baseTitle = config.thumbnailTitle || renderSummary.thumbnailTitle || renderSummary.title || renderSummary.cupName || config.cupName || template.defaults.fallbackTitle;
+  const title = makeClickbaitVideoTitle(baseTitle, { fallbackTitle: template.defaults.fallbackTitle });
+  const descriptionBody = template.descriptionTemplate
+    .replace(/\{raceCount\}/g, String(raceCount))
+    .replace(/\{raceCountLabel\}/g, String(raceCount))
+    .replace(/\{marbleCount\}/g, String(marbleCount))
+    .replace(/\{title\}/g, title)
+    .replace(/\{cupName\}/g, sanitizeSingleLine(config.cupName || renderSummary.cupName || 'Marble Rush'));
+  const description = `${descriptionBody}\n\n${template.hashtags.join(' ')}`;
+  return {
+    title,
+    description,
+    hashtags: template.hashtags,
+    source: {
+      titleSource: config.thumbnailTitle ? 'thumbnailTitle' : 'renderMetadata',
+      thumbnailTitle: config.thumbnailTitle || '',
+      cupName: config.cupName,
+      raceCount,
+      marbleCount,
+      renderOutput: config.output,
+      thumbnailOutput,
+      thumbnailMetadataOutput: metadataOutput,
+      companionWebmOutput,
+      eventMarkersOutput: markerOutput,
+      generatedAt: new Date().toISOString(),
+      templatePath: template.templatePath,
+      templateFound: template.templateFound,
+    },
+  };
+}
+
 
 async function waitForUrl(url, server = null, timeoutMs = 30000) {
   const started = Date.now();
@@ -233,8 +324,106 @@ async function main() {
   rmSync(videoDir, { recursive: true, force: true });
   mkdirSync(videoDir, { recursive: true });
 
+  const collectEventMarkerSnapshot = async (page, state = eventMarkerState) => {
+    if (!page || page.isClosed?.()) return null;
+    const snapshot = await page.evaluate(() => {
+      const app = window.__MARBLE_RACE_APP__;
+      if (!app) return null;
+      const activeRecording = app.singleRecording?.playwrightRender
+        ? app.singleRecording
+        : app.continuousRecording?.playwrightRender
+          ? app.continuousRecording
+          : app.autoCupRecording;
+      const serializeEvent = (event, index) => ({
+        title: event.title,
+        detail: event.detail,
+        kind: event.kind || 'general',
+        time: Number(event.time),
+        progress: event.progress,
+        distance: event.distance,
+        marbleId: event.marbleId,
+        rivalId: event.rivalId,
+        lines: Array.isArray(event.lines) ? event.lines.slice(0, 4) : undefined,
+        sourceIndex: index,
+      });
+      return {
+        sampledAt: Number(app.elapsed || 0),
+        state: app.state,
+        phase: activeRecording?.phase || null,
+        mode: activeRecording?.mode || null,
+        racesCompleted: activeRecording?.racesCompleted ?? null,
+        activeRaceIndex: activeRecording?.racesCompleted != null ? activeRecording.racesCompleted + 1 : null,
+        leader: app.getRanking?.({ force: false })?.[0] ? (() => {
+          const leader = app.getRanking({ force: false })[0];
+          return { id: leader.id, name: leader.name, distance: leader.distance, progress: leader.progress };
+        })() : null,
+        events: (app.broadcastEvents || [])
+          .map(serializeEvent)
+          .filter((event) => event.title && !/record/i.test(`${event.title} ${event.detail || ''}`)),
+        replayHighlightSelection: app.selectReplayHighlightEvents?.().map(serializeEvent) || [],
+      };
+    }).catch(() => null);
+    if (!snapshot) return null;
+    state.samples.push(snapshot);
+    state.samples = state.samples.slice(-240);
+    [...(snapshot.events || []), ...(snapshot.replayHighlightSelection || [])].forEach((event) => {
+      const time = Number(event.time);
+      if (!Number.isFinite(time)) return;
+      const key = `${event.kind}:${event.title}:${event.detail}:${time.toFixed(2)}:${event.marbleId ?? ''}:${event.rivalId ?? ''}`;
+      if (!state.eventsByKey.has(key)) {
+        state.eventsByKey.set(key, {
+          ...event,
+          recordedAt: snapshot.sampledAt,
+          phase: snapshot.phase,
+          mode: snapshot.mode,
+          activeRaceIndex: snapshot.activeRaceIndex,
+          racesCompleted: snapshot.racesCompleted,
+        });
+      }
+    });
+    state.lastSampleAt = snapshot.sampledAt;
+    return snapshot;
+  };
+
+  const buildEventMarkerDocument = (state = eventMarkerState, summary = renderSummary) => {
+    const eventPriority = { overtake: 100, battle: 94, obstacle: 88, leader: 82, speed: 78, progress: 74, finish: 60, winner: 48, complete: 30, general: 10 };
+    const events = [...state.eventsByKey.values()]
+      .filter((event) => event.title && Number.isFinite(Number(event.time)))
+      .sort((a, b) => Number(a.time) - Number(b.time));
+    const thumbnailCandidates = events
+      .map((event) => {
+        const time = Number(event.time);
+        const progress = Number(event.progress);
+        const earlyBonus = time <= 90 ? 18 : time <= 180 ? 8 : 0;
+        const progressBonus = Number.isFinite(progress) && progress >= 0.12 && progress <= 0.78 ? 8 : 0;
+        const textBonus = /overtake|battle|target|buff|speed|burst|leader|blast|kick|snap/i.test(`${event.title} ${event.detail || ''}`) ? 8 : 0;
+        const score = (eventPriority[event.kind] || eventPriority.general) + earlyBonus + progressBonus + textBonus - Math.max(0, time - 180) * 0.12;
+        return { ...event, score: Number(score.toFixed(2)), suggestedFrameSeconds: Number(Math.max(0.8, time + 0.15).toFixed(3)) };
+      })
+      .sort((a, b) => (b.score - a.score) || (a.suggestedFrameSeconds - b.suggestedFrameSeconds))
+      .slice(0, 12);
+    return {
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      renderOutput: config.output,
+      mode: config.mode,
+      raceCount: config.mode === 'continuous' ? config.multipleRaceCount : undefined,
+      marbleCount: config.cupSize,
+      cupName: config.cupName,
+      eventCount: events.length,
+      sampleCount: state.samples.length,
+      lastSampleAt: state.lastSampleAt,
+      events,
+      thumbnailCandidates,
+      samples: state.samples,
+      renderSummary: summary || null,
+    };
+  };
+
   let browser;
   let renderSummary = null;
+  let eventMarkerPoller = null;
+  let eventMarkerState = { samples: [], eventsByKey: new Map(), lastSampleAt: 0 };
   try {
     log(`Opening ${config.url}`);
     log('Render settings:', JSON.stringify({
@@ -627,6 +816,11 @@ async function main() {
     if (!started.ok) fail(`Could not start Playwright auto cup: ${started.reason || 'unknown'}`);
     log('Auto cup started:', JSON.stringify(started));
 
+    await collectEventMarkerSnapshot(page);
+    eventMarkerPoller = setInterval(() => {
+      collectEventMarkerSnapshot(page).catch(() => {});
+    }, config.eventMarkerIntervalSeconds * 1000);
+
     if (config.smokeSeconds > 0) {
       await page.waitForTimeout(config.smokeSeconds * 1000);
       const smokeState = await page.evaluate(() => {
@@ -720,6 +914,11 @@ async function main() {
     }
 
     await page.waitForTimeout(1000);
+    if (eventMarkerPoller) {
+      clearInterval(eventMarkerPoller);
+      eventMarkerPoller = null;
+    }
+    await collectEventMarkerSnapshot(page);
     renderSummary = await page.evaluate(() => {
       const app = window.__MARBLE_RACE_APP__;
       if (!app) return null;
@@ -760,7 +959,13 @@ async function main() {
         })) || [],
       };
     }).catch(() => null);
-    if (renderSummary) log('Render metadata summary:', JSON.stringify({ eventCount: renderSummary.broadcastEvents?.length || 0, winner: renderSummary.winner, champion: renderSummary.champion, cupName: renderSummary.cupName }));
+    if (renderSummary) {
+      const markerDocument = buildEventMarkerDocument(eventMarkerState, renderSummary);
+      renderSummary.eventMarkers = markerDocument.events;
+      renderSummary.thumbnailCandidates = markerDocument.thumbnailCandidates;
+      renderSummary.eventMarkersOutput = config.eventMarkersOutput || '';
+    }
+    if (renderSummary) log('Render metadata summary:', JSON.stringify({ eventCount: renderSummary.eventMarkers?.length || renderSummary.broadcastEvents?.length || 0, thumbnailCandidateCount: renderSummary.thumbnailCandidates?.length || 0, winner: renderSummary.winner, champion: renderSummary.champion, cupName: renderSummary.cupName }));
     const runtimeFpsSummary = await page.evaluate(() => {
       const app = window.__MARBLE_RACE_APP__;
       return app ? {
@@ -792,6 +997,10 @@ async function main() {
     await browser.close();
     browser = null;
   } finally {
+    if (eventMarkerPoller) {
+      clearInterval(eventMarkerPoller);
+      eventMarkerPoller = null;
+    }
     if (browser) await browser.close().catch(() => {});
     if (server) server.kill('SIGTERM');
   }
@@ -874,16 +1083,29 @@ async function main() {
     console.warn('[render:auto-cup] Could not ffprobe output video:', error?.message || error);
   }
   if (companionWebmOutput) log(`Comparison WebM: ${companionWebmOutput}`);
+  const eventMarkersOutput = path.resolve(config.eventMarkersOutput || `${config.output.replace(/\.[^.]+$/, '')}.events.json`);
+  const eventMarkerDocument = buildEventMarkerDocument(eventMarkerState, renderSummary);
+  if (renderSummary) {
+    renderSummary.eventMarkers = eventMarkerDocument.events;
+    renderSummary.thumbnailCandidates = eventMarkerDocument.thumbnailCandidates;
+    renderSummary.eventMarkersOutput = eventMarkersOutput;
+  }
+  mkdirSync(path.dirname(eventMarkersOutput), { recursive: true });
+  writeFileSync(eventMarkersOutput, `${JSON.stringify(eventMarkerDocument, null, 2)}\n`);
+  config.eventMarkersOutput = eventMarkersOutput;
+  log(`Event markers: ${eventMarkersOutput} (${eventMarkerDocument.eventCount} events, ${eventMarkerDocument.thumbnailCandidates.length} thumbnail candidates)`);
   if (config.thumbnail) {
     const thumbnailOutput = path.resolve(config.thumbnailOutput || `${config.output.replace(/\.[^.]+$/, '')}.thumbnail.jpg`);
     const metadataOutput = path.resolve(`${thumbnailOutput}.metadata.json`);
+    const youtubeMetadataOutput = path.resolve(config.youtubeMetadataOutput || `${config.output.replace(/\.[^.]+$/, '')}.youtube.json`);
     const metadata = {
       ...(renderSummary || {}),
       title: config.thumbnailTitle || renderSummary?.cupName || config.cupName || 'Epic Marble Race',
       thumbnailTitle: config.thumbnailTitle || '',
       generatedFrom: config.output,
       renderOutput: config.output,
-      comparisonWebmOutput,
+      companionWebmOutput,
+      eventMarkersOutput,
     };
     mkdirSync(path.dirname(thumbnailOutput), { recursive: true });
     writeFileSync(metadataOutput, `${JSON.stringify(metadata, null, 2)}\n`);
@@ -900,6 +1122,13 @@ async function main() {
     run('node', thumbnailArgs);
     if (!existsSync(thumbnailOutput) || statSync(thumbnailOutput).size <= 0) fail(`Thumbnail was not created: ${thumbnailOutput}`);
     log(`Thumbnail: ${thumbnailOutput}`);
+    if (config.youtubeMetadata) {
+      const youtubeMetadata = buildYoutubeVideoMetadata({ config, renderSummary, thumbnailOutput, metadataOutput, companionWebmOutput });
+      mkdirSync(path.dirname(youtubeMetadataOutput), { recursive: true });
+      writeFileSync(youtubeMetadataOutput, `${JSON.stringify(youtubeMetadata, null, 2)}\n`);
+      log(`YouTube metadata: ${youtubeMetadataOutput}`);
+      log(`YouTube title: ${youtubeMetadata.title}`);
+    }
   }
   if (!config.keepWebm) rmSync(videoDir, { recursive: true, force: true });
   log(`Done: ${config.output}`);

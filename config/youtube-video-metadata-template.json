@@ -1,0 +1,25 @@
+{
+  "descriptionTemplate": "Get ready for {raceCountLabel} exciting races with {marbleCount} marbles competing for victory! Every race is full of speed, chaos, close finishes, and unpredictable moments as the marbles battle their way through the track. Watch to see which marble comes out on top and whether your favorite can win it all.\nComment below with your favorite marble, your predictions, or ideas for future race challenges. Your suggestions help make every video more fun and exciting.\nLike, subscribe, and stay tuned for more Marble Rush races!",
+  "hashtags": [
+    "#marblerace",
+    "#marblerush",
+    "#30marbles",
+    "#10races",
+    "#gameplay",
+    "#games",
+    "#fun",
+    "#gameforkids",
+    "#marblegame",
+    "#racing",
+    "#challenge",
+    "#kidsvideos",
+    "#obstacles",
+    "#indiegame",
+    "#gamedev"
+  ],
+  "defaults": {
+    "marbleCount": 30,
+    "raceCount": 10,
+    "fallbackTitle": "30 Marbles, 10 Races, Total Chaos!"
+  }
+}
