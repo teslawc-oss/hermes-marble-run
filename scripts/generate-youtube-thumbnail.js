@@ -173,7 +173,7 @@ export function makeFilter({ width, height, safeCrop = 'hud-safe' }) {
     none: { zoom: 1, x: 0.5, y: 0.5 },
     off: { zoom: 1, x: 0.5, y: 0.5 },
     center: { zoom: 1.12, x: 0.5, y: 0.5 },
-    'hud-safe': { zoom: 1.22, x: 0.5, y: 0.40 },
+    'hud-safe': { zoom: 1.65, x: 0.20, y: 0.30 },
   };
   const profile = cropProfiles[mode] || cropProfiles['hud-safe'];
   const scaledWidth = Math.round(width * profile.zoom);
