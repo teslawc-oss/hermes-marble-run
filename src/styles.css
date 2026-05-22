@@ -523,11 +523,33 @@ button.recording {
 
 .hud-left,
 .hud-right {
-  transition: transform 0.24s ease, opacity 0.2s ease;
+  transition: opacity 0.2s ease;
+}
+
+.hud-left {
+  transition: none !important;
 }
 
 body.recording-ui-instant-hide .hud-left {
   transition: none !important;
+}
+
+body.playwright-render-hide-left-ui .hud-left {
+  display: none !important;
+  transform: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: none !important;
+}
+
+.left-ui-toggle,
+body.playwright-render-hide-left-ui .left-ui-toggle {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: none !important;
 }
 
 body.recording-cursor-hidden,
@@ -538,7 +560,8 @@ body.recording-cursor-hidden #canvas-container canvas {
 }
 
 .hud-left.collapsed {
-  transform: translateX(calc(-100% - 28px));
+  display: none;
+  transform: none;
   opacity: 0;
   pointer-events: none;
 }

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const dashboard = readFileSync(new URL('../scripts/render-dashboard-server.js', import.meta.url), 'utf8');
 const renderAutoCup = readFileSync(new URL('../scripts/render-auto-cup-playwright.js', import.meta.url), 'utf8');
 const js = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
@@ -36,15 +35,9 @@ assert.match(js, /const MULTIPLE_RECORDING_DEFAULT_RACES = 5/, 'Multiple recordi
 assert.match(js, /const MULTIPLE_RECORDING_CEREMONY_HOLD_SECONDS = 10/, 'Multiple recording should hold the ceremony for 10 seconds after each non-final race');
 assert.match(js, /const MULTIPLE_RECORDING_NEXT_GATE_SECONDS = 10/, 'Multiple recording should wait 10 seconds before countdown/open gate on generated next tracks');
 assert.match(js, /const MULTIPLE_RECORDING_FINAL_STOP_SECONDS = 10/, 'Multiple recording should stop recording 10 seconds after the final race ceremony');
-assert.match(dashboard, /data-dashboard-section="background-record-categories"/, 'dashboard should include a Background Record categories section');
-assert.doesNotMatch(dashboard, /name="recordMode" value="single"/, 'dashboard should keep Single recording on the in-game page only');
-assert.match(dashboard, /value:\s*'continuous'[\s\S]*label:\s*'Multiple'/, 'dashboard should expose Multiple recording mode');
-assert.match(dashboard, /id="multipleRaceCount" name="multipleRaceCount" type="number" min="1" max="99" value="5"/, 'dashboard should expose Multiple race-count input');
-assert.match(dashboard, /value:\s*'cup'[\s\S]*label:\s*'Cup Mode'[\s\S]*mode\.value === 'cup' \? 'checked'/, 'dashboard should expose Cup Mode recording mode as default');
-assert.match(dashboard, /recordMode: selectedRecordMode\(\)/, 'dashboard render payload should include selected record mode');
-assert.match(dashboard, /multipleRaceCount: normalizeMultipleRaceCount\(\)/, 'dashboard render payload should include Multiple race count');
-assert.match(dashboard, /`--mode=\$\{options\.recordMode\}`/, 'dashboard should pass record mode to Playwright render script');
-assert.match(dashboard, /`--multiple-race-count=\$\{options\.multipleRaceCount\}`/, 'dashboard should pass Multiple race count to Playwright render script');
+const pkg = readFileSync(new URL('../package.json', import.meta.url), 'utf8');
+assert.doesNotMatch(pkg, /\"dashboard\"\s*:/, 'marble-race package should not expose the removed bundled dashboard script');
+
 assert.match(renderAutoCup, /mode:[\s\S]*MARBLE_RENDER_MODE/, 'Playwright render script should accept a recording mode');
 assert.match(renderAutoCup, /multipleRaceCount:[\s\S]*MARBLE_RENDER_MULTIPLE_RACE_COUNT/, 'Playwright render script should accept Multiple race count');
 assert.match(renderAutoCup, /mode === 'single'[\s\S]*scheduleSingleRecordingAction/, 'Playwright render script should wire Single recording lifecycle');
@@ -105,7 +98,6 @@ assert.doesNotMatch(js, /curveRail/, 'main.js should no longer generate curveRai
 assert.match(js, /spinnerGate/, 'pinball obstacles should include spinner gates');
 assert.doesNotMatch(js, /rolloverLane/, 'pinball obstacles should no longer include rollover lanes');
 assert.doesNotMatch(html, /Rollover Lane/, 'index.html should not expose rollover lane toggles');
-assert.doesNotMatch(dashboard, /rolloverLane/, 'dashboard should not expose rollover lane render options');
 assert.match(js, /dropTarget/, 'pinball obstacles should include drop targets');
 assert.match(js, /createPinballObstacle\(/, 'main.js should route obstacle creation through pinball-style obstacle builders');
 assert.doesNotMatch(js, /createJumpRampObstacle\(/, 'main.js should remove jump ramp obstacle implementation');
@@ -191,7 +183,7 @@ assert.match(js, /const holdingPatternLateralSpacing = laneGap/, 'high-count hol
 assert.match(js, /startSlotStagingMode/, 'debug diagnostics should expose whether each marble starts in lane rows or holding rows');
 assert.doesNotMatch(js, /const holdingPatternCols = Math\.max\(1, Math\.ceil\(Math\.sqrt/, 'holding rows should not switch to a square grid after 25 marbles');
 
-assert.match(js, /POST_FIRST_FINISH_DNF_CUTOFF = \{[\s\S]*delaySeconds: 15/, 'first finisher should start a 15 second DNF cutoff window');
+assert.match(js, /POST_FIRST_FINISH_DNF_CUTOFF = \{[\s\S]*delaySeconds: 28/, 'first finisher should start a 28 second DNF cutoff window');
 assert.match(js, /applyPostFirstFinishDnfCutoff\(/, 'main.js should implement post-first-finish DNF cutoff');
 assert.match(js, /elapsedSinceFirstFinish < delaySeconds/, 'post-first-finish DNF cutoff should wait for the configured delay');
 assert.match(js, /unfinishedRanking = this\.getRanking\(\{ force: true \}\)\.filter\(\(data\) => !data\.finished && !data\.defeated\)/, 'post-first-finish DNF should use current unfinished ranking order');

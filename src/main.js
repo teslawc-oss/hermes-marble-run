@@ -31,6 +31,7 @@ const MULTIPLE_RECORDING_CEREMONY_HOLD_SECONDS = 10;
 const MULTIPLE_RECORDING_NEXT_GATE_SECONDS = 10;
 const MULTIPLE_RECORDING_FINAL_STOP_SECONDS = 10;
 const SINGLE_RECORDING_FINAL_STOP_SECONDS = MULTIPLE_RECORDING_FINAL_STOP_SECONDS;
+const CUP_CEREMONY_POST_NARRATION_DELAY_SECONDS = 2;
 const CUP_VIDEO_TIMING = {
   enabled: true,
   targetSeconds: 600,
@@ -278,6 +279,25 @@ const NO_ROLLING_SLOWDOWN = {
   label: '滾動不減速：波子 linear/angular damping = 0，賽道/波子/障礙接觸摩擦設為 0，只保留重力、碰撞同 top-speed cap',
 };
 
+const DROP_TARGET_FINAL_BOOST = {
+  enabled: true,
+  durationSeconds: 5,
+  speedMultiplier: 2,
+  allowExceedMaxSpeed: true,
+  auraColor: 0xffd166,
+  auraOpacity: 0.36,
+  auraEmissiveIntensity: 1.65,
+  commentaryLines: [
+    '{name} unlocks the golden boost',
+    '{name} claims the drop-target buff',
+    '{name} lights the bank and powers up',
+    '{name} takes the prize boost',
+    '{name} gets five seconds of speed',
+    '{name} turns targets into turbo',
+  ],
+  label: 'final drop-target clearer gets a 5s golden aura and x2 top-speed override; after expiry aura vanishes and normal max-speed cap resumes',
+};
+
 const LANDING_REBOUND_ABSORBER = {
   enabled: true,
   label: 'no-bounce landing absorber: after airborne marble lands on track, remove upward rebound velocity without hidden impulse',
@@ -309,22 +329,22 @@ const STUCK_RESET = {
 
 const STALL_ELIMINATION = {
   enabled: true,
-  baseDelaySeconds: 10.0,
-  longTrackDelaySeconds: 24.0,
+  baseDelaySeconds: 16.0,
+  longTrackDelaySeconds: 38.0,
   longTrackReferenceMeters: 760,
   finalStageDelayMultiplier: 1.65,
   minForwardProgressMeters: 0.18,
   minForwardProgressPercentPerWindow: 0.0012,
   requireObservedMotionBeforeElimination: true,
   finishPlacement: 'defeated-after-active-finishers',
-  label: 'DNF waits longer on long tracks/finals: timeout scales from 10s toward 24s by track length, final stage gets extra grace, and a marble must first make real forward progress before no-forward-progress elimination can fire',
+  label: 'DNF waits longer for recording stability: timeout scales from 16s toward 38s by track length, final stage gets extra grace, and a marble must first make real forward progress before no-forward-progress elimination can fire',
 };
 
 const POST_FIRST_FINISH_DNF_CUTOFF = {
   enabled: true,
-  delaySeconds: 15,
+  delaySeconds: 28,
   reason: 'post-first-finish-cutoff',
-  label: 'After the first marble finishes, wait 15 seconds, then mark every unfinished marble as DNF in the current race order to avoid long tail waiting.',
+  label: 'After the first marble finishes, wait 28 seconds, then mark every unfinished marble as DNF in the current race order to avoid long tail waiting without cutting normal racers too aggressively.',
 };
 
 const GUIDE_POINT_POLICY = {
@@ -591,8 +611,8 @@ const MARBLE_LABEL_POLICY = {
 
 const PERFORMANCE_TUNING = {
   label: 'fps-balanced',
-  maxPixelRatio: 1.35,
-  antialias: false,
+  maxPixelRatio: 2,
+  antialias: true,
   preserveDrawingBuffer: false,
   shadows: false,
   shadowMapSize: 1024,
@@ -634,11 +654,15 @@ const PINBALL_PHYSICS = {
   spinnerRadius: 1.25,
   spinnerImpulse: 5.2,
   spinnerSpeed: 5.2,
-  dropTargetRadius: 1.35,
-  dropTargetImpulse: 7.8,
-  dropTargetUpImpulse: 0.55,
-  dropTargetSingleUse: true,
-  dropTargetBounceMode: 'first-contact-marble-only-radial-rebound',
+  dropTargetRadius: 1.18,
+  dropTargetImpulse: 5.8,
+  dropTargetUpImpulse: 0.35,
+  dropTargetSingleUse: false,
+  dropTargetBounceMode: 'per-target-bank-clear-forward-boost',
+  dropTargetResetSeconds: 6,
+  dropTargetDropSpeed: 4.2,
+  dropTargetResetSpeed: 3.2,
+  dropTargetBankBonusImpulse: 4.5,
 };
 
 const CURVE_PRESETS = {
@@ -987,6 +1011,10 @@ class MarbleRace {
       nextActionAt: null,
       pendingTimer: null,
       nextGateAfterRaceSeconds: CUP_VIDEO_TIMING.nextGateAfterRaceSeconds,
+      ceremonyNarrationDelaySeconds: CUP_CEREMONY_POST_NARRATION_DELAY_SECONDS,
+      waitingForNarrationLine: null,
+      waitingForNarrationStartedAt: null,
+      narrationCompletedAt: null,
       stopAfterFinalSeconds: CUP_VIDEO_TIMING.finalPodiumSeconds + CUP_VIDEO_TIMING.endCardSeconds + CUP_VIDEO_TIMING.recordingStopGraceSeconds,
       nextRaceDelaySeconds: CUP_VIDEO_TIMING.nextRaceDelaySeconds,
       gateDelaySeconds: CUP_VIDEO_TIMING.introSeconds,
@@ -1310,7 +1338,7 @@ class MarbleRace {
     this.ui.importTrackCode?.addEventListener('click', () => this.importTrackDebugCode());
     this.ui.raceMode?.addEventListener('change', () => this.updateRaceMode());
     this.ui.cupSize?.addEventListener('change', () => {
-      if (this.ui.raceMode?.value === 'cup') this.startCupMode(Number(this.ui.cupSize.value) || 16);
+      if (this.ui.raceMode?.value === 'cup') this.startCupMode(Number(this.ui.cupSize.value) || 20);
     });
     this.ui.cupName?.addEventListener('input', () => {
       if (this.cupMode?.active) this.showMatchCard();
@@ -1353,7 +1381,7 @@ class MarbleRace {
 
   updateRaceMode() {
     const mode = this.ui.raceMode?.value || 'single';
-    if (mode === 'cup') this.startCupMode(Number(this.ui.cupSize?.value) || 16);
+    if (mode === 'cup') this.startCupMode(Number(this.ui.cupSize?.value) || 20);
     else {
       this.cupMode = { ...this.cupMode, active: false, status: 'idle', stageIndex: 0, currentEntrants: [], results: [], lastQualified: [], champion: null, podium: [] };
       this.hideMatchCard();
@@ -1380,8 +1408,9 @@ class MarbleRace {
     };
   }
 
-  startCupMode(size = 16, { preserveCurrentSettings = true } = {}) {
-    const cupSize = [16, 24, 32].includes(Number(size)) ? Number(size) : 16;
+  startCupMode(size = 20, { preserveCurrentSettings = true } = {}) {
+    const rawSize = Math.round(Number(size) || 20);
+    const cupSize = Math.max(2, Math.min(99, rawSize));
     if (this.ui.raceMode) this.ui.raceMode.value = 'cup';
     if (this.ui.cupSize) this.ui.cupSize.value = String(cupSize);
     if (this.ui.count) {
@@ -1736,8 +1765,8 @@ class MarbleRace {
     }
 
     const requestedCount = this.cupMode?.active
-      ? Math.max(1, this.cupMode.currentEntrants?.length || this.cupMode.size || 16)
-      : Math.max(1, Math.floor(Number(this.ui.count.value) || 12));
+      ? Math.max(1, this.cupMode.currentEntrants?.length || this.cupMode.size || 20)
+      : Math.max(1, Math.floor(Number(this.ui.count.value) || 20));
     if (this.cupMode?.active && this.ui.count) this.ui.count.value = String(requestedCount);
     this.createMarbles(requestedCount);
     this.applyInitialCameraVerticalAxisRotation();
@@ -1825,6 +1854,25 @@ class MarbleRace {
         bouncedMarbleName: obstacle.bouncedMarbleName ?? null,
         bounceMode: obstacle.bounceMode ?? null,
         dropped: obstacle.dropped ?? null,
+        droppedCount: obstacle.droppedCount ?? null,
+        bankCleared: obstacle.bankCleared ?? null,
+        lastTargetIndex: obstacle.lastTargetIndex ?? null,
+        lastTargetLabel: obstacle.lastTargetLabel ?? null,
+        lastBankClearBy: obstacle.lastBankClearBy ?? null,
+        lastBoostCommentaryLines: obstacle.lastBoostCommentaryLines ?? null,
+        lastBoostDurationSeconds: obstacle.lastBoostDurationSeconds ?? null,
+        lastBoostMultiplier: obstacle.lastBoostMultiplier ?? null,
+        resetInSeconds: obstacle.resetAt != null ? Number(Math.max(0, obstacle.resetAt - this.elapsed).toFixed(2)) : null,
+        dropTargetScale: obstacle.dropTargetScale ?? null,
+        dropTargetDimensions: obstacle.dropTargetDimensions ?? null,
+        bankSignText: obstacle.bankSignText ?? null,
+        targets: obstacle.targets?.map((target) => ({
+          index: target.index,
+          label: target.label,
+          dropped: Boolean(target.dropped),
+          hitBy: target.hitBy ?? null,
+          progress: target.progress != null ? Number(target.progress.toFixed(2)) : 0,
+        })) ?? null,
         pieceIndex: piece?.index ?? null,
         pieceType: piece?.type || null,
       };
@@ -1890,6 +1938,26 @@ class MarbleRace {
       },
       obstacleTypeCounts: this.obstacleTypeCounts,
       obstacleCategoryCounts: this.obstacleCategoryCounts,
+      dropTargetBanks: this.pinballObstacles.filter((obstacle) => obstacle.type === 'dropTarget').map((obstacle, index) => ({
+        index,
+        droppedCount: obstacle.droppedCount || 0,
+        bankCleared: Boolean(obstacle.bankCleared),
+        lastTargetIndex: obstacle.lastTargetIndex ?? null,
+        lastBankClearBy: obstacle.lastBankClearBy ?? null,
+        lastBoostCommentaryLines: obstacle.lastBoostCommentaryLines ?? null,
+        lastBoostDurationSeconds: obstacle.lastBoostDurationSeconds ?? null,
+        lastBoostMultiplier: obstacle.lastBoostMultiplier ?? null,
+        resetInSeconds: obstacle.resetAt != null ? Number(Math.max(0, obstacle.resetAt - this.elapsed).toFixed(2)) : null,
+        dropTargetScale: obstacle.dropTargetScale ?? null,
+        dropTargetDimensions: obstacle.dropTargetDimensions ?? null,
+        bankSignText: obstacle.bankSignText ?? null,
+        targets: obstacle.targets?.map((target) => ({
+          index: target.index,
+          label: target.label,
+          dropped: Boolean(target.dropped),
+          hitBy: target.hitBy ?? null,
+        })) || [],
+      })),
       enabledObstacleTypes: [...(this.enabledObstacleTypes || new Set(PINBALL_OBSTACLE_TYPES))],
       obstacles: this.getObstacleDebugEntries(),
       generatedAt: new Date().toISOString(),
@@ -2034,9 +2102,10 @@ class MarbleRace {
   }
 
   clearMarbles() {
-    this.marbleData.forEach(({ mesh, body, labelSprite }) => {
+    this.marbleData.forEach(({ mesh, body, labelSprite, dropTargetBoostAura }) => {
       this.scene.remove(mesh);
       if (labelSprite) this.scene.remove(labelSprite);
+      if (dropTargetBoostAura) this.scene.remove(dropTargetBoostAura);
       this.world.removeBody(body);
     });
     this.clearSpectacleEffects({ clearTrails: false });
@@ -2086,6 +2155,128 @@ class MarbleRace {
     ctx.fillStyle = '#fff9dd';
     ctx.fillText(label, 128, 128);
     return this.finishTexture(canvas, 1, 1);
+  }
+
+  createDropTargetFaceTexture(label, options = {}) {
+    const { canvas, ctx } = this.createTextureCanvas(512, options.base || '#12070a');
+    const bg = ctx.createLinearGradient(0, 0, 512, 512);
+    bg.addColorStop(0, options.hot || '#fff6b8');
+    bg.addColorStop(0.18, options.mid || '#ffb000');
+    bg.addColorStop(0.56, options.edge || '#ff3d00');
+    bg.addColorStop(1, '#180509');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, 512, 512);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.42)';
+    ctx.fillRect(0, 0, 512, 512);
+    ctx.fillStyle = 'rgba(255, 226, 89, 0.2)';
+    for (let y = -512; y < 512; y += 92) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(512, y + 512);
+      ctx.lineTo(512, y + 548);
+      ctx.lineTo(0, y + 36);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.fillStyle = '#050816';
+    ctx.fillRect(38, 38, 436, 436);
+    ctx.fillStyle = '#ffb000';
+    ctx.fillRect(58, 58, 396, 396);
+    ctx.fillStyle = '#13070a';
+    ctx.fillRect(78, 78, 356, 356);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 18;
+    ctx.strokeRect(96, 96, 320, 320);
+    ctx.strokeStyle = '#00f5ff';
+    ctx.lineWidth = 9;
+    ctx.strokeRect(124, 124, 264, 264);
+
+    // Keep the physical drop-target panel face decorative only.
+    // The readable W/I/N letters live on separate label sprites so they can
+    // fade out with their individual panels when hit.
+    ctx.fillStyle = '#fff8d7';
+    ctx.beginPath();
+    ctx.roundRect(148, 146, 216, 220, 36);
+    ctx.fill();
+    ctx.strokeStyle = '#050816';
+    ctx.lineWidth = 14;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(0, 245, 255, 0.7)';
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(184, 200);
+    ctx.lineTo(328, 200);
+    ctx.moveTo(184, 256);
+    ctx.lineTo(328, 256);
+    ctx.moveTo(184, 312);
+    ctx.lineTo(328, 312);
+    ctx.stroke();
+
+    ctx.font = '900 44px Inter, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle = '#050816';
+    ctx.lineWidth = 10;
+    ctx.strokeText('PRIZE', 256, 438);
+    ctx.fillStyle = '#ffe259';
+    ctx.fillText('PRIZE', 256, 438);
+    return this.finishTexture(canvas, 1, 1);
+  }
+
+  createDropTargetBankSignTexture(remainingText = 'W I N') {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 192;
+    const ctx = canvas.getContext('2d');
+    this.drawDropTargetBankSign(ctx, remainingText);
+    const texture = this.finishTexture(canvas, 1, 1);
+    texture.userData = { canvas, ctx, remainingText };
+    return texture;
+  }
+
+  drawDropTargetBankSign(ctx, remainingText = 'W I N') {
+    ctx.clearRect(0, 0, 512, 192);
+    ctx.fillStyle = 'rgba(5, 8, 22, 0.92)';
+    ctx.beginPath();
+    ctx.roundRect(18, 18, 476, 156, 28);
+    ctx.fill();
+    ctx.strokeStyle = '#ffe259';
+    ctx.lineWidth = 12;
+    ctx.stroke();
+    ctx.font = '1000 44px Inter, Arial Black, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle = '#050816';
+    ctx.lineWidth = 10;
+    ctx.strokeText('PRIZE', 256, 58);
+    ctx.fillStyle = '#ffe259';
+    ctx.fillText('PRIZE', 256, 58);
+    ctx.font = '1000 62px Impact, Arial Black, sans-serif';
+    ctx.strokeStyle = '#050816';
+    ctx.lineWidth = 14;
+    ctx.strokeText(remainingText, 256, 126);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(remainingText, 256, 126);
+  }
+
+  getDropTargetBankSignText(obstacle) {
+    const remaining = ['W', 'I', 'N'].filter((label) =>
+      !(obstacle.targets || []).some((target) => target.label === label && target.dropped)
+    );
+    return remaining.length ? remaining.join(' ') : 'CLEAR';
+  }
+
+  updateDropTargetBankSignText(obstacle) {
+    if (!obstacle?.bankSign?.material?.map?.userData) return;
+    const remainingText = this.getDropTargetBankSignText(obstacle);
+    const texture = obstacle.bankSign.material.map;
+    if (texture.userData.remainingText === remainingText) return;
+    this.drawDropTargetBankSign(texture.userData.ctx, remainingText);
+    texture.userData.remainingText = remainingText;
+    texture.needsUpdate = true;
+    obstacle.bankSignText = `PRIZE / ${remainingText}`;
   }
 
   createSpinnerGateTexture() {
@@ -4433,50 +4624,132 @@ class MarbleRace {
     this.trackGroup.add(group);
     const targets = [];
     const bodies = [];
-    [-0.62, 0, 0.62].forEach((x, index) => {
-      const target = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.05 - index * 0.08, 0.24), material);
-      target.position.set(x, 0.58, 0);
+    const dropTargetScale = 2;
+    const targetWidth = 0.64 * dropTargetScale;
+    const targetBaseHeight = 1.38 * dropTargetScale;
+    const targetHeightStep = 0.04 * dropTargetScale;
+    const targetDepth = 0.34 * dropTargetScale;
+    const targetBaseY = 0.78 * dropTargetScale;
+    const targetTrackClearance = 0.08 * dropTargetScale;
+    const targetSpacing = 0.62 * dropTargetScale;
+    const targetDropDistance = 0.42 * dropTargetScale;
+    const targetDropStep = 0.03 * dropTargetScale;
+    const rubberWidth = 1.7 * dropTargetScale;
+    const rubberHeight = 0.18 * dropTargetScale;
+    const rubberDepth = 0.22 * dropTargetScale;
+    const rubberY = 0.18 * dropTargetScale;
+    const rubberZ = -0.42 * dropTargetScale;
+    const signY = 1.92 * dropTargetScale;
+    const signZ = -0.62 * dropTargetScale;
+    const signScaleX = 2.35 * dropTargetScale;
+    const signScaleY = 0.88 * dropTargetScale;
+    // Local +X renders on the viewer's right from the default/broadcast approach,
+    // so store labels in local-space reverse order to make the visible bank read W I N.
+    const labels = ['N', 'I', 'W'];
+    const targetXs = [-targetSpacing, 0, targetSpacing];
+    targetXs.forEach((x, index) => {
+      const targetMaterial = material.clone();
+      const faceTexture = this.createDropTargetFaceTexture(labels[index]);
+      targetMaterial.map = faceTexture;
+      targetMaterial.emissiveIntensity = 0.5;
+      targetMaterial.needsUpdate = true;
+      const targetHeight = targetBaseHeight - index * targetHeightStep;
+      const target = new THREE.Mesh(new THREE.BoxGeometry(targetWidth, targetHeight, targetDepth), targetMaterial);
+      target.position.set(x, targetBaseY, 0);
       target.rotation.x = -0.08;
       target.castShadow = PERFORMANCE_TUNING.shadows;
       target.receiveShadow = PERFORMANCE_TUNING.shadows;
+      target.userData = {
+        dropTargetIndex: index,
+        dropTargetLabel: labels[index],
+        baseY: target.position.y,
+        baseRotationX: target.rotation.x,
+        baseScale: target.scale.clone(),
+      };
       group.add(target);
       const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
-      body.addShape(new CANNON.Box(new CANNON.Vec3(0.21, 0.5, 0.12)));
-      const bodyCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(x, 0.58, 0, yaw, pitch));
+      body.addShape(new CANNON.Box(new CANNON.Vec3(targetWidth / 2, targetHeight / 2 - 0.03 * dropTargetScale, targetDepth / 2)));
+      const bodyCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(x, targetBaseY, 0, yaw, pitch));
       this.setSlopeBodyTransform(body, bodyCenter, yaw, pitch - 0.08);
       this.addObstacleBody(body, target);
-      targets.push(target);
+      targets.push({
+        index,
+        label: labels[index],
+        x,
+        mesh: target,
+        body,
+        bodyCenter,
+        dropped: false,
+        progress: 0,
+        hitBy: null,
+        hitAt: null,
+        bodyActive: true,
+      });
       bodies.push(body);
     });
-    const rubber = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.18, 0.22), rubberMaterial);
-    rubber.position.set(0, 0.18, -0.42);
+    const rubber = new THREE.Mesh(new THREE.BoxGeometry(rubberWidth, rubberHeight, rubberDepth), rubberMaterial);
+    rubber.position.set(0, rubberY, rubberZ);
     rubber.castShadow = PERFORMANCE_TUNING.shadows;
     group.add(rubber);
-    const jewelMat = rubberMaterial.userData?.insertMaterial || material;
-    const jewel = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.045, 8, 32), jewelMat);
-    jewel.position.set(0, 0.3, -0.42);
-    jewel.rotation.x = Math.PI / 2;
-    group.add(jewel);
+
+    const signTexture = this.createDropTargetBankSignTexture('W I N');
+    const bankSign = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: signTexture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    }));
+    bankSign.position.set(0, signY, signZ);
+    bankSign.scale.set(signScaleX, signScaleY, 1);
+    bankSign.renderOrder = 45;
+    group.add(bankSign);
     const obstacle = {
       type: 'dropTarget',
       trackSurface: trackSurface.clone(),
-      center: trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, 0.58, 0, yaw, pitch)),
+      center: trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, targetBaseY, 0, yaw, pitch)),
       direction: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).normalize(),
-      radius: PINBALL_PHYSICS.dropTargetRadius,
+      radius: PINBALL_PHYSICS.dropTargetRadius * dropTargetScale,
       impulse: PINBALL_PHYSICS.dropTargetImpulse,
       upImpulse: PINBALL_PHYSICS.dropTargetUpImpulse,
       singleUseBounce: PINBALL_PHYSICS.dropTargetSingleUse,
-      bouncedMarbleId: null,
-      bouncedMarbleName: null,
       bounceMode: PINBALL_PHYSICS.dropTargetBounceMode,
+      resetSeconds: PINBALL_PHYSICS.dropTargetResetSeconds,
+      dropSpeed: PINBALL_PHYSICS.dropTargetDropSpeed,
+      resetSpeed: PINBALL_PHYSICS.dropTargetResetSpeed,
+      bankBonusImpulse: PINBALL_PHYSICS.dropTargetBankBonusImpulse,
       cooldown: new Map(),
       group,
       targets,
       bodies,
+      rubber,
+      bankSign,
+      dropTargetScale,
+      dropTargetDimensions: {
+        targetWidth,
+        targetBaseHeight,
+        targetDepth,
+        targetBaseY,
+        targetTrackClearance,
+        targetSpacing,
+        targetDropDistance,
+        targetDropStep,
+        rubberWidth,
+        signScaleX,
+        signScaleY,
+      },
       trackSlopePitch: pitch,
       trackYaw: yaw,
       dropped: false,
-      dropProgress: 0,
+      droppedCount: 0,
+      bankCleared: false,
+      resetAt: null,
+      lastTargetIndex: null,
+      lastTargetLabel: null,
+      lastBankClearBy: null,
+      lastBankClearAt: null,
+      visualStyle: 'three-bank-resetting-drop-target-with-clear-bonus',
+      textureStyle: 'decorative-drop-target-faces-dynamic-bank-sign-removes-hit-letters',
+      bankSignText: 'PRIZE / W I N',
     };
     this.pinballObstacles.push(obstacle);
     return obstacle;
@@ -4491,13 +4764,11 @@ class MarbleRace {
           arm.rotation.y = obstacle.spinAngle + (Math.PI * 2 * index) / 3;
         });
       }
-      if (obstacle.type === 'dropTarget' && obstacle.dropped) {
-        obstacle.dropProgress = Math.min(1, obstacle.dropProgress + delta * 3.4);
-        obstacle.targets?.forEach((target, index) => {
-          target.rotation.x = -0.08 - obstacle.dropProgress * 1.28;
-          target.position.y = 0.58 - obstacle.dropProgress * (0.42 + index * 0.03);
-          target.material.emissiveIntensity = Math.max(0.06, 0.34 * (1 - obstacle.dropProgress));
-        });
+      if (obstacle.type === 'dropTarget') {
+        this.updateDropTargetBank(obstacle, delta);
+      }
+      if (obstacle.bankSign?.material) {
+        obstacle.bankSign.material.opacity = obstacle.bankCleared ? 0.58 : 0.96;
       }
       if (obstacle.pulse) {
         obstacle.pulse = Math.max(0, obstacle.pulse - delta * 5.5);
@@ -4593,40 +4864,267 @@ class MarbleRace {
     this.pushBroadcastEvent('Spinner Snap', `${data.name} spinner boost`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} spinner boost`, `${data.name} catches spin`, `${data.name} snaps forward`] });
   }
 
-  applyDropTargetHit(obstacle, data) {
-    if (obstacle.singleUseBounce && obstacle.bouncedMarbleId !== null && obstacle.bouncedMarbleId !== data.id) return;
+  updateDropTargetBank(obstacle, delta) {
+    const targets = obstacle.targets || [];
+    targets.forEach((target, index) => {
+      const mesh = target.mesh || target;
+      if (!mesh) return;
+      const dimensions = obstacle.dropTargetDimensions || {};
+      const baseY = mesh.userData?.baseY ?? dimensions.targetBaseY ?? 0.58;
+      const baseRotationX = mesh.userData?.baseRotationX ?? -0.08;
+      const dropDistance = dimensions.targetDropDistance ?? 0.42;
+      const dropStep = dimensions.targetDropStep ?? 0.03;
+      const targetProgress = target.dropped ? 1 : 0;
+      const speed = target.dropped ? (obstacle.dropSpeed || 4.2) : (obstacle.resetSpeed || 3.2);
+      target.progress = target.progress == null
+        ? targetProgress
+        : THREE.MathUtils.damp(target.progress, targetProgress, speed, delta);
+      if (Math.abs(target.progress - targetProgress) < 0.015) target.progress = targetProgress;
+      mesh.rotation.x = baseRotationX - target.progress * 1.28;
+      mesh.position.y = baseY - target.progress * (dropDistance + index * dropStep);
+      mesh.scale.setScalar(1 - target.progress * 0.08);
+      if (mesh.material) {
+        mesh.material.emissiveIntensity = Math.max(0.055, 0.5 * (1 - target.progress) + (target.dropped ? 0.025 : 0));
+        mesh.material.opacity = 1 - target.progress * 0.16;
+        mesh.material.transparent = target.progress > 0.02;
+      }
+    });
 
-    if (!obstacle.dropped) {
-      obstacle.dropped = true;
-      obstacle.bouncedMarbleId = data.id;
-      obstacle.bouncedMarbleName = data.name;
-      obstacle.bodies?.forEach((body) => {
-        if (this.world.bodies.includes(body)) this.world.removeBody(body);
-      });
-    } else if (obstacle.singleUseBounce) {
-      return;
+    this.updateDropTargetBankSignText(obstacle);
+
+    if (obstacle.bankCleared && obstacle.resetAt != null && this.elapsed >= obstacle.resetAt) {
+      this.resetDropTargetBank(obstacle);
     }
+  }
+
+  resetDropTargetBank(obstacle) {
+    obstacle.targets?.forEach((target) => {
+      target.dropped = false;
+      target.hitBy = null;
+      target.hitAt = null;
+      if (!target.bodyActive && target.body && !this.world.bodies.includes(target.body)) {
+        this.world.addBody(target.body);
+      }
+      target.bodyActive = true;
+    });
+    obstacle.dropped = false;
+    obstacle.droppedCount = 0;
+    obstacle.bankCleared = false;
+    obstacle.resetAt = null;
+    obstacle.lastTargetIndex = null;
+    obstacle.lastTargetLabel = null;
+    obstacle.cooldown?.clear?.();
+    this.updateDropTargetBankSignText(obstacle);
+  }
+
+  findDropTargetPanelForMarble(obstacle, data) {
+    const targets = (obstacle.targets || []).filter((target) => !target.dropped);
+    if (!targets.length) return null;
+    const frame = this.getTrackFrameAt(data.distance || this.findClosestProgress(data.body.position).distance || 0);
+    const dx = data.body.position.x - obstacle.center.x;
+    const dz = data.body.position.z - obstacle.center.z;
+    const laneOffset = dx * frame.right.x + dz * frame.right.z;
+    let best = null;
+    let bestDistance = Infinity;
+    targets.forEach((target) => {
+      const distance = Math.abs(laneOffset - target.x);
+      if (distance < bestDistance) {
+        best = target;
+        bestDistance = distance;
+      }
+    });
+    const targetHitWidth = Math.max(0.58, (obstacle.dropTargetDimensions?.targetSpacing || 0.62) * 0.94);
+    return bestDistance <= targetHitWidth ? best : null;
+  }
+
+  clearDropTargetPanelBody(obstacle, target) {
+    if (target.body && target.bodyActive && this.world.bodies.includes(target.body)) {
+      this.world.removeBody(target.body);
+    }
+    target.bodyActive = false;
+  }
+
+  getDropTargetBoostCommentaryLines(data, obstacle = null) {
+    const name = data?.name || 'A racer';
+    const duration = Math.round(DROP_TARGET_FINAL_BOOST.durationSeconds || 5);
+    const multiplier = DROP_TARGET_FINAL_BOOST.speedMultiplier || 2;
+    const targetText = obstacle?.bankSignText || 'PRIZE / CLEAR';
+    const templates = Array.isArray(DROP_TARGET_FINAL_BOOST.commentaryLines)
+      ? DROP_TARGET_FINAL_BOOST.commentaryLines
+      : [];
+    const lines = templates.map((line) => String(line)
+      .replaceAll('{name}', name)
+      .replaceAll('{duration}', String(duration))
+      .replaceAll('{multiplier}', String(multiplier))
+      .replaceAll('{targetText}', targetText)
+      .replace(/\s+/g, ' ')
+      .trim()
+    ).filter(Boolean);
+    return lines.length ? lines : [
+      `${name} unlocks the golden boost`,
+      `${name} claims the drop-target buff`,
+      `${name} gets ${duration} seconds of speed`,
+    ];
+  }
+
+  applyDropTargetBankBonus(obstacle, data, frame) {
+    const bonusImpulse = obstacle.bankBonusImpulse || PINBALL_PHYSICS.dropTargetBankBonusImpulse;
+    const rawImpulse = frame.tangent.clone().multiplyScalar(bonusImpulse);
+    data.body.wakeUp();
+    this.applyFinishDirectedImpulse(data, rawImpulse, frame, 0.22);
+    const boost = this.activateDropTargetFinalBoost(data, obstacle);
+    data.dropTargetBankClearCount = (data.dropTargetBankClearCount || 0) + 1;
+    obstacle.lastBankClearBy = data.name;
+    obstacle.lastBankClearAt = this.elapsed;
+    obstacle.lastBoostCommentaryLines = this.getDropTargetBoostCommentaryLines(data, obstacle);
+    obstacle.lastBoostDurationSeconds = boost?.durationSeconds ?? DROP_TARGET_FINAL_BOOST.durationSeconds;
+    obstacle.lastBoostMultiplier = boost?.multiplier ?? DROP_TARGET_FINAL_BOOST.speedMultiplier;
+    obstacle.resetAt = this.elapsed + (obstacle.resetSeconds || PINBALL_PHYSICS.dropTargetResetSeconds);
+    this.spawnImpactEffect(obstacle.center, 0xffd166, 'ring');
+    this.pushBroadcastEvent('Drop Target Buff', obstacle.lastBoostCommentaryLines[0], { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: obstacle.lastBoostCommentaryLines });
+  }
+
+  createDropTargetBoostAura(data) {
+    const radius = Math.max(0.3, (data?.radius || 0.36) * 1.95);
+    const geometry = new THREE.SphereGeometry(radius, 24, 16);
+    const material = new THREE.MeshBasicMaterial({
+      color: DROP_TARGET_FINAL_BOOST.auraColor,
+      transparent: true,
+      opacity: DROP_TARGET_FINAL_BOOST.auraOpacity,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const aura = new THREE.Mesh(geometry, material);
+    aura.frustumCulled = false;
+    aura.visible = false;
+    aura.renderOrder = 36;
+    this.scene.add(aura);
+    return aura;
+  }
+
+  activateDropTargetFinalBoost(data, obstacle = null) {
+    const config = DROP_TARGET_FINAL_BOOST;
+    if (!config.enabled || !data?.body) return null;
+    const duration = config.durationSeconds || 5;
+    const multiplier = config.speedMultiplier || 2;
+    data.dropTargetBoostActive = true;
+    data.dropTargetBoostUntil = this.elapsed + duration;
+    data.dropTargetBoostMultiplier = multiplier;
+    data.dropTargetBoostAllowExceedMaxSpeed = Boolean(config.allowExceedMaxSpeed);
+    data.dropTargetBoostLastStartedAt = this.elapsed;
+    data.dropTargetBoostLastExpiredAt = null;
+    data.dropTargetBoostSource = obstacle?.type || 'dropTarget';
+    if (!data.dropTargetBoostAura) data.dropTargetBoostAura = this.createDropTargetBoostAura(data);
+    data.dropTargetBoostAura.visible = true;
+    data.dropTargetBoostAuraVisible = true;
+    data.mesh?.material?.emissive?.set?.(config.auraColor);
+    if (data.mesh?.material && 'emissiveIntensity' in data.mesh.material) {
+      data.originalEmissiveIntensity ??= data.mesh.material.emissiveIntensity;
+      data.mesh.material.emissiveIntensity = Math.max(data.originalEmissiveIntensity || 0, config.auraEmissiveIntensity || 1.6);
+    }
+    this.spawnImpactEffect(data.body.position, config.auraColor, 'burst');
+    return {
+      active: true,
+      until: data.dropTargetBoostUntil,
+      durationSeconds: duration,
+      multiplier,
+      allowExceedMaxSpeed: data.dropTargetBoostAllowExceedMaxSpeed,
+    };
+  }
+
+  expireDropTargetFinalBoost(data) {
+    if (!data?.dropTargetBoostActive) return false;
+    data.dropTargetBoostActive = false;
+    data.dropTargetBoostUntil = null;
+    data.dropTargetBoostMultiplier = 1;
+    data.dropTargetBoostAllowExceedMaxSpeed = false;
+    data.dropTargetBoostLastExpiredAt = this.elapsed;
+    data.dropTargetBoostAuraVisible = false;
+    if (data.dropTargetBoostAura) data.dropTargetBoostAura.visible = false;
+    if (data.mesh?.material && Number.isFinite(data.originalEmissiveIntensity)) {
+      data.mesh.material.emissiveIntensity = data.originalEmissiveIntensity;
+    }
+    return true;
+  }
+
+  updateDropTargetBoostAuras(delta = 0) {
+    this.marbleData?.forEach((data) => {
+      if (data.dropTargetBoostActive && this.elapsed >= (data.dropTargetBoostUntil ?? -Infinity)) {
+        this.expireDropTargetFinalBoost(data);
+      }
+      if (!data.dropTargetBoostAura) return;
+      const active = Boolean(data.dropTargetBoostActive);
+      data.dropTargetBoostAura.visible = active;
+      data.dropTargetBoostAuraVisible = active;
+      if (!active) return;
+      data.dropTargetBoostAura.position.copy(data.mesh?.position || data.body.position);
+      const remaining = Math.max(0, (data.dropTargetBoostUntil ?? this.elapsed) - this.elapsed);
+      const pulse = 1 + Math.sin((this.elapsed + data.id * 0.17) * 14) * 0.08;
+      data.dropTargetBoostAura.scale.setScalar(pulse);
+      if (data.dropTargetBoostAura.material) {
+        data.dropTargetBoostAura.material.opacity = Math.max(0.08, (DROP_TARGET_FINAL_BOOST.auraOpacity || 0.36) * Math.min(1, remaining / 0.75));
+      }
+    });
+  }
+
+  getDropTargetSpeedLimit(data, normalMaxSpeed) {
+    const config = DROP_TARGET_FINAL_BOOST;
+    if (!data?.dropTargetBoostActive) return normalMaxSpeed;
+    if (this.elapsed >= (data.dropTargetBoostUntil ?? -Infinity)) {
+      this.expireDropTargetFinalBoost(data);
+      return normalMaxSpeed;
+    }
+    const multiplier = data.dropTargetBoostMultiplier || config.speedMultiplier || 2;
+    const boostedMaxSpeed = normalMaxSpeed * multiplier;
+    data.dropTargetBoostEffectiveMaxSpeed = boostedMaxSpeed;
+    data.dropTargetBoostSecondsRemaining = Math.max(0, (data.dropTargetBoostUntil ?? this.elapsed) - this.elapsed);
+    return data.dropTargetBoostAllowExceedMaxSpeed ? boostedMaxSpeed : normalMaxSpeed;
+  }
+
+  applyDropTargetHit(obstacle, data) {
+    if (obstacle.bankCleared) return;
+    const target = this.findDropTargetPanelForMarble(obstacle, data);
+    if (!target) return;
 
     const closest = this.findClosestProgress(data.body.position);
     this.noteObstacleHit(data, obstacle, closest.distance);
+    target.dropped = true;
+    target.hitBy = data.name;
+    target.hitAt = this.elapsed;
+    obstacle.lastTargetIndex = target.index;
+    obstacle.lastTargetLabel = target.label;
+    obstacle.droppedCount = (obstacle.targets || []).filter((entry) => entry.dropped).length;
+    obstacle.dropped = obstacle.droppedCount > 0;
+    obstacle.cooldown.set(data.id, this.elapsed);
+    this.clearDropTargetPanelBody(obstacle, target);
+
+    const frame = this.getTrackFrameAt(Math.max(closest.distance, data.distance || 0) + this.finishDirectionAssist.lookAhead);
     const dx = data.body.position.x - obstacle.center.x;
     const dz = data.body.position.z - obstacle.center.z;
     const dist = Math.max(0.001, Math.hypot(dx, dz));
     const radial = new THREE.Vector3(dx / dist, 0, dz / dist);
-    const outgoingSpeed = Math.max(1.6, data.body.velocity.x * radial.x + data.body.velocity.z * radial.z);
-    const reboundImpulse = obstacle.impulse + outgoingSpeed * 0.38;
-    const rawImpulse = radial.multiplyScalar(reboundImpulse);
+    const laneNudge = frame.right.clone().multiplyScalar((target.x >= 0 ? 1 : -1) * 0.65);
+    const outgoingSpeed = Math.max(0.7, data.body.velocity.x * radial.x + data.body.velocity.z * radial.z);
+    const reboundImpulse = obstacle.impulse + outgoingSpeed * 0.18;
+    const rawImpulse = radial.multiplyScalar(reboundImpulse).add(laneNudge);
     data.body.wakeUp();
-    data.body.applyImpulse(new CANNON.Vec3(rawImpulse.x, obstacle.upImpulse ?? 0.55, rawImpulse.z), data.body.position);
-    obstacle.cooldown.set(data.id, this.elapsed);
+    this.applyFinishDirectedImpulse(data, rawImpulse, frame, obstacle.upImpulse ?? PINBALL_PHYSICS.dropTargetUpImpulse);
+
     obstacle.lastBouncedAt = this.elapsed;
     obstacle.lastBouncedMarbleId = data.id;
     obstacle.lastBouncedMarbleName = data.name;
     data.lastDropTargetBounceMode = obstacle.bounceMode;
+    data.lastDropTargetIndex = target.index;
     data.dropTargetBounceCount = (data.dropTargetBounceCount || 0) + 1;
     this.pinballInteractions.dropTarget += 1;
-    this.spawnImpactEffect(obstacle.center, 0xff8844, 'burst');
-    this.pushBroadcastEvent('Target Rebound', `${data.name} target hit`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} target hit`, `${data.name} bounces back`, `${data.name} clips targets`] });
+    this.spawnImpactEffect(target.bodyCenter || obstacle.center, 0xff8844, 'burst');
+    this.pushBroadcastEvent('Target Hit', `${data.name} hits target ${target.label}`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} hits target ${target.label}`, `${obstacle.droppedCount}/3 targets down`, `${data.name} changes line`] });
+
+    if (obstacle.droppedCount >= (obstacle.targets?.length || 3)) {
+      obstacle.bankCleared = true;
+      obstacle.dropped = true;
+      this.applyDropTargetBankBonus(obstacle, data, frame);
+    }
   }
 
   createDecorations() {
@@ -4807,6 +5305,12 @@ class MarbleRace {
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = true;
+    texture.anisotropy = this.renderer?.capabilities?.getMaxAnisotropy
+      ? Math.min(16, this.renderer.capabilities.getMaxAnisotropy())
+      : 8;
     texture.needsUpdate = true;
     const material = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false });
     const sprite = new THREE.Sprite(material);
@@ -4843,7 +5347,8 @@ class MarbleRace {
       data.labelSprite.scale.set(scale * 3.8, scale * 0.95, 1);
       const fallLabelAllowed = !data.pendingFallRespawn
         || this.elapsed - (data.pendingFallRespawn.detectedAt ?? this.elapsed) < MARBLE_LABEL_POLICY.hidePendingFallAfterSeconds;
-      const visible = topLabelIds.has(data.id) && fallLabelAllowed;
+      const renderAllLabels = Boolean(this.performanceProfile?.renderPerformanceMode || this.singleRecording?.playwrightRender || this.continuousRecording?.playwrightRender || this.autoCupRecording?.playwrightRender);
+      const visible = (renderAllLabels || topLabelIds.has(data.id)) && fallLabelAllowed && labelsAllowed;
       data.labelSprite.visible = visible;
       data.labelVisible = visible;
       if (visible) this.visibleLabelCount += 1;
@@ -6430,6 +6935,15 @@ class MarbleRace {
         timePenalty: 0, fallPenaltyCount: 0,
         visualQuaternion: mesh.quaternion.clone(), lastVisualPosition: mesh.position.clone(),
         trail: this.createMarbleTrail(color, radius),
+        dropTargetBoostAura: null,
+        dropTargetBoostActive: false,
+        dropTargetBoostUntil: null,
+        dropTargetBoostMultiplier: 1,
+        dropTargetBoostAllowExceedMaxSpeed: false,
+        dropTargetBoostAuraVisible: false,
+        dropTargetBoostLastStartedAt: null,
+        dropTargetBoostLastExpiredAt: null,
+        dropTargetBoostSource: null,
       };
       body.addEventListener('collide', (event) => {
         const otherBody = event?.body;
@@ -7693,6 +8207,40 @@ class MarbleRace {
     this.updateUI();
   }
 
+  scheduleAutoCupAfterCommentaryEnds(delaySeconds, phase, action) {
+    if (!this.autoCupRecording?.active) return;
+    const line = this.commentaryVoiceCurrentLine || this.commentaryVoiceQueue?.[0]?.line || this.activeCommentary?.line || null;
+    this.clearAutoCupRecordingTimer();
+    this.autoCupRecording.phase = phase;
+    this.autoCupRecording.ceremonyNarrationDelaySeconds = delaySeconds;
+    this.autoCupRecording.waitingForNarrationLine = line;
+    this.autoCupRecording.waitingForNarrationStartedAt = performance.now();
+    this.autoCupRecording.narrationCompletedAt = null;
+    const waitForVoice = () => {
+      if (!this.autoCupRecording?.active) return;
+      const queueContainsLine = line ? this.commentaryVoiceQueue?.some((item) => item.line === line) : false;
+      const lineStillPlaying = line ? this.commentaryVoiceCurrentLine === line || queueContainsLine : false;
+      const anyVoiceBusy = this.commentaryVoicePreparing || this.commentaryVoiceSpeaking || queueContainsLine;
+      if (this.commentaryVoiceEnabled && (lineStillPlaying || (!line && anyVoiceBusy))) {
+        this.autoCupRecording.nextActionAt = null;
+        this.autoCupRecording.pendingTimer = setTimeout(waitForVoice, 120);
+        return;
+      }
+      this.autoCupRecording.narrationCompletedAt = performance.now();
+      this.autoCupRecording.nextActionAt = performance.now() + delaySeconds * 1000;
+      this.autoCupRecording.pendingTimer = setTimeout(() => {
+        if (!this.autoCupRecording?.active) return;
+        this.autoCupRecording.pendingTimer = null;
+        this.autoCupRecording.nextActionAt = null;
+        action();
+        this.updateUI();
+      }, delaySeconds * 1000);
+      this.updateUI();
+    };
+    waitForVoice();
+    this.updateUI();
+  }
+
   async toggleAutoCupRecording() {
     if (this.autoCupRecording?.active) {
       this.stopAutoCupRecording({ stopRecorder: true, reason: 'manual-stop' });
@@ -7715,6 +8263,10 @@ class MarbleRace {
       racesCompleted: 0,
       stopAfterFinalSeconds: CUP_VIDEO_TIMING.finalPodiumSeconds + CUP_VIDEO_TIMING.endCardSeconds + CUP_VIDEO_TIMING.recordingStopGraceSeconds,
       nextRaceDelaySeconds: CUP_VIDEO_TIMING.nextRaceDelaySeconds,
+      ceremonyNarrationDelaySeconds: CUP_CEREMONY_POST_NARRATION_DELAY_SECONDS,
+      waitingForNarrationLine: null,
+      waitingForNarrationStartedAt: null,
+      narrationCompletedAt: null,
       postRaceHoldSeconds: CUP_VIDEO_TIMING.postRaceHoldSeconds,
       postReplayPodiumHoldSeconds: CUP_VIDEO_TIMING.postReplayPodiumHoldSeconds,
       nextGateAfterRaceSeconds: CUP_VIDEO_TIMING.nextGateAfterRaceSeconds,
@@ -7776,13 +8328,17 @@ class MarbleRace {
       this.scheduleAutoCupRecordingAction(replayHoldSeconds, 'showing-replay-highlights', () => {
         if (!this.autoCupRecording?.active || this.cupMode?.status !== 'awaiting-next') return;
         this.hideReplayHighlightOverlay({ restorePodium: true });
-        this.defaultCameraPhaseUntil = Math.max(this.defaultCameraPhaseUntil || 0, this.elapsed + postReplayPodiumHoldSeconds + nextRaceDelaySeconds);
+        const ceremonyNarrationDelaySeconds = Number(this.autoCupRecording.ceremonyNarrationDelaySeconds ?? CUP_CEREMONY_POST_NARRATION_DELAY_SECONDS) || 0;
+        this.defaultCameraPhaseUntil = Math.max(this.defaultCameraPhaseUntil || 0, this.elapsed + postReplayPodiumHoldSeconds + ceremonyNarrationDelaySeconds + nextRaceDelaySeconds);
         this.scheduleAutoCupRecordingAction(postReplayPodiumHoldSeconds, 'holding-restored-podium', () => {
           if (!this.autoCupRecording?.active || this.cupMode?.status !== 'awaiting-next') return;
-          this.advanceCupMatch();
-          this.scheduleAutoCupRecordingAction(nextRaceDelaySeconds, 'waiting-next-stage-countdown', () => {
-            if (!this.autoCupRecording?.active || this.state !== 'ready') return;
-            this.startAutoCupRace();
+          this.scheduleAutoCupAfterCommentaryEnds(ceremonyNarrationDelaySeconds, 'waiting-ceremony-narration-plus-2s', () => {
+            if (!this.autoCupRecording?.active || this.cupMode?.status !== 'awaiting-next') return;
+            this.advanceCupMatch();
+            this.scheduleAutoCupRecordingAction(nextRaceDelaySeconds, 'waiting-next-stage-countdown', () => {
+              if (!this.autoCupRecording?.active || this.state !== 'ready') return;
+              this.startAutoCupRace();
+            });
           });
         });
       });
@@ -7813,6 +8369,7 @@ class MarbleRace {
     this.updateStartGateAnimation(rawDelta);
     this.updateFinishSpinner(rawDelta);
     this.updatePinballObstacles(delta);
+    this.updateDropTargetBoostAuras(delta);
     if (!this.performanceProfile?.renderSkipSpectacleEffects) this.updateSpectacleEffects(rawDelta);
     this.updatePodiumCeremony(rawDelta);
     this.updateMarbleTrails(delta);
@@ -8528,8 +9085,12 @@ class MarbleRace {
       const distanceToFinish = Math.max(0, this.trackLength - driveDistance);
       const slopeTopSpeed = speedPresetMax * (this.slopeDrive?.maxSpeedRatio ?? 1);
       const baseMaxSpeed = progress > 0.88 ? slopeTopSpeed * (this.finalApproachAssist?.maxSpeedRatio || 1.02) : slopeTopSpeed;
-      const maxSpeed = this.getCatchupSpeedLimit(data, baseMaxSpeed, leaderDistance, guide);
-      data.catchupMaxSpeed = maxSpeed;
+      const catchupMaxSpeed = this.getCatchupSpeedLimit(data, baseMaxSpeed, leaderDistance, guide);
+      const maxSpeed = this.getDropTargetSpeedLimit(data, catchupMaxSpeed);
+      data.catchupMaxSpeed = catchupMaxSpeed;
+      data.dropTargetBoostNormalMaxSpeed = catchupMaxSpeed;
+      data.dropTargetBoostEffectiveMaxSpeed = maxSpeed;
+      data.dropTargetBoostCapOverrideActive = Boolean(data.dropTargetBoostActive && data.dropTargetBoostAllowExceedMaxSpeed && maxSpeed > catchupMaxSpeed);
       if (guide.airborneAssistPaused) {
         data.guideAssistPausedReason = 'airborne-waiting-for-landing-recalculation';
         data.forwardAccelerationActive = false;
@@ -9199,6 +9760,8 @@ class MarbleRace {
       topSpeed: this.speedPreset.maxSpeed,
       finalStretchTopSpeedRatio: this.finalApproachAssist?.maxSpeedRatio || 1,
       effectiveCurrentTopSpeed: this.speedPreset.maxSpeed * (this.finalApproachAssist?.maxSpeedRatio || 1),
+      dropTargetFinalBoost: DROP_TARGET_FINAL_BOOST,
+      dropTargetBoostActiveCount: this.marbleData.filter((data) => data.dropTargetBoostActive).length,
       midTrackSpeedAssist: this.midTrackSpeedAssist,
       midTrackSpeedAssistCount: this.midTrackSpeedAssistCount,
       finalApproachAssist: this.finalApproachAssist,
@@ -9246,6 +9809,15 @@ class MarbleRace {
         minForwardSpeedVelocityDelta: data.minForwardSpeedVelocityDelta || null,
         assistTargetRatio: data.midTrackSpeedAssistTargetRatio || null,
         assistSustainScale: data.midTrackSpeedAssistSustainScale || null,
+        dropTargetBoostActive: Boolean(data.dropTargetBoostActive),
+        dropTargetBoostSecondsRemaining: data.dropTargetBoostActive ? Number(Math.max(0, (data.dropTargetBoostUntil ?? this.elapsed) - this.elapsed).toFixed(2)) : 0,
+        dropTargetBoostMultiplier: data.dropTargetBoostMultiplier || 1,
+        dropTargetBoostNormalMaxSpeed: data.dropTargetBoostNormalMaxSpeed ?? null,
+        dropTargetBoostEffectiveMaxSpeed: data.dropTargetBoostEffectiveMaxSpeed ?? null,
+        dropTargetBoostCapOverrideActive: Boolean(data.dropTargetBoostCapOverrideActive),
+        dropTargetBoostAuraVisible: Boolean(data.dropTargetBoostAuraVisible),
+        dropTargetBoostLastStartedAt: data.dropTargetBoostLastStartedAt ?? null,
+        dropTargetBoostLastExpiredAt: data.dropTargetBoostLastExpiredAt ?? null,
         midTrackSpeedAssistForceCount: data.midTrackSpeedAssistForceCount || 0,
         midTrackSpeedAssistForceOnly: data.midTrackSpeedAssistForceOnly ?? (this.midTrackSpeedAssist?.impulseScale <= 0),
         midTrackSpeedAssistProgress: data.midTrackSpeedAssistProgress ?? null,
