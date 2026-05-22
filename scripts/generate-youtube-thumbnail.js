@@ -167,6 +167,43 @@ export function compactTitle(title, maxWords = 6) {
   return words.slice(0, maxWords).join(' ').toUpperCase();
 }
 
+function hashString(value) {
+  let hash = 2166136261;
+  for (const char of String(value || '')) {
+    hash ^= char.codePointAt(0) || 0;
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+export function splitTitleLines(title) {
+  const words = sanitizeTitle(title).toUpperCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return ['EPIC', 'MARBLE RACE'];
+  if (words.length === 1) return [words[0], ''];
+  const midpoint = Math.ceil(words.length / 2);
+  return [words.slice(0, midpoint).join(' '), words.slice(midpoint).join(' ')];
+}
+
+export function pickLineColors(title) {
+  const palettes = [
+    ['#fff38a', '#9ff7ff'],
+    ['#ffd6f4', '#b8ffb0'],
+    ['#ffe0a3', '#c7d8ff'],
+    ['#fff7c2', '#ffb9d8'],
+    ['#cffff1', '#ffe59d'],
+  ];
+  return palettes[hashString(title) % palettes.length];
+}
+
+export function computeThumbnailTextStyle({ title, width, height }) {
+  const lines = splitTitleLines(title);
+  const longest = Math.max(...lines.map((line) => line.length), 1);
+  const byWidth = Math.floor((width * 0.62) / Math.max(longest, 4) * 1.72);
+  const byHeight = Math.floor(height * 0.235);
+  const fontSize = Math.max(60, Math.min(156, byWidth, byHeight));
+  return { lines, colors: pickLineColors(title), fontSize };
+}
+
 export function makeFilter({ width, height, safeCrop = 'hud-safe' }) {
   const mode = String(safeCrop || '').toLowerCase();
   const cropProfiles = {
@@ -201,22 +238,33 @@ function escapeHtml(value) {
 
 export function makeThumbnailHtml({ framePath, title, width, height, fontFamily }) {
   const frameUrl = pathToFileURL(framePath).href;
-  const fontSize = Math.round(Math.max(58, Math.min(132, width / 9.2)));
+  const { lines, colors, fontSize } = computeThumbnailTextStyle({ title, width, height });
+  const strokeWidth = Math.round(fontSize * 0.055);
+  const softShadow = Math.round(fontSize * 0.035);
+  const rowGap = Math.round(fontSize * -0.08);
+  const topOffset = Math.round(height * 0.05);
+  const lineOne = escapeHtml(lines[0] || '');
+  const lineTwo = escapeHtml(lines[1] || '');
   return `<!doctype html>
 <html><head><meta charset="utf-8"><style>
 html, body { margin: 0; width: ${width}px; height: ${height}px; overflow: hidden; background: #000; }
 .stage { position: relative; width: ${width}px; height: ${height}px; font-family: ${fontFamily}; }
-.bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: saturate(1.12) contrast(1.04); }
-.band { position: absolute; left: 0; right: 0; top: 35%; height: 30%; background: rgba(0,0,0,.18); }
+.bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: saturate(1.10) contrast(1.04); }
+.band { position: absolute; left: 0; right: 0; top: 33%; height: 34%; background: linear-gradient(90deg, rgba(0,0,0,.10), rgba(0,0,0,.23), rgba(0,0,0,.06)); }
 .title {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
-  padding: 34px 70px; color: #ffd21f; font-size: ${fontSize}px; line-height: .95; font-weight: 1000;
-  letter-spacing: -0.045em; -webkit-text-stroke: ${Math.round(fontSize * 0.12)}px #3b1600;
-  text-shadow: 0 ${Math.round(fontSize * 0.07)}px 0 #ff7a00, ${Math.round(fontSize * 0.08)}px ${Math.round(fontSize * 0.10)}px 0 rgba(0,0,0,.78), 0 0 20px rgba(255,235,60,.55);
-  transform: rotate(-1.5deg); overflow-wrap: anywhere;
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: ${rowGap}px; padding: 26px 78px; box-sizing: border-box; transform: translateY(${topOffset}px) rotate(-7deg);
+  font-size: ${fontSize}px; line-height: .84; font-weight: 1000; letter-spacing: -0.055em; text-transform: uppercase;
 }
-.title::before { content: attr(data-text); position: absolute; color: rgba(0,0,0,.78); -webkit-text-stroke: ${Math.round(fontSize * 0.18)}px rgba(0,0,0,.70); transform: translate(${Math.round(fontSize * 0.08)}px, ${Math.round(fontSize * 0.08)}px); z-index: -1; max-width: calc(100% - 140px); }
-</style></head><body><div class="stage"><img class="bg" src="${frameUrl}"><div class="band"></div><div class="title" data-text="${escapeHtml(title)}">${escapeHtml(title)}</div></div></body></html>`;
+.title-line {
+  display: block; white-space: nowrap; max-width: 58%; padding: 0 .06em;
+  -webkit-text-stroke: ${strokeWidth}px #5b2a00;
+  text-shadow: 0 ${softShadow}px 0 rgba(255,132,0,.70), 0 0 ${Math.round(fontSize * 0.11)}px rgba(255,255,255,.38);
+  filter: drop-shadow(0 ${Math.round(fontSize * 0.035)}px ${Math.round(fontSize * 0.025)}px rgba(0,0,0,.34));
+}
+.title-line-1 { align-self: flex-start; margin-left: 9%; color: ${colors[0]}; }
+.title-line-2 { align-self: flex-end; margin-right: 9%; color: ${colors[1]}; }
+</style></head><body><div class="stage"><img class="bg" src="${frameUrl}"><div class="band"></div><div class="title"><span class="title-line title-line-1">${lineOne}</span>${lineTwo ? `<span class="title-line title-line-2">${lineTwo}</span>` : ''}</div></div></body></html>`;
 }
 
 export function buildThumbnailPlan({ config, metadata = {}, durationSeconds }) {
