@@ -179,18 +179,42 @@ function hashString(value) {
 export function splitTitleLines(title) {
   const words = sanitizeTitle(title).toUpperCase().split(/\s+/).filter(Boolean);
   if (!words.length) return ['EPIC', 'MARBLE RACE'];
-  if (words.length === 1) return [words[0], ''];
-  const midpoint = Math.ceil(words.length / 2);
-  return [words.slice(0, midpoint).join(' '), words.slice(midpoint).join(' ')];
+  if (words.length === 1) return [words[0]];
+  const totalChars = words.join('').length;
+  const targetLines = words.length >= 7 || totalChars >= 32 ? 3 : 2;
+  const totalLength = words.reduce((sum, word) => sum + word.length, 0) + Math.max(0, words.length - 1);
+  const targetLength = Math.ceil(totalLength / targetLines);
+  const lines = [];
+  let current = [];
+  let currentLength = 0;
+  words.forEach((word, index) => {
+    const remainingWords = words.length - index;
+    const remainingLines = targetLines - lines.length;
+    const wordLength = word.length + (current.length ? 1 : 0);
+    const shouldBreak = current.length
+      && lines.length < targetLines - 1
+      && currentLength + wordLength > targetLength
+      && remainingWords >= remainingLines;
+    if (shouldBreak) {
+      lines.push(current.join(' '));
+      current = [word];
+      currentLength = word.length;
+    } else {
+      current.push(word);
+      currentLength += wordLength;
+    }
+  });
+  if (current.length) lines.push(current.join(' '));
+  return lines.filter(Boolean);
 }
 
 export function pickLineColors(title) {
   const palettes = [
-    ['#fff38a', '#9ff7ff'],
-    ['#ffd6f4', '#b8ffb0'],
-    ['#ffe0a3', '#c7d8ff'],
-    ['#fff7c2', '#ffb9d8'],
-    ['#cffff1', '#ffe59d'],
+    ['#fff38a', '#9ff7ff', '#ffd6f4'],
+    ['#ffd6f4', '#b8ffb0', '#ffe59d'],
+    ['#ffe0a3', '#c7d8ff', '#cffff1'],
+    ['#fff7c2', '#ffb9d8', '#b8ffb0'],
+    ['#cffff1', '#ffe59d', '#ffd6f4'],
   ];
   return palettes[hashString(title) % palettes.length];
 }
@@ -198,9 +222,13 @@ export function pickLineColors(title) {
 export function computeThumbnailTextStyle({ title, width, height }) {
   const lines = splitTitleLines(title);
   const longest = Math.max(...lines.map((line) => line.length), 1);
-  const byWidth = Math.floor((width * 0.62) / Math.max(longest, 4) * 1.72);
-  const byHeight = Math.floor(height * 0.235);
-  const fontSize = Math.max(60, Math.min(156, byWidth, byHeight));
+  const lineCount = lines.length;
+  const widthRatio = lineCount >= 3 ? 0.56 : 0.62;
+  const heightRatio = lineCount >= 3 ? 0.195 : 0.235;
+  const maxFontSize = lineCount >= 3 ? 142 : 156;
+  const byWidth = Math.floor((width * widthRatio) / Math.max(longest, 4) * 1.72);
+  const byHeight = Math.floor(height * heightRatio);
+  const fontSize = Math.max(66, Math.min(maxFontSize, byWidth, byHeight));
   return { lines, colors: pickLineColors(title), fontSize };
 }
 
@@ -241,10 +269,9 @@ export function makeThumbnailHtml({ framePath, title, width, height, fontFamily 
   const { lines, colors, fontSize } = computeThumbnailTextStyle({ title, width, height });
   const strokeWidth = Math.round(fontSize * 0.055);
   const softShadow = Math.round(fontSize * 0.035);
-  const rowGap = Math.round(fontSize * -0.08);
-  const topOffset = Math.round(height * 0.05);
-  const lineOne = escapeHtml(lines[0] || '');
-  const lineTwo = escapeHtml(lines[1] || '');
+  const rowGap = Math.round(fontSize * (lines.length >= 3 ? -0.15 : -0.08));
+  const topOffset = Math.round(height * (lines.length >= 3 ? 0.015 : 0.05));
+  const renderedLines = lines.map((line, index) => `<span class=\"title-line title-line-${index + 1}\">${escapeHtml(line)}<\/span>`).join('');
   return `<!doctype html>
 <html><head><meta charset="utf-8"><style>
 html, body { margin: 0; width: ${width}px; height: ${height}px; overflow: hidden; background: #000; }
@@ -262,9 +289,11 @@ html, body { margin: 0; width: ${width}px; height: ${height}px; overflow: hidden
   text-shadow: 0 ${softShadow}px 0 rgba(255,132,0,.70), 0 0 ${Math.round(fontSize * 0.11)}px rgba(255,255,255,.38);
   filter: drop-shadow(0 ${Math.round(fontSize * 0.035)}px ${Math.round(fontSize * 0.025)}px rgba(0,0,0,.34));
 }
-.title-line-1 { align-self: flex-start; margin-left: 9%; color: ${colors[0]}; }
-.title-line-2 { align-self: flex-end; margin-right: 9%; color: ${colors[1]}; }
-</style></head><body><div class="stage"><img class="bg" src="${frameUrl}"><div class="band"></div><div class="title"><span class="title-line title-line-1">${lineOne}</span>${lineTwo ? `<span class="title-line title-line-2">${lineTwo}</span>` : ''}</div></div></body></html>`;
+.title-line-1 { align-self: flex-start; margin-left: ${lines.length >= 3 ? 7 : 9}%; color: ${colors[0]}; }
+.title-line-2 { align-self: center; color: ${colors[1] || colors[0]}; }
+.title-line-3 { align-self: flex-end; margin-right: 7%; color: ${colors[2] || colors[0]}; }
+.title:not(:has(.title-line-3)) .title-line-2 { align-self: flex-end; margin-right: 9%; }
+</style></head><body><div class="stage"><img class="bg" src="${frameUrl}"><div class="band"></div><div class="title">${renderedLines}</div></div></body></html>`;
 }
 
 export function buildThumbnailPlan({ config, metadata = {}, durationSeconds }) {
