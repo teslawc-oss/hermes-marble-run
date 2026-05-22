@@ -1338,7 +1338,7 @@ class MarbleRace {
     this.ui.importTrackCode?.addEventListener('click', () => this.importTrackDebugCode());
     this.ui.raceMode?.addEventListener('change', () => this.updateRaceMode());
     this.ui.cupSize?.addEventListener('change', () => {
-      if (this.ui.raceMode?.value === 'cup') this.startCupMode(Number(this.ui.cupSize.value) || 20);
+      if (this.ui.raceMode?.value === 'cup') this.startCupMode(Number(this.ui.cupSize.value) || 12);
     });
     this.ui.cupName?.addEventListener('input', () => {
       if (this.cupMode?.active) this.showMatchCard();
@@ -1381,7 +1381,7 @@ class MarbleRace {
 
   updateRaceMode() {
     const mode = this.ui.raceMode?.value || 'single';
-    if (mode === 'cup') this.startCupMode(Number(this.ui.cupSize?.value) || 20);
+    if (mode === 'cup') this.startCupMode(Number(this.ui.cupSize?.value) || 12);
     else {
       this.cupMode = { ...this.cupMode, active: false, status: 'idle', stageIndex: 0, currentEntrants: [], results: [], lastQualified: [], champion: null, podium: [] };
       this.hideMatchCard();
@@ -1408,8 +1408,8 @@ class MarbleRace {
     };
   }
 
-  startCupMode(size = 20, { preserveCurrentSettings = true } = {}) {
-    const rawSize = Math.round(Number(size) || 20);
+  startCupMode(size = 12, { preserveCurrentSettings = true } = {}) {
+    const rawSize = Math.round(Number(size) || 12);
     const cupSize = Math.max(2, Math.min(99, rawSize));
     if (this.ui.raceMode) this.ui.raceMode.value = 'cup';
     if (this.ui.cupSize) this.ui.cupSize.value = String(cupSize);
@@ -1765,8 +1765,8 @@ class MarbleRace {
     }
 
     const requestedCount = this.cupMode?.active
-      ? Math.max(1, this.cupMode.currentEntrants?.length || this.cupMode.size || 20)
-      : Math.max(1, Math.floor(Number(this.ui.count.value) || 20));
+      ? Math.max(1, this.cupMode.currentEntrants?.length || this.cupMode.size || 12)
+      : Math.max(1, Math.floor(Number(this.ui.count.value) || 12));
     if (this.cupMode?.active && this.ui.count) this.ui.count.value = String(requestedCount);
     this.createMarbles(requestedCount);
     this.applyInitialCameraVerticalAxisRotation();
@@ -2676,7 +2676,7 @@ class MarbleRace {
     ground.receiveShadow = PERFORMANCE_TUNING.shadows;
     this.trackGroup.add(ground);
 
-    const floorMat = new THREE.MeshStandardMaterial({
+    const floorMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       map: this.createPinballPlayfieldTexture(),
       roughness: 0.38,
@@ -2685,7 +2685,7 @@ class MarbleRace {
       clearcoatRoughness: 0.18,
       side: THREE.DoubleSide,
     });
-    const railMat = new THREE.MeshStandardMaterial({
+    const railMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       map: this.createNeonRubberTexture(),
       roughness: 0.3,
@@ -8251,7 +8251,7 @@ class MarbleRace {
 
   async startAutoCupRecording({ preferScreenRecording = true, tabOnly = true, includeAudio = true } = {}) {
     this.clearAutoCupRecordingTimer();
-    const cupSize = Number(this.ui.cupSize?.value) || this.cupMode?.size || 16;
+    const cupSize = Number(this.ui.cupSize?.value) || this.cupMode?.size || 12;
     this.autoCupRecording = {
       ...this.autoCupRecording,
       active: true,

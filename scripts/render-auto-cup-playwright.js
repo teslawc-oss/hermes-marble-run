@@ -20,12 +20,12 @@ const config = {
   url: args.get('url') || process.env.MARBLE_RENDER_URL || 'http://127.0.0.1:4173',
   port: Number(args.get('port') || process.env.MARBLE_RENDER_PORT || 4173),
   output: path.resolve(args.get('output') || process.env.MARBLE_RENDER_OUTPUT || path.join(recordingsDir, `auto-cup-${defaultStamp}.webm`)),
-  cupSize: Number(args.get('cup-size') || process.env.MARBLE_RENDER_CUP_SIZE || 20),
+  cupSize: Number(args.get('cup-size') || process.env.MARBLE_RENDER_CUP_SIZE || 12),
   trackLength: Number(args.get('track-length') || process.env.MARBLE_RENDER_TRACK_LENGTH || 600),
   targetSeconds: Number(args.get('target-seconds') || process.env.MARBLE_RENDER_TARGET_SECONDS || 600),
   lengthMode: args.get('length-mode') || process.env.MARBLE_RENDER_LENGTH_MODE || 'target-duration',
-  width: Number(args.get('width') || process.env.MARBLE_RENDER_WIDTH || 2560),
-  height: Number(args.get('height') || process.env.MARBLE_RENDER_HEIGHT || 1440),
+  width: Number(args.get('width') || process.env.MARBLE_RENDER_WIDTH || 1920),
+  height: Number(args.get('height') || process.env.MARBLE_RENDER_HEIGHT || 1080),
   captureScale: Number(args.get('capture-scale') || process.env.MARBLE_RENDER_CAPTURE_SCALE || 1),
   fps: Number(args.get('fps') || process.env.MARBLE_RENDER_FPS || 60),
   videoCrf: Number(args.get('crf') || process.env.MARBLE_RENDER_CRF || 14),
@@ -45,17 +45,21 @@ const config = {
   thumbnail: args.get('thumbnail') !== 'false' && process.env.MARBLE_RENDER_THUMBNAIL !== 'false',
   thumbnailTitle: args.get('thumbnail-title') || process.env.MARBLE_RENDER_THUMBNAIL_TITLE || '',
   thumbnailOutput: args.get('thumbnail-output') || process.env.MARBLE_RENDER_THUMBNAIL_OUTPUT || '',
-  thumbnailFrameStrategy: args.get('thumbnail-frame-strategy') || process.env.MARBLE_RENDER_THUMBNAIL_FRAME_STRATEGY || 'early-highlight',
+  thumbnailFrameStrategy: args.get('thumbnail-frame-strategy') || process.env.MARBLE_RENDER_THUMBNAIL_FRAME_STRATEGY || 'first-race-30pct',
   thumbnailSafeCrop: args.get('thumbnail-safe-crop') || process.env.MARBLE_RENDER_THUMBNAIL_SAFE_CROP || 'hud-safe',
   thumbnailMaxWords: Number(args.get('thumbnail-max-words') || process.env.MARBLE_RENDER_THUMBNAIL_MAX_WORDS || 6),
   eventMarkersOutput: args.get('event-markers-output') || process.env.MARBLE_RENDER_EVENT_MARKERS_OUTPUT || '',
   eventMarkerIntervalSeconds: Number(args.get('event-marker-interval-seconds') || process.env.MARBLE_RENDER_EVENT_MARKER_INTERVAL_SECONDS || 5),
   youtubeMetadata: args.get('youtube-metadata') !== 'false' && process.env.MARBLE_RENDER_YOUTUBE_METADATA !== 'false',
   youtubeMetadataOutput: args.get('youtube-metadata-output') || process.env.MARBLE_RENDER_YOUTUBE_METADATA_OUTPUT || '',
+  keepEventMarkers: args.get('keep-event-markers') === 'true' || process.env.MARBLE_RENDER_KEEP_EVENT_MARKERS === 'true',
+  keepThumbnailMetadata: args.get('keep-thumbnail-metadata') === 'true' || process.env.MARBLE_RENDER_KEEP_THUMBNAIL_METADATA === 'true',
   youtubeMetadataTemplate: args.get('youtube-metadata-template') || process.env.MARBLE_RENDER_YOUTUBE_METADATA_TEMPLATE || path.join(rootDir, 'config/youtube-video-metadata-template.json'),
+  youtubeTitleHistory: args.get('youtube-title-history') || process.env.MARBLE_RENDER_YOUTUBE_TITLE_HISTORY || recordingsDir,
+  youtubeTitleHistoryLimit: Number(args.get('youtube-title-history-limit') || process.env.MARBLE_RENDER_YOUTUBE_TITLE_HISTORY_LIMIT || 10),
   renderPerformanceMode: args.get('render-performance-mode') !== 'false' && process.env.MARBLE_RENDER_PERFORMANCE_MODE !== 'false',
   audioOutput: path.resolve(args.get('audio-output') || process.env.MARBLE_RENDER_AUDIO_OUTPUT || path.join(recordingsDir, `auto-cup-${defaultStamp}.wav`)),
-  mode: ['cup', 'continuous', 'single'].includes(args.get('mode') || process.env.MARBLE_RENDER_MODE) ? (args.get('mode') || process.env.MARBLE_RENDER_MODE) : 'cup',
+  mode: ['cup', 'continuous', 'single'].includes(args.get('mode') || process.env.MARBLE_RENDER_MODE) ? (args.get('mode') || process.env.MARBLE_RENDER_MODE) : 'continuous',
   multipleRaceCount: Number(args.get('multiple-race-count') || process.env.MARBLE_RENDER_MULTIPLE_RACE_COUNT || 5),
   cupName: args.get('cup-name') || process.env.MARBLE_RENDER_CUP_NAME || 'Speed X Cup',
   ttsVoice: args.get('tts-voice') || process.env.MARBLE_RENDER_TTS_VOICE || 'Alex',
@@ -72,6 +76,8 @@ config.captureHeight = Math.round(config.height * config.captureScale);
 config.thumbnailMaxWords = Number.isFinite(config.thumbnailMaxWords) ? Math.max(2, Math.min(10, Math.round(config.thumbnailMaxWords))) : 6;
 config.eventMarkerIntervalSeconds = Number.isFinite(config.eventMarkerIntervalSeconds) ? Math.max(1, Math.min(60, Math.round(config.eventMarkerIntervalSeconds))) : 5;
 config.eventMarkersOutput = config.eventMarkersOutput ? path.resolve(config.eventMarkersOutput) : '';
+config.youtubeTitleHistoryLimit = Number.isFinite(config.youtubeTitleHistoryLimit) ? Math.max(0, Math.min(50, Math.round(config.youtubeTitleHistoryLimit))) : 10;
+config.youtubeTitleHistory = String(config.youtubeTitleHistory || '').trim();
 
 config.ttsVoice = String(config.ttsVoice || 'Alex').replace(/[^\w .'-]/g, '').trim().slice(0, 48) || 'Alex';
 config.multipleRaceCount = Number.isFinite(config.multipleRaceCount) ? Math.max(1, Math.min(99, Math.round(config.multipleRaceCount))) : 5;
@@ -108,8 +114,8 @@ const ffprobeJson = (file) => JSON.parse(execFileSync('ffprobe', [
 function readYoutubeMetadataTemplate(templatePath) {
   const fallback = {
     descriptionTemplate: 'Get ready for {raceCountLabel} exciting races with {marbleCount} marbles competing for victory! Every race is full of speed, chaos, close finishes, and unpredictable moments as the marbles battle their way through the track. Watch to see which marble comes out on top and whether your favorite can win it all.\nComment below with your favorite marble, your predictions, or ideas for future race challenges. Your suggestions help make every video more fun and exciting.\nLike, subscribe, and stay tuned for more Marble Rush races!',
-    hashtags: ['#marblerace', '#marblerush', '#30marbles', '#10races', '#gameplay', '#games', '#fun', '#gameforkids', '#marblegame', '#racing', '#challenge', '#kidsvideos', '#obstacles', '#indiegame', '#gamedev'],
-    defaults: { marbleCount: 30, raceCount: 10, fallbackTitle: '30 Marbles, 10 Races, Total Chaos!' },
+    hashtags: ['#marblerace', '#marblerush', '#12marbles', '#racechallenge', '#gameplay', '#games', '#fun', '#gameforkids', '#marblegame', '#racing', '#challenge', '#kidsvideos', '#obstacles', '#indiegame', '#gamedev'],
+    defaults: { marbleCount: 12, raceCount: 10, fallbackTitle: '12 Marbles, 10 Races, Total Chaos!' },
   };
   const resolved = path.resolve(templatePath || path.join(rootDir, 'config/youtube-video-metadata-template.json'));
   if (!existsSync(resolved)) return { ...fallback, templatePath: resolved, templateFound: false };
@@ -127,31 +133,139 @@ function readYoutubeMetadataTemplate(templatePath) {
   }
 }
 
+function classifyYoutubeTitleType(title) {
+  const normalized = sanitizeSingleLine(title).toLowerCase();
+  if (!normalized) return 'unknown';
+  if (/\b(you won.?t believe|unbelievable|shocking|unexpected|surprise)\b/i.test(normalized)) return 'shock-reveal';
+  if (/\b(insane finish|photo finish|close finish|last second|final second|comeback)\b/i.test(normalized)) return 'finish-drama';
+  if (/\b(battle|vs\.?|showdown|duel|clash)\b/i.test(normalized)) return 'battle';
+  if (/\b(speed|fast|rush|sprint|dash|boost)\b/i.test(normalized)) return 'speed';
+  if (/\b(trap|obstacle|bumper|spinner|gate|target|drop)\b/i.test(normalized)) return 'obstacle';
+  if (/\b(total chaos|chaos|crazy|wild|mayhem|madness)\b/i.test(normalized)) return 'chaos';
+  if (/\b(wins?|winner|champion|takes all|victory)\b/i.test(normalized)) return 'winner';
+  if (/\b(\d+\s*races?|\d+\s*marbles?)\b/i.test(normalized)) return 'numbers';
+  return 'general-hype';
+}
+
+function readYoutubeTitleHistory(historyPath, limit = 10) {
+  if (!historyPath || limit <= 0) return [];
+  const resolved = path.resolve(historyPath);
+  const files = [];
+  const collect = (entry) => {
+    if (!existsSync(entry)) return;
+    const info = statSync(entry);
+    if (info.isDirectory()) {
+      for (const name of readdirSync(entry)) {
+        const child = path.join(entry, name);
+        try {
+          const childInfo = statSync(child);
+          if (childInfo.isDirectory()) collect(child);
+          else if (/\.youtube\.json$/i.test(name)) files.push({ path: child, mtimeMs: childInfo.mtimeMs });
+        } catch {}
+      }
+    } else if (/\.json$/i.test(entry)) {
+      files.push({ path: entry, mtimeMs: info.mtimeMs });
+    }
+  };
+  collect(resolved);
+  return files
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .map((file) => {
+      try {
+        const parsed = JSON.parse(readFileSync(file.path, 'utf8'));
+        const title = sanitizeSingleLine(parsed.title || parsed.videoTitle || parsed?.metadata?.title || '');
+        if (!title) return null;
+        return { title, titleType: parsed.titleType || classifyYoutubeTitleType(title), path: file.path, mtimeMs: file.mtimeMs };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
 function makeClickbaitVideoTitle(baseTitle, context = {}) {
   const fallbackTitle = context.fallbackTitle || '30 Marbles, 10 Races, Total Chaos!';
   const title = sanitizeSingleLine(baseTitle, fallbackTitle).replace(/[.!?]+$/g, '');
-  if (/[!?]|\b(insane|crazy|chaos|shocking|epic|wild|unbelievable|last second)\b/i.test(title)) return title.slice(0, 100);
-  const suffixes = [
-    'Total Chaos!',
-    'Insane Finish!',
-    'You Won’t Believe It!',
-    'Wild Marble Battle!',
+  const recentTypes = new Set((context.recentTitles || []).slice(0, context.historyLimit || 10).map((item) => item.titleType || classifyYoutubeTitleType(item.title)));
+  const templates = [
+    { type: 'chaos', suffix: 'Total Chaos!' },
+    { type: 'finish-drama', suffix: 'Insane Finish!' },
+    { type: 'shock-reveal', suffix: 'You Won’t Believe It!' },
+    { type: 'battle', suffix: 'Wild Marble Battle!' },
+    { type: 'speed', suffix: 'Speed Run Madness!' },
+    { type: 'obstacle', suffix: 'Obstacle Trouble!' },
+    { type: 'winner', suffix: 'Who Takes Victory?' },
+    { type: 'general-hype', suffix: 'This Gets Intense!' },
   ];
+  const directType = classifyYoutubeTitleType(title);
+  const hasHype = /[!?]|\b(insane|crazy|chaos|shocking|epic|wild|unbelievable|last second)\b/i.test(title);
+  if (hasHype && !recentTypes.has(directType)) {
+    return { title: title.slice(0, 100), titleType: directType };
+  }
   const seed = [...title].reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  const suffix = suffixes[seed % suffixes.length];
-  const candidate = `${title} — ${suffix}`;
-  return (candidate.length <= 100 ? candidate : `${title}!`).slice(0, 100);
+  const rotated = templates.map((_, index) => templates[(seed + index) % templates.length]);
+  const selected = rotated.find((template) => !recentTypes.has(template.type)) || rotated[0];
+  const candidate = `${title} — ${selected.suffix}`;
+  return { title: (candidate.length <= 100 ? candidate : `${title}!`).slice(0, 100), titleType: selected.type };
 }
 
-function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput, metadataOutput, companionWebmOutput }) {
-  const markerOutput = config.eventMarkersOutput || renderSummary.eventMarkersOutput || '';
+function pickMidRaceThumbnailEvent(events = [], summary = {}) {
+  const validEvents = Array.isArray(events) ? events : [];
+  const battleEvents = validEvents
+    .filter((event) => ['battle', 'overtake'].includes(event.kind) && Number.isFinite(Number(event.time)))
+    .map((event, index) => ({ ...event, __index: index, time: Number(event.time) }))
+    .sort((a, b) => a.time - b.time);
+  if (!battleEvents.length) return null;
+
+  const lastTime = Math.max(
+    Number(summary?.elapsed) || 0,
+    Number(summary?.lastSampleAt) || 0,
+    ...battleEvents.map((event) => event.time),
+  );
+  const duration = Number.isFinite(lastTime) && lastTime > 0 ? lastTime : battleEvents[battleEvents.length - 1].time;
+  const lower = Math.max(1.2, duration * 0.28);
+  const upper = Math.max(lower, duration * 0.72);
+  const middle = duration * 0.5;
+  const scored = battleEvents.map((event) => {
+    const inMiddle = event.time >= lower && event.time <= upper;
+    const kindBonus = event.kind === 'overtake' ? 4 : 0;
+    const progress = Number(event.progress);
+    const progressBonus = Number.isFinite(progress) && progress >= 0.25 && progress <= 0.75 ? 4 : 0;
+    return {
+      event,
+      score: (inMiddle ? 40 : 0) + kindBonus + progressBonus - Math.abs(event.time - middle) * 0.06,
+    };
+  }).sort((a, b) => (b.score - a.score) || Math.abs(a.event.time - middle) - Math.abs(b.event.time - middle) || a.event.__index - b.event.__index);
+
+  const picked = scored[0]?.event;
+  if (!picked) return null;
+  const suggestedFrameSeconds = Number(Math.max(0.8, picked.suggestedFrameSeconds ?? picked.time + 0.15).toFixed(3));
+  return {
+    title: picked.title || '',
+    detail: picked.detail || '',
+    kind: picked.kind,
+    time: Number(picked.time.toFixed(3)),
+    suggestedFrameSeconds,
+    progress: Number.isFinite(Number(picked.progress)) ? Number(Number(picked.progress).toFixed(4)) : null,
+    distance: Number.isFinite(Number(picked.distance)) ? Number(Number(picked.distance).toFixed(3)) : null,
+    marbleId: picked.marbleId ?? null,
+    rivalId: picked.rivalId ?? null,
+    activeRaceIndex: picked.activeRaceIndex ?? null,
+  };
+}
+
+function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput, metadataOutput = '', companionWebmOutput, eventMarkersOutput = '', thumbnailEvent = null }) {
   const template = readYoutubeMetadataTemplate(config.youtubeMetadataTemplate);
   const raceCount = config.mode === 'continuous'
     ? config.multipleRaceCount
     : Number(renderSummary.raceCount || renderSummary.stageSummaries?.length || template.defaults.raceCount || 10);
   const marbleCount = Number(renderSummary.marbleCount || config.cupSize || template.defaults.marbleCount || 30);
   const baseTitle = config.thumbnailTitle || renderSummary.thumbnailTitle || renderSummary.title || renderSummary.cupName || config.cupName || template.defaults.fallbackTitle;
-  const title = makeClickbaitVideoTitle(baseTitle, { fallbackTitle: template.defaults.fallbackTitle });
+  const recentTitles = readYoutubeTitleHistory(config.youtubeTitleHistory, config.youtubeTitleHistoryLimit);
+  const titleResult = makeClickbaitVideoTitle(baseTitle, { fallbackTitle: template.defaults.fallbackTitle, recentTitles, historyLimit: config.youtubeTitleHistoryLimit });
+  const title = titleResult.title;
+  const titleType = titleResult.titleType || classifyYoutubeTitleType(title);
   const descriptionBody = template.descriptionTemplate
     .replace(/\{raceCount\}/g, String(raceCount))
     .replace(/\{raceCountLabel\}/g, String(raceCount))
@@ -161,8 +275,10 @@ function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput
   const description = `${descriptionBody}\n\n${template.hashtags.join(' ')}`;
   return {
     title,
+    titleType,
     description,
     hashtags: template.hashtags,
+    recentTitleTypesAvoided: [...new Set(recentTitles.map((item) => item.titleType))],
     source: {
       titleSource: config.thumbnailTitle ? 'thumbnailTitle' : 'renderMetadata',
       thumbnailTitle: config.thumbnailTitle || '',
@@ -173,10 +289,13 @@ function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput
       thumbnailOutput,
       thumbnailMetadataOutput: metadataOutput,
       companionWebmOutput,
-      eventMarkersOutput: markerOutput,
+      eventMarkersOutput,
       generatedAt: new Date().toISOString(),
       templatePath: template.templatePath,
       templateFound: template.templateFound,
+      titleHistoryPath: config.youtubeTitleHistory,
+      titleHistoryLimit: config.youtubeTitleHistoryLimit,
+      recentTitles: recentTitles.map((item) => ({ title: item.title, titleType: item.titleType, path: item.path })),
     },
   };
 }
@@ -390,15 +509,27 @@ async function main() {
     const events = [...state.eventsByKey.values()]
       .filter((event) => event.title && Number.isFinite(Number(event.time)))
       .sort((a, b) => Number(a.time) - Number(b.time));
+    const firstRaceEvents = events.filter((event) => {
+      const raceIndex = Number(event.activeRaceIndex ?? event.raceIndex ?? event.race ?? event.racesCompleted + 1);
+      return !Number.isFinite(raceIndex) || raceIndex === 1;
+    });
+    const sourceEvents = firstRaceEvents.length ? firstRaceEvents : events;
+    const sourceTimes = sourceEvents.map((event) => Number(event.time)).filter((time) => Number.isFinite(time) && time > 0);
+    const firstRaceEnd = sourceTimes.length ? Math.max(...sourceTimes) : 0;
+    const firstRaceTarget = firstRaceEnd > 0 ? Math.max(1.2, firstRaceEnd * 0.30) : 0;
     const thumbnailCandidates = events
       .map((event) => {
         const time = Number(event.time);
         const progress = Number(event.progress);
         const earlyBonus = time <= 90 ? 18 : time <= 180 ? 8 : 0;
+        const firstRace = sourceEvents.includes(event);
+        const firstRaceBonus = firstRace ? 45 : 0;
+        const firstRaceTargetBonus = firstRace && firstRaceTarget > 0 ? Math.max(0, 28 - Math.abs(time - firstRaceTarget) * 2.2) : 0;
+        const progressTargetBonus = Number.isFinite(progress) ? Math.max(0, 18 - Math.abs(progress - 0.30) * 70) : 0;
         const progressBonus = Number.isFinite(progress) && progress >= 0.12 && progress <= 0.78 ? 8 : 0;
         const textBonus = /overtake|battle|target|buff|speed|burst|leader|blast|kick|snap/i.test(`${event.title} ${event.detail || ''}`) ? 8 : 0;
-        const score = (eventPriority[event.kind] || eventPriority.general) + earlyBonus + progressBonus + textBonus - Math.max(0, time - 180) * 0.12;
-        return { ...event, score: Number(score.toFixed(2)), suggestedFrameSeconds: Number(Math.max(0.8, time + 0.15).toFixed(3)) };
+        const score = (eventPriority[event.kind] || eventPriority.general) + firstRaceBonus + firstRaceTargetBonus + progressTargetBonus + earlyBonus + progressBonus + textBonus - Math.max(0, time - 180) * 0.12;
+        return { ...event, score: Number(score.toFixed(2)), firstRace, firstRaceTarget: firstRaceTarget ? Number(firstRaceTarget.toFixed(3)) : null, suggestedFrameSeconds: Number(Math.max(0.8, time + 0.15).toFixed(3)) };
       })
       .sort((a, b) => (b.score - a.score) || (a.suggestedFrameSeconds - b.suggestedFrameSeconds))
       .slice(0, 12);
@@ -439,6 +570,10 @@ async function main() {
       renderPerformanceMode: config.renderPerformanceMode,
       audio: config.audio,
       outputFormat: config.outputFormat,
+      mode: config.mode,
+      multipleRaceCount: config.multipleRaceCount,
+      marbleCount: config.cupSize,
+      cupSize: config.cupSize,
       trackLength: config.trackLength,
       targetSeconds: config.targetSeconds,
       lengthMode: config.lengthMode,
@@ -1088,12 +1223,17 @@ async function main() {
   if (renderSummary) {
     renderSummary.eventMarkers = eventMarkerDocument.events;
     renderSummary.thumbnailCandidates = eventMarkerDocument.thumbnailCandidates;
-    renderSummary.eventMarkersOutput = eventMarkersOutput;
+    renderSummary.eventMarkersOutput = config.keepEventMarkers ? eventMarkersOutput : '';
   }
-  mkdirSync(path.dirname(eventMarkersOutput), { recursive: true });
-  writeFileSync(eventMarkersOutput, `${JSON.stringify(eventMarkerDocument, null, 2)}\n`);
-  config.eventMarkersOutput = eventMarkersOutput;
-  log(`Event markers: ${eventMarkersOutput} (${eventMarkerDocument.eventCount} events, ${eventMarkerDocument.thumbnailCandidates.length} thumbnail candidates)`);
+  if (config.keepEventMarkers) {
+    mkdirSync(path.dirname(eventMarkersOutput), { recursive: true });
+    writeFileSync(eventMarkersOutput, `${JSON.stringify(eventMarkerDocument, null, 2)}\n`);
+    config.eventMarkersOutput = eventMarkersOutput;
+    log(`Event markers: ${eventMarkersOutput} (${eventMarkerDocument.eventCount} events, ${eventMarkerDocument.thumbnailCandidates.length} thumbnail candidates)`);
+  } else {
+    config.eventMarkersOutput = '';
+    log(`Event markers kept in memory only (${eventMarkerDocument.eventCount} events, ${eventMarkerDocument.thumbnailCandidates.length} thumbnail candidates)`);
+  }
   if (config.thumbnail) {
     const thumbnailOutput = path.resolve(config.thumbnailOutput || `${config.output.replace(/\.[^.]+$/, '')}.thumbnail.jpg`);
     const metadataOutput = path.resolve(`${thumbnailOutput}.metadata.json`);
@@ -1120,18 +1260,30 @@ async function main() {
     ];
     if (config.thumbnailTitle) thumbnailArgs.push(`--title=${config.thumbnailTitle}`);
     run('node', thumbnailArgs);
+    if (!config.keepThumbnailMetadata) {
+      rmSync(metadataOutput, { force: true });
+      rmSync(`${thumbnailOutput}.json`, { force: true });
+    }
     if (!existsSync(thumbnailOutput) || statSync(thumbnailOutput).size <= 0) fail(`Thumbnail was not created: ${thumbnailOutput}`);
     log(`Thumbnail: ${thumbnailOutput}`);
     if (config.youtubeMetadata) {
-      const youtubeMetadata = buildYoutubeVideoMetadata({ config, renderSummary, thumbnailOutput, metadataOutput, companionWebmOutput });
+      const youtubeMetadata = buildYoutubeVideoMetadata({ config, renderSummary, thumbnailOutput, metadataOutput: config.keepThumbnailMetadata ? metadataOutput : '', companionWebmOutput, eventMarkersOutput: config.keepEventMarkers ? eventMarkersOutput : '' });
       mkdirSync(path.dirname(youtubeMetadataOutput), { recursive: true });
       writeFileSync(youtubeMetadataOutput, `${JSON.stringify(youtubeMetadata, null, 2)}\n`);
       log(`YouTube metadata: ${youtubeMetadataOutput}`);
       log(`YouTube title: ${youtubeMetadata.title}`);
+      log(`YouTube title type: ${youtubeMetadata.titleType}; avoided recent types: ${youtubeMetadata.recentTitleTypesAvoided.join(', ') || 'none'}`);
     }
   }
   if (!config.keepWebm) rmSync(videoDir, { recursive: true, force: true });
   log(`Done: ${config.output}`);
+}
+
+if (process.env.MARBLE_RENDER_TEST_TITLE_HISTORY === 'true') {
+  const recentTitles = readYoutubeTitleHistory(process.env.MARBLE_RENDER_YOUTUBE_TITLE_HISTORY || recordingsDir, Number(process.env.MARBLE_RENDER_YOUTUBE_TITLE_HISTORY_LIMIT || 10));
+  const titleResult = makeClickbaitVideoTitle(process.env.MARBLE_RENDER_TEST_BASE_TITLE || '8 Races, 30 Marbles!', { fallbackTitle: '30 Marbles, 10 Races, Total Chaos!', recentTitles, historyLimit: 10 });
+  process.stdout.write(`${JSON.stringify({ title: titleResult.title, titleType: titleResult.titleType || classifyYoutubeTitleType(titleResult.title), recentTitleTypesAvoided: [...new Set(recentTitles.map((item) => item.titleType))] }, null, 2)}\n`);
+  process.exit(0);
 }
 
 main().catch((error) => fail('Unhandled render failure', error));

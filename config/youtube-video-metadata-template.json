@@ -3,8 +3,8 @@
   "hashtags": [
     "#marblerace",
     "#marblerush",
-    "#30marbles",
-    "#10races",
+    "#12marbles",
+    "#racechallenge",
     "#gameplay",
     "#games",
     "#fun",
@@ -18,8 +18,8 @@
     "#gamedev"
   ],
   "defaults": {
-    "marbleCount": 30,
+    "marbleCount": 12,
     "raceCount": 10,
-    "fallbackTitle": "30 Marbles, 10 Races, Total Chaos!"
+    "fallbackTitle": "12 Marbles, 10 Races, Total Chaos!"
   }
 }
