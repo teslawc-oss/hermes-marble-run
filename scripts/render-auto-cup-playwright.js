@@ -16,8 +16,14 @@ for (const arg of process.argv.slice(2)) {
   else if (arg.startsWith('--')) args.set(arg.slice(2), 'true');
 }
 const hasExplicitMaxRaceSeconds = args.has('max-race-seconds') || process.env.MARBLE_RENDER_MAX_RACE_SECONDS != null;
+const hasExplicitTimeout = args.has('timeout') || process.env.MARBLE_RENDER_TIMEOUT != null;
 const averageRaceSecondsPerMeter = 90 / 300;
 const estimateMaxRaceSecondsForTrackLength = (trackLength) => Math.max(45, Math.min(1200, Math.ceil(trackLength * averageRaceSecondsPerMeter)));
+const estimateNonRaceSeconds = (mode, raceCount) => {
+  if (mode === 'cup') return 164;
+  if (mode === 'continuous') return 2 + Math.max(0, raceCount - 1) * 10 + 5;
+  return 7;
+};
 
 const config = {
   url: args.get('url') || process.env.MARBLE_RENDER_URL || 'http://127.0.0.1:4173',
@@ -30,7 +36,7 @@ const config = {
   width: Number(args.get('width') || process.env.MARBLE_RENDER_WIDTH || 1920),
   height: Number(args.get('height') || process.env.MARBLE_RENDER_HEIGHT || 1080),
   captureScale: Number(args.get('capture-scale') || process.env.MARBLE_RENDER_CAPTURE_SCALE || 1),
-  fps: Number(args.get('fps') || process.env.MARBLE_RENDER_FPS || 60),
+  fps: Number(args.get('fps') || process.env.MARBLE_RENDER_FPS || 45),
   videoCrf: Number(args.get('crf') || process.env.MARBLE_RENDER_CRF || 14),
   videoPreset: args.get('video-preset') || process.env.MARBLE_RENDER_VIDEO_PRESET || 'slow',
   timeoutSeconds: Number(args.get('timeout') || process.env.MARBLE_RENDER_TIMEOUT || 900),
@@ -44,7 +50,7 @@ const config = {
   showRightUi: args.get('show-right-ui') !== 'false' && process.env.MARBLE_RENDER_SHOW_RIGHT_UI !== 'false',
   disableMouseOrbit: args.get('disable-mouse-orbit') !== 'false' && process.env.MARBLE_RENDER_DISABLE_MOUSE_ORBIT !== 'false',
   audio: args.get('audio') !== 'false' && process.env.MARBLE_RENDER_AUDIO !== 'false',
-  videoCapture: ['playwright', 'canvas'].includes(args.get('video-capture') || process.env.MARBLE_RENDER_VIDEO_CAPTURE) ? (args.get('video-capture') || process.env.MARBLE_RENDER_VIDEO_CAPTURE) : 'playwright',
+  videoCapture: ['playwright', 'canvas'].includes(args.get('video-capture') || process.env.MARBLE_RENDER_VIDEO_CAPTURE) ? (args.get('video-capture') || process.env.MARBLE_RENDER_VIDEO_CAPTURE) : 'canvas',
   videoCanvasLayout: ['horizontal', 'vertical'].includes(String(args.get('video-canvas') || args.get('video-canvas-layout') || process.env.MARBLE_RENDER_VIDEO_CANVAS || 'horizontal').toLowerCase())
     ? String(args.get('video-canvas') || args.get('video-canvas-layout') || process.env.MARBLE_RENDER_VIDEO_CANVAS || 'horizontal').toLowerCase()
     : 'horizontal',
@@ -78,9 +84,17 @@ config.captureScale = Number.isFinite(config.captureScale) && config.captureScal
 config.targetSeconds = Number.isFinite(config.targetSeconds) ? Math.max(60, Math.min(7200, Math.round(config.targetSeconds))) : 600;
 config.lengthMode = config.lengthMode === 'fixed-track' ? 'fixed-track' : 'target-duration';
 config.trackLength = Number.isFinite(config.trackLength) ? Math.max(80, Math.min(3000, Math.round(config.trackLength))) : 600;
-config.maxRaceSeconds = hasExplicitMaxRaceSeconds && Number.isFinite(config.maxRaceSeconds) && config.maxRaceSeconds > 0
+const configuredMaxRaceSeconds = hasExplicitMaxRaceSeconds && Number.isFinite(config.maxRaceSeconds) && config.maxRaceSeconds > 0
   ? Math.max(45, Math.min(1200, Math.round(config.maxRaceSeconds)))
-  : estimateMaxRaceSecondsForTrackLength(config.trackLength);
+  : 0;
+const timeoutRaceSecondsEstimate = configuredMaxRaceSeconds || estimateMaxRaceSecondsForTrackLength(config.trackLength);
+config.maxRaceSeconds = configuredMaxRaceSeconds;
+config.multipleRaceCount = Number.isFinite(config.multipleRaceCount) ? Math.max(1, Math.min(99, Math.round(config.multipleRaceCount))) : 5;
+const estimatedRaceCount = config.mode === 'continuous' ? config.multipleRaceCount : config.mode === 'single' ? 1 : 7;
+const dynamicTimeoutSeconds = Math.ceil((timeoutRaceSecondsEstimate * estimatedRaceCount) + estimateNonRaceSeconds(config.mode, estimatedRaceCount) + 300);
+config.timeoutSeconds = hasExplicitTimeout && Number.isFinite(config.timeoutSeconds) && config.timeoutSeconds > 0
+  ? Math.max(120, Math.min(7200, Math.round(config.timeoutSeconds)))
+  : Math.max(120, Math.min(7200, dynamicTimeoutSeconds));
 config.captureWidth = Math.round(config.width * config.captureScale);
 config.captureHeight = Math.round(config.height * config.captureScale);
 config.thumbnailMaxWords = Number.isFinite(config.thumbnailMaxWords) ? Math.max(2, Math.min(10, Math.round(config.thumbnailMaxWords))) : 6;
@@ -90,7 +104,6 @@ config.youtubeTitleHistoryLimit = Number.isFinite(config.youtubeTitleHistoryLimi
 config.youtubeTitleHistory = String(config.youtubeTitleHistory || '').trim();
 
 config.ttsVoice = String(config.ttsVoice || 'Alex').replace(/[^\w .'-]/g, '').trim().slice(0, 48) || 'Alex';
-config.multipleRaceCount = Number.isFinite(config.multipleRaceCount) ? Math.max(1, Math.min(99, Math.round(config.multipleRaceCount))) : 5;
 config.obstacleDistribution = ['random', 'zoned'].includes(config.obstacleDistribution) ? config.obstacleDistribution : 'random';
 
 const renderStartedAt = Date.now();
@@ -970,11 +983,34 @@ async function main() {
           if (originalStartContinuousRecordingRace && !app.__playwrightContinuousRaceTimeoutWrapped) {
             app.startContinuousRecordingRace = (...args) => {
               const result = originalStartContinuousRecordingRace(...args);
+              const startedRaceIndex = Number(app.continuousRecording?.racesCompleted || 0) + 1;
               window.setTimeout(() => {
                 if (!app.continuousRecording?.active || app.state !== 'running') return;
+                const currentRaceIndex = Number(app.continuousRecording?.racesCompleted || 0) + 1;
+                if (currentRaceIndex !== startedRaceIndex) return;
                 const unfinished = (app.marbleData || []).filter((data) => data && !data.finished && !data.defeated);
                 unfinished.forEach((data) => app.eliminateStalledMarble?.(data, data.distance || 0, 'playwright-max-race-timeout'));
+                const stillUnfinished = (app.marbleData || []).filter((data) => data && !data.finished && !data.defeated);
+                if (stillUnfinished.length) {
+                  stillUnfinished.forEach((data) => {
+                    data.defeated = true;
+                    data.finished = true;
+                    data.finishTime = app.elapsed || maxRaceSeconds;
+                  });
+                }
                 app.checkFinishers?.();
+                if (app.state === 'running') {
+                  app.state = 'finished';
+                  const finalRanking = app.getRanking?.({ force: true }) || [];
+                  if (Array.isArray(app.finishers)) {
+                    const known = new Set(app.finishers.map((data) => data.id));
+                    finalRanking.forEach((data) => {
+                      if (data && !known.has(data.id)) app.finishers.push(data);
+                    });
+                  }
+                  app.handleContinuousRecordingRaceComplete?.();
+                  app.startPodiumCeremony?.(finalRanking.slice(0, 3));
+                }
               }, maxRaceSeconds * 1000);
               return result;
             };
@@ -1166,7 +1202,7 @@ async function main() {
           const continuousDone = app.continuousRecording?.playwrightRender && app.continuousRecording.active === false && ['completed-all-races', 'playwright-smoke-complete'].includes(app.continuousRecording.phase);
           const continuousReachedTarget = app.continuousRecording?.playwrightRender
             && Number(app.continuousRecording.racesCompleted || 0) >= Number(app.continuousRecording.totalRaces || 0)
-            && app.continuousRecording.phase === 'waiting-final-stop';
+            && ['waiting-final-stop', 'completed-all-races'].includes(app.continuousRecording.phase);
           if (finalDone || stopped || singleDone || continuousDone || continuousReachedTarget) {
             if (continuousReachedTarget && app.continuousRecording?.active) {
               app.stopContinuousRecording?.({ stopRecorder: false, reason: 'completed-all-races' });

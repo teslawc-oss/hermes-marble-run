@@ -5647,7 +5647,7 @@ class MarbleRace {
     const topLabelIds = new Set(
       labelsAllowed
         ? this.getRanking({ force: true })
-          .slice(0, Math.max(0, MARBLE_LABEL_POLICY.visibleTopRankCount || 5))
+          .slice(0, Math.max(0, MARBLE_LABEL_POLICY.visibleTopRankCount ?? 5))
           .map((data) => data.id)
         : []
     );
@@ -5664,7 +5664,7 @@ class MarbleRace {
       data.labelSprite.scale.set(scale * 3.8, scale * 0.95, 1);
       const fallLabelAllowed = !data.pendingFallRespawn
         || this.elapsed - (data.pendingFallRespawn.detectedAt ?? this.elapsed) < MARBLE_LABEL_POLICY.hidePendingFallAfterSeconds;
-      const renderAllLabels = Boolean(this.performanceProfile?.renderPerformanceMode || this.singleRecording?.playwrightRender || this.continuousRecording?.playwrightRender || this.autoCupRecording?.playwrightRender);
+      const renderAllLabels = false;
       const visible = (renderAllLabels || topLabelIds.has(data.id)) && fallLabelAllowed && labelsAllowed;
       data.labelSprite.visible = visible;
       data.labelVisible = visible;
@@ -6234,11 +6234,11 @@ class MarbleRace {
   }
 
   buildPodiumResultLine(ranking = this.getPodiumRanking({ force: true })) {
-    const podium = (ranking || []).filter((data) => data && !data.defeated).slice(0, 3);
-    const first = podium[0]?.name || 'TBD';
-    const second = podium[1]?.name || 'TBD';
-    const third = podium[2]?.name || 'TBD';
-    return `1st ${first}, 2nd ${second}, 3rd ${third}`;
+    const podium = (ranking || []).filter((data) => data).slice(0, 3);
+    if (!podium.length) return 'Final positions locked in';
+    return podium
+      .map((data, index) => `${['1st', '2nd', '3rd'][index] || `#${index + 1}`} ${data.name || `Marble ${data.id + 1}`}`)
+      .join(', ');
   }
 
   pushBroadcastEvent(title, detail = '', { kind = 'general', force = false, marbleId = null, rivalId = null, distance = null, progress = null, lines = null, preparedAudio = null } = {}) {
@@ -8069,11 +8069,11 @@ class MarbleRace {
     }
 
     if (!this.renderer?.domElement?.captureStream) return null;
-    const stream = this.renderer.domElement.captureStream(60);
+    const stream = this.renderer.domElement.captureStream(45);
     const audioMerge = this.mergeRecordingAudioTracks(stream, { includeAudio });
     this.lastRecordingRequest = {
       mode: 'canvas-fallback',
-      options: { video: 'renderer.domElement.captureStream(60)', audio: includeAudio ? 'page-audio-mix' : false },
+      options: { video: 'renderer.domElement.captureStream(45)', audio: includeAudio ? 'page-audio-mix' : false },
       audioQuality: this.getRecordingAudioQualityDebug(),
       audioRequested: includeAudio,
       pageAudioRequested: includeAudio,
