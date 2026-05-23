@@ -37,8 +37,8 @@ const config = {
   height: Number(args.get('height') || process.env.MARBLE_RENDER_HEIGHT || 1080),
   captureScale: Number(args.get('capture-scale') || process.env.MARBLE_RENDER_CAPTURE_SCALE || 1),
   fps: Number(args.get('fps') || process.env.MARBLE_RENDER_FPS || 45),
-  videoCrf: Number(args.get('crf') || process.env.MARBLE_RENDER_CRF || 14),
-  videoPreset: args.get('video-preset') || process.env.MARBLE_RENDER_VIDEO_PRESET || 'slow',
+  videoCrf: Number(args.get('crf') || process.env.MARBLE_RENDER_CRF || 18),
+  videoPreset: args.get('video-preset') || process.env.MARBLE_RENDER_VIDEO_PRESET || 'veryfast',
   timeoutSeconds: Number(args.get('timeout') || process.env.MARBLE_RENDER_TIMEOUT || 900),
   smokeSeconds: Number(args.get('smoke-seconds') || process.env.MARBLE_RENDER_SMOKE_SECONDS || 0),
   maxRaceSeconds: Number(args.get('max-race-seconds') || process.env.MARBLE_RENDER_MAX_RACE_SECONDS || 0),
@@ -495,6 +495,65 @@ async function main() {
     canvasChunkStream = null;
   };
 
+  const readRenderProgressSnapshot = async (page) => {
+    if (!page || page.isClosed?.()) return null;
+    return page.evaluate(() => {
+      const app = window.__MARBLE_RACE_APP__;
+      if (!app) return null;
+      const activeRecording = app.singleRecording?.playwrightRender
+        ? app.singleRecording
+        : app.continuousRecording?.playwrightRender
+          ? app.continuousRecording
+          : app.autoCupRecording;
+      const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__?.getInfo?.() || null;
+      return {
+        active: Boolean(activeRecording?.active),
+        mode: activeRecording?.mode || null,
+        phase: activeRecording?.phase || null,
+        state: app.state || null,
+        racesCompleted: activeRecording?.racesCompleted ?? null,
+        totalRaces: activeRecording?.totalRaces ?? null,
+        elapsed: Number(app.elapsed || 0),
+        browserFps: Number(app.lastFps || 0),
+        fpsHudText: app.ui?.fps?.textContent || null,
+        simulationLag: app.performanceProfile?.simulationLag ?? app.simulationLag ?? null,
+        capture: capture ? {
+          state: capture.state,
+          requestedFps: capture.requestedFps,
+          elapsedSeconds: capture.elapsedSeconds,
+          trackSettings: capture.trackSettings,
+        } : null,
+      };
+    }).catch(() => null);
+  };
+
+  const logRenderProgressSnapshot = async (page, reason = 'periodic') => {
+    const snapshot = await readRenderProgressSnapshot(page);
+    if (!snapshot) return null;
+    log('[progress] render-state', JSON.stringify({
+      reason,
+      stage: currentStageLabel,
+      active: snapshot.active,
+      mode: snapshot.mode,
+      phase: snapshot.phase,
+      state: snapshot.state,
+      racesCompleted: snapshot.racesCompleted,
+      totalRaces: snapshot.totalRaces,
+      elapsed: Number(snapshot.elapsed?.toFixed?.(2) ?? snapshot.elapsed),
+      chunks: canvasChunkStats.chunks,
+      mb: Number((canvasChunkStats.bytes / 1048576).toFixed(1)),
+      browserFps: Number(snapshot.browserFps?.toFixed?.(1) ?? snapshot.browserFps),
+      fpsHudText: snapshot.fpsHudText,
+      simulationLag: snapshot.simulationLag,
+      capture: snapshot.capture,
+    }));
+    return snapshot;
+  };
+
+  const isTerminalContinuousCompletionState = (state) => state?.mode === 'continuous'
+    && state.phase === 'completed-all-races'
+    && Number(state.racesCompleted || 0) >= Number(state.totalRaces || 0);
+
   const collectEventMarkerSnapshot = async (page, state = eventMarkerState) => {
     if (!page || page.isClosed?.()) return null;
     const snapshot = await page.evaluate(() => {
@@ -606,6 +665,7 @@ async function main() {
   let browser;
   let renderSummary = null;
   let eventMarkerPoller = null;
+  let progressLogPoller = null;
   let eventMarkerState = { samples: [], eventsByKey: new Map(), lastSampleAt: 0 };
   try {
     progress('browser-open', config.url);
@@ -1145,6 +1205,10 @@ async function main() {
     eventMarkerPoller = setInterval(() => {
       collectEventMarkerSnapshot(page).catch(() => {});
     }, config.eventMarkerIntervalSeconds * 1000);
+    await logRenderProgressSnapshot(page, 'started');
+    progressLogPoller = setInterval(() => {
+      logRenderProgressSnapshot(page, 'periodic').catch(() => {});
+    }, 30000);
 
     if (config.smokeSeconds > 0) {
       await page.waitForTimeout(config.smokeSeconds * 1000);
@@ -1213,7 +1277,11 @@ async function main() {
             ok: true,
             mode: activeRecording?.mode || null,
             phase: activeRecording?.phase,
+            active: Boolean(activeRecording?.active),
+            state: app.state,
+            elapsed: app.elapsed,
             racesCompleted: activeRecording?.racesCompleted,
+            totalRaces: activeRecording?.totalRaces,
             cupStatus: app.cupMode?.status,
             champion: app.cupMode?.champion?.name || null,
           };
@@ -1223,22 +1291,30 @@ async function main() {
         null,
         { timeout: waitTimeout, polling: 1000 },
       ).then((handle) => handle.jsonValue()).catch(async (error) => {
-        const state = await page.evaluate(() => {
-          const app = window.__MARBLE_RACE_APP__;
-          return app ? {
-            state: app.state,
-            mode: app.singleRecording?.playwrightRender ? app.singleRecording.mode : app.continuousRecording?.playwrightRender ? app.continuousRecording.mode : app.autoCupRecording?.mode,
-            phase: app.singleRecording?.playwrightRender ? app.singleRecording.phase : app.continuousRecording?.playwrightRender ? app.continuousRecording.phase : app.autoCupRecording?.phase,
-            racesCompleted: app.singleRecording?.playwrightRender ? null : app.continuousRecording?.playwrightRender ? app.continuousRecording.racesCompleted : app.autoCupRecording?.racesCompleted,
-            cupStatus: app.cupMode?.status,
-            stage: app.getCupStage?.(),
-            cameraMode: app.cameraMode,
-            activeDefaultCameraShot: app.getDefaultCameraMode?.(),
-            activeCameraMode: app.activeCameraMode,
-            enableAllCameraMouseOrbit: app.enableAllCameraMouseOrbit,
-            rightUICollapsed: app.rightUICollapsed,
-          } : null;
-        }).catch(() => null);
+        const state = await readRenderProgressSnapshot(page);
+        if (isTerminalContinuousCompletionState(state)) {
+          log('[progress] timeout reached after app completed all races; continuing to recorder finalization', JSON.stringify(state));
+          await page.evaluate(() => {
+            const app = window.__MARBLE_RACE_APP__;
+            if (app?.continuousRecording?.playwrightRender) {
+              app.stopContinuousRecording?.({ stopRecorder: false, reason: 'completed-all-races-timeout-finalize' });
+              app.continuousRecording.active = false;
+              app.continuousRecording.phase = 'completed-all-races';
+            }
+          }).catch(() => {});
+          return {
+            done: true,
+            ok: true,
+            mode: state.mode,
+            phase: state.phase,
+            active: state.active,
+            state: state.state,
+            elapsed: state.elapsed,
+            racesCompleted: state.racesCompleted,
+            totalRaces: state.totalRaces,
+            allowedAfterTimeout: true,
+          };
+        }
         fail(`Timed out waiting for auto cup completion. Last state: ${JSON.stringify(state)}`, error);
       });
       log('Auto cup completed:', JSON.stringify(completion));
@@ -1246,6 +1322,11 @@ async function main() {
 
     progress('capture-finalize', 'collect metadata + stop recorder');
     await page.waitForTimeout(1000);
+    if (progressLogPoller) {
+      clearInterval(progressLogPoller);
+      progressLogPoller = null;
+    }
+    await logRenderProgressSnapshot(page, 'finalize');
     if (eventMarkerPoller) {
       clearInterval(eventMarkerPoller);
       eventMarkerPoller = null;
@@ -1344,6 +1425,10 @@ async function main() {
     await browser.close();
     browser = null;
   } finally {
+    if (progressLogPoller) {
+      clearInterval(progressLogPoller);
+      progressLogPoller = null;
+    }
     if (eventMarkerPoller) {
       clearInterval(eventMarkerPoller);
       eventMarkerPoller = null;
