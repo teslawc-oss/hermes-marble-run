@@ -371,6 +371,8 @@ export function makeFilter({ width, height, safeCrop = 'hud-safe' }) {
     off: { zoom: 1, x: 0.5, y: 0.5 },
     center: { zoom: 1.12, x: 0.5, y: 0.5 },
     'hud-safe': { zoom: 1.65, x: 0.20, y: 0.30 },
+    'composite-center': { zoom: 1.55, x: 0.50, y: 0.52 },
+    'composite-no-live-event': { zoom: 1.75, x: 0.40, y: 0.58 },
   };
   const profile = cropProfiles[mode] || cropProfiles['hud-safe'];
   const scaledWidth = Math.round(width * profile.zoom);
@@ -407,17 +409,14 @@ function formatDurationBadge(durationSeconds) {
 export function makeThumbnailHtml({ framePath, title, width, height, fontFamily, layout = null, badgeText = '' }) {
   const frameUrl = pathToFileURL(framePath).href;
   const { lines, colors, fontSize } = computeThumbnailTextStyle({ title, width, height });
-  const placement = layout?.css || { left: Math.round(width * 0.045), top: Math.round(height * 0.10), width: Math.round(width * 0.62), align: 'left' };
-  const strokeWidth = Math.max(5, Math.round(fontSize * 0.058));
+  const centeredPlacement = { left: Math.round(width * 0.07), top: Math.round(height * 0.50), width: Math.round(width * 0.86), align: 'center' };
+  const placement = layout?.css || centeredPlacement;
+  const strokeWidth = Math.max(5, Math.round(fontSize * 0.065));
   const softShadow = Math.round(fontSize * 0.045);
   const rowGap = Math.round(fontSize * (lines.length >= 3 ? 0.03 : 0.13));
   const renderedLines = lines.map((line, index) => `<span class=\"title-line title-line-${index + 1}\">${escapeHtml(line)}<\/span>`).join('');
   const lineCss = lines.map((line, index) => {
-    const offset = placement.align === 'right'
-      ? (index % 2 === 0 ? 0 : -Math.round(width * 0.055))
-      : placement.align === 'center'
-        ? (index % 2 === 0 ? -Math.round(width * 0.025) : Math.round(width * 0.035))
-        : (index % 2 === 0 ? 0 : Math.round(width * 0.075));
+    const offset = index % 2 === 0 ? -Math.round(width * 0.015) : Math.round(width * 0.018);
     return `.title-line-${index + 1} { color: ${colors[index] || colors[0]}; transform: translateX(${offset}px); }`;
   }).join('\n');
   const badgeVisible = Boolean(badgeText) && lines.length <= 2;
@@ -426,22 +425,21 @@ export function makeThumbnailHtml({ framePath, title, width, height, fontFamily,
 html, body { margin: 0; width: ${width}px; height: ${height}px; overflow: hidden; background: #000; }
 .stage { position: relative; width: ${width}px; height: ${height}px; font-family: ${fontFamily}; }
 .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: saturate(1.10) contrast(1.04); }
-.band { position: absolute; left: ${Math.max(0, placement.left - 42)}px; top: ${Math.max(0, placement.top - 24)}px; width: ${Math.min(width, placement.width + 92)}px; height: ${Math.min(height, Math.round(fontSize * lines.length * 1.08 + rowGap * Math.max(0, lines.length - 1) + 58))}px; border-radius: 34px; background: linear-gradient(90deg, rgba(0,0,0,.48), rgba(0,0,0,.26), rgba(0,0,0,.04)); filter: blur(.1px); }
 .title {
   position: absolute; left: ${placement.left}px; top: ${placement.top}px; width: ${placement.width}px;
-  display: flex; flex-direction: column; align-items: ${placement.align === 'right' ? 'flex-end' : placement.align === 'center' ? 'center' : 'flex-start'};
-  gap: ${rowGap}px; box-sizing: border-box; transform: rotate(-6deg);
-  font-size: ${fontSize}px; line-height: .88; font-weight: 1000; letter-spacing: -0.058em; text-transform: uppercase; text-align: ${placement.align};
+  display: flex; flex-direction: column; align-items: center;
+  gap: ${rowGap}px; box-sizing: border-box; transform: translateY(-50%) rotate(-5deg);
+  font-size: ${fontSize}px; line-height: .88; font-weight: 1000; letter-spacing: -0.058em; text-transform: uppercase; text-align: center;
 }
 .title-line {
   display: block; white-space: nowrap; padding: 0 .06em;
   -webkit-text-stroke: ${strokeWidth}px #4d2200;
-  text-shadow: 0 ${softShadow}px 0 rgba(255,132,0,.72), 0 0 ${Math.round(fontSize * 0.13)}px rgba(255,255,255,.42), 0 ${Math.round(fontSize * 0.08)}px ${Math.round(fontSize * 0.07)}px rgba(0,0,0,.44);
-  filter: drop-shadow(0 ${Math.round(fontSize * 0.04)}px ${Math.round(fontSize * 0.03)}px rgba(0,0,0,.40));
+  text-shadow: 0 ${softShadow}px 0 rgba(255,132,0,.76), 0 0 ${Math.round(fontSize * 0.16)}px rgba(255,255,255,.46), 0 ${Math.round(fontSize * 0.09)}px ${Math.round(fontSize * 0.08)}px rgba(0,0,0,.54);
+  filter: drop-shadow(0 ${Math.round(fontSize * 0.045)}px ${Math.round(fontSize * 0.035)}px rgba(0,0,0,.48));
 }
 ${lineCss}
 .badge { display: ${badgeVisible ? 'block' : 'none'}; position: absolute; right: 48px; bottom: 44px; background: rgba(255,222,79,.94); color: #291300; border: 6px solid #4b2100; border-radius: 26px; padding: 10px 24px; font: 900 40px 'Arial Black', Impact, sans-serif; transform: rotate(4deg); box-shadow: 0 8px 0 rgba(0,0,0,.34); }
-</style></head><body><div class="stage"><img class="bg" src="${frameUrl}"><div class="band"></div><div class="title">${renderedLines}</div><div class="badge">${escapeHtml(badgeText)}</div></div></body></html>`;
+</style></head><body><div class="stage"><img class="bg" src="${frameUrl}"><div class="title">${renderedLines}</div><div class="badge">${escapeHtml(badgeText)}</div></div></body></html>`;
 }
 
 export function buildThumbnailPlan({ config, metadata = {}, durationSeconds }) {
@@ -514,16 +512,7 @@ async function main() {
       '-q:v', '2',
       framePath,
     ]);
-    const layout = config.textPosition === 'auto'
-      ? analyzeFrameLayout(framePath, config.width, config.height)
-      : { selected: config.textPosition, css: null, zones: [] };
-    const presetLayouts = {
-      left: { left: Math.round(config.width * 0.045), top: Math.round(config.height * 0.10), width: Math.round(config.width * 0.62), align: 'left' },
-      right: { left: Math.round(config.width * 0.36), top: Math.round(config.height * 0.10), width: Math.round(config.width * 0.60), align: 'right' },
-      top: { left: Math.round(config.width * 0.08), top: Math.round(config.height * 0.05), width: Math.round(config.width * 0.84), align: 'center' },
-      bottom: { left: Math.round(config.width * 0.08), top: Math.round(config.height * 0.50), width: Math.round(config.width * 0.84), align: 'center' },
-    };
-    if (!layout.css) layout.css = presetLayouts[layout.selected] || presetLayouts.left;
+    const layout = { selected: 'center', css: { left: Math.round(config.width * 0.07), top: Math.round(config.height * 0.50), width: Math.round(config.width * 0.86), align: 'center' }, zones: [], fixed: true };
     summary.textLayout = layout;
     if (!config.noProbeLog) log('Text layout:', JSON.stringify(summary.textLayout));
     writeFileSync(htmlPath, makeThumbnailHtml({ framePath, title, width: config.width, height: config.height, fontFamily: config.fontFamily, layout, badgeText }));

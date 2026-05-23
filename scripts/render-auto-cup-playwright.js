@@ -41,6 +41,10 @@ const config = {
   showRightUi: args.get('show-right-ui') !== 'false' && process.env.MARBLE_RENDER_SHOW_RIGHT_UI !== 'false',
   disableMouseOrbit: args.get('disable-mouse-orbit') !== 'false' && process.env.MARBLE_RENDER_DISABLE_MOUSE_ORBIT !== 'false',
   audio: args.get('audio') !== 'false' && process.env.MARBLE_RENDER_AUDIO !== 'false',
+  videoCapture: ['playwright', 'canvas'].includes(args.get('video-capture') || process.env.MARBLE_RENDER_VIDEO_CAPTURE) ? (args.get('video-capture') || process.env.MARBLE_RENDER_VIDEO_CAPTURE) : 'playwright',
+  videoCanvasLayout: ['horizontal', 'vertical'].includes(String(args.get('video-canvas') || args.get('video-canvas-layout') || process.env.MARBLE_RENDER_VIDEO_CANVAS || 'horizontal').toLowerCase())
+    ? String(args.get('video-canvas') || args.get('video-canvas-layout') || process.env.MARBLE_RENDER_VIDEO_CANVAS || 'horizontal').toLowerCase()
+    : 'horizontal',
   outputFormat: (args.get('format') || process.env.MARBLE_RENDER_FORMAT || path.extname(args.get('output') || process.env.MARBLE_RENDER_OUTPUT || '').replace(/^\./, '') || 'webm').toLowerCase(),
   thumbnail: args.get('thumbnail') !== 'false' && process.env.MARBLE_RENDER_THUMBNAIL !== 'false',
   thumbnailTitle: args.get('thumbnail-title') || process.env.MARBLE_RENDER_THUMBNAIL_TITLE || '',
@@ -259,7 +263,9 @@ function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput
   const template = readYoutubeMetadataTemplate(config.youtubeMetadataTemplate);
   const raceCount = config.mode === 'continuous'
     ? config.multipleRaceCount
-    : Number(renderSummary.raceCount || renderSummary.stageSummaries?.length || template.defaults.raceCount || 10);
+    : (config.mode === 'single'
+      ? 1
+      : Number(renderSummary.raceCount || renderSummary.stageSummaries?.length || template.defaults.raceCount || 10));
   const marbleCount = Number(renderSummary.marbleCount || config.cupSize || template.defaults.marbleCount || 30);
   const baseTitle = config.thumbnailTitle || renderSummary.thumbnailTitle || renderSummary.title || renderSummary.cupName || config.cupName || template.defaults.fallbackTitle;
   const recentTitles = readYoutubeTitleHistory(config.youtubeTitleHistory, config.youtubeTitleHistoryLimit);
@@ -268,7 +274,7 @@ function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput
   const titleType = titleResult.titleType || classifyYoutubeTitleType(title);
   const descriptionBody = template.descriptionTemplate
     .replace(/\{raceCount\}/g, String(raceCount))
-    .replace(/\{raceCountLabel\}/g, String(raceCount))
+    .replace(/\{raceCountLabel\}/g, raceCount === 1 ? '1 exciting race' : `${raceCount} exciting races`)
     .replace(/\{marbleCount\}/g, String(marbleCount))
     .replace(/\{title\}/g, title)
     .replace(/\{cupName\}/g, sanitizeSingleLine(config.cupName || renderSummary.cupName || 'Marble Rush'));
@@ -569,6 +575,8 @@ async function main() {
       disableMouseOrbit: config.disableMouseOrbit,
       renderPerformanceMode: config.renderPerformanceMode,
       audio: config.audio,
+      videoCapture: config.videoCapture,
+      videoCanvasLayout: config.videoCanvasLayout,
       outputFormat: config.outputFormat,
       mode: config.mode,
       multipleRaceCount: config.multipleRaceCount,
@@ -595,7 +603,7 @@ async function main() {
     const context = await browser.newContext({
       viewport: { width: config.captureWidth, height: config.captureHeight },
       deviceScaleFactor: 1,
-      recordVideo: { dir: videoDir, size: { width: config.captureWidth, height: config.captureHeight } },
+      ...(config.videoCapture === 'playwright' ? { recordVideo: { dir: videoDir, size: { width: config.captureWidth, height: config.captureHeight } } } : {}),
     });
     const page = await context.newPage();
     page.on('console', (message) => {
@@ -613,6 +621,78 @@ async function main() {
       }, audioCaptureBridge);
       if (!audioCaptureInfo?.active) fail(`Could not start audio capture: ${JSON.stringify(audioCaptureInfo)}`);
       log('Audio capture started:', JSON.stringify(audioCaptureInfo));
+    }
+    let canvasCaptureInfo = null;
+    if (config.videoCapture === 'canvas') {
+      canvasCaptureInfo = await page.evaluate(async ({ fps, width, height, videoCanvasLayout }) => {
+        const app = window.__MARBLE_RACE_APP__;
+        const requestedLayout = ['horizontal', 'vertical'].includes(String(videoCanvasLayout || '').toLowerCase()) ? String(videoCanvasLayout).toLowerCase() : 'horizontal';
+        const canvas = app?.setVideoCanvasLayout?.(requestedLayout) && app?.getVideoCaptureCanvas?.() || app?.getVideoCaptureCanvas?.() || app?.renderer?.domElement || document.querySelector('canvas');
+        if (!canvas) return { ok: false, reason: 'canvas-missing' };
+        if (typeof canvas.captureStream !== 'function') return { ok: false, reason: 'captureStream-unsupported' };
+        if (typeof MediaRecorder === 'undefined') return { ok: false, reason: 'MediaRecorder-unsupported' };
+        const mimeTypes = [
+          'video/webm;codecs=vp9',
+          'video/webm;codecs=vp8',
+          'video/webm',
+        ];
+        const mimeType = mimeTypes.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+        const stream = canvas.captureStream(Math.max(1, Math.round(Number(fps) || 60)));
+        const recorderOptions = mimeType ? { mimeType, videoBitsPerSecond: 24_000_000 } : { videoBitsPerSecond: 24_000_000 };
+        const chunks = [];
+        const recorder = new MediaRecorder(stream, recorderOptions);
+        recorder.addEventListener('dataavailable', (event) => {
+          if (event.data?.size > 0) chunks.push(event.data);
+        });
+        const stopped = new Promise((resolve) => {
+          recorder.addEventListener('stop', async () => {
+            const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'video/webm' });
+            const buffer = await blob.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            const batchSize = 0x8000;
+            for (let i = 0; i < bytes.length; i += batchSize) {
+              binary += String.fromCharCode(...bytes.subarray(i, i + batchSize));
+            }
+            resolve({
+              ok: true,
+              mimeType: recorder.mimeType || mimeType || 'video/webm',
+              requestedFps: Math.max(1, Math.round(Number(fps) || 60)),
+              width: canvas.width || width,
+              height: canvas.height || height,
+              videoCanvas: app?.getVideoCompositeCanvasInfo?.() || null,
+              trackSettings: stream.getVideoTracks()[0]?.getSettings?.() || null,
+              bytes: bytes.length,
+              base64: btoa(binary),
+            });
+          }, { once: true });
+        });
+        window.__MARBLE_RENDER_CANVAS_CAPTURE__ = {
+          stream,
+          recorder,
+          chunks,
+          startedAt: performance.now(),
+          getInfo: () => ({
+            ok: true,
+            state: recorder.state,
+            mimeType: recorder.mimeType || mimeType || 'video/webm',
+            requestedFps: Math.max(1, Math.round(Number(fps) || 60)),
+            chunkCount: chunks.length,
+            elapsedSeconds: (performance.now() - window.__MARBLE_RENDER_CANVAS_CAPTURE__.startedAt) / 1000,
+            trackSettings: stream.getVideoTracks()[0]?.getSettings?.() || null,
+            videoCanvas: app?.getVideoCompositeCanvasInfo?.() || null,
+          }),
+          stop: () => {
+            if (recorder.state === 'recording') recorder.stop();
+            else if (recorder.state === 'inactive') return stopped;
+            return stopped.finally(() => stream.getTracks().forEach((track) => track.stop()));
+          },
+        };
+        recorder.start(1000);
+        return window.__MARBLE_RENDER_CANVAS_CAPTURE__.getInfo();
+      }, { fps: config.fps, width: config.captureWidth, height: config.captureHeight, videoCanvasLayout: config.videoCanvasLayout });
+      if (!canvasCaptureInfo?.ok) fail(`Could not start canvas video capture: ${JSON.stringify(canvasCaptureInfo)}`);
+      log('Canvas video capture started:', JSON.stringify(canvasCaptureInfo));
     }
 
     const started = await page.evaluate(({ mode, multipleRaceCount, cupSize, trackLength, targetSeconds, lengthMode, smokeSeconds, maxRaceSeconds, cupName, ttsVoice, obstaclePreset, obstacleDistribution, obstacleTypes, showLeftUi, showRightUi, disableMouseOrbit, renderPerformanceMode }) => {
@@ -1116,6 +1196,18 @@ async function main() {
       } : { measuredFps: null };
     }).catch(() => null);
     if (runtimeFpsSummary) log('Runtime FPS summary:', JSON.stringify(runtimeFpsSummary));
+    let canvasSourceWebm = null;
+    if (config.videoCapture === 'canvas') {
+      const canvasResult = await page.evaluate(() => {
+        const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__;
+        if (!capture) return { ok: false, reason: 'capture-missing' };
+        return capture.stop();
+      });
+      if (!canvasResult?.ok || !canvasResult.base64) fail(`Canvas video capture failed: ${JSON.stringify(canvasResult)}`);
+      canvasSourceWebm = path.join(videoDir, `canvas-capture-${defaultStamp}.webm`);
+      writeFileSync(canvasSourceWebm, Buffer.from(canvasResult.base64, 'base64'));
+      log('Canvas video captured:', JSON.stringify({ ...canvasResult, base64: undefined, webm: canvasSourceWebm, bytes: statSync(canvasSourceWebm).size }));
+    }
     if (config.audio) {
       const audioResult = await page.evaluate(() => {
         const capture = window.__MARBLE_RENDER_AUDIO_CAPTURE__;
@@ -1140,19 +1232,25 @@ async function main() {
     if (server) server.kill('SIGTERM');
   }
 
-  const webmFiles = [];
-  const collect = (dir) => {
-    for (const entry of readdirSync(dir)) {
-      const full = path.join(dir, entry);
-      const st = statSync(full);
-      if (st.isDirectory()) collect(full);
-      else if (/\.webm$/i.test(entry)) webmFiles.push(full);
-    }
-  };
-  collect(videoDir);
-  if (!webmFiles.length) fail(`No Playwright .webm video found in ${videoDir}`);
-  webmFiles.sort((a, b) => statSync(b).size - statSync(a).size);
-  const sourceWebm = webmFiles[0];
+  let sourceWebm = null;
+  if (config.videoCapture === 'canvas') {
+    sourceWebm = path.join(videoDir, `canvas-capture-${defaultStamp}.webm`);
+    if (!existsSync(sourceWebm) || statSync(sourceWebm).size <= 0) fail(`No canvas capture .webm video found: ${sourceWebm}`);
+  } else {
+    const webmFiles = [];
+    const collect = (dir) => {
+      for (const entry of readdirSync(dir)) {
+        const full = path.join(dir, entry);
+        const st = statSync(full);
+        if (st.isDirectory()) collect(full);
+        else if (/\.webm$/i.test(entry)) webmFiles.push(full);
+      }
+    };
+    collect(videoDir);
+    if (!webmFiles.length) fail(`No Playwright .webm video found in ${videoDir}`);
+    webmFiles.sort((a, b) => statSync(b).size - statSync(a).size);
+    sourceWebm = webmFiles[0];
+  }
   try {
     log('Source WebM probe:', JSON.stringify(ffprobeJson(sourceWebm)));
   } catch (error) {
