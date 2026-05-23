@@ -4,6 +4,29 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (a, b, t) => a + (b - a) * t;
+const VIDEO_CANVAS_LAYOUTS = {
+  horizontal: {
+    key: 'horizontal',
+    label: 'Long / Horizontal Video Canvas',
+    width: 1920,
+    height: 1080,
+    fit: 'cover',
+  },
+  vertical: {
+    key: 'vertical',
+    label: 'Shorts / Vertical Video Canvas',
+    width: 1080,
+    height: 1920,
+    fit: 'cover',
+  },
+};
+
+const CANVAS_VIEWER_OVERLAY = {
+  enabled: true,
+  channelHandle: '@VibeCodeCreator',
+  ctaPrimary: 'LIKE & SUBSCRIBE',
+  maxStandingRows: 5,
+};
 const TRACK_PRESETS = {
   short: { label: 'Short', base: 240, variation: 56, segment: 9, branches: 1 },
   medium: { label: 'Standard', base: 380, variation: 90, segment: 10, branches: 2 },
@@ -899,6 +922,14 @@ class MarbleRace {
     this.fpsFrames = 0;
     this.fpsTime = 0;
     this.lastNameLabelUpdate = 0;
+    this.viewerOverlayCanvas = null;
+    this.viewerOverlayContext = null;
+    this.lastViewerOverlaySummary = null;
+    this.videoCanvasLayoutKey = 'horizontal';
+    this.videoCanvasLayout = { ...VIDEO_CANVAS_LAYOUTS.horizontal };
+    this.videoCompositeCanvas = null;
+    this.videoCompositeContext = null;
+    this.lastVideoCompositeSummary = null;
     this.pathPoints = [];
     this.trackSamples = [];
     this.branchSegments = [];
@@ -1247,6 +1278,7 @@ class MarbleRace {
     this.renderer.shadowMap.enabled = PERFORMANCE_TUNING.shadows;
     this.renderer.shadowMap.type = THREE.BasicShadowMap;
     this.container.appendChild(this.renderer.domElement);
+    this.initViewerCanvasOverlay();
     this.scene.add(this.guidePointGroup);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enabled = true;
@@ -1273,6 +1305,291 @@ class MarbleRace {
     const rim = new THREE.DirectionalLight(0x88ccff, 1.1);
     rim.position.set(58, 46, -120);
     this.scene.add(rim);
+  }
+
+  initVideoCompositeCanvas(layoutKey = 'horizontal') {
+    const layout = VIDEO_CANVAS_LAYOUTS[layoutKey] || VIDEO_CANVAS_LAYOUTS.horizontal;
+    const canvas = document.createElement('canvas');
+    canvas.width = layout.width;
+    canvas.height = layout.height;
+    canvas.dataset.videoCanvasLayout = layout.key;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    this.videoCanvasLayoutKey = layout.key;
+    this.videoCanvasLayout = { ...layout };
+    this.videoCompositeCanvas = canvas;
+    this.videoCompositeContext = ctx;
+    this.lastVideoCompositeSummary = null;
+    return canvas;
+  }
+
+  setVideoCanvasLayout(layoutKey = 'horizontal') {
+    const requested = String(layoutKey || 'horizontal').toLowerCase();
+    const key = VIDEO_CANVAS_LAYOUTS[requested] ? requested : 'horizontal';
+    if (!this.videoCompositeCanvas || this.videoCanvasLayoutKey !== key) {
+      this.initVideoCompositeCanvas(key);
+    }
+    return this.getVideoCompositeCanvasInfo();
+  }
+
+  getVideoCompositeCanvasInfo() {
+    return {
+      enabled: Boolean(this.videoCompositeCanvas),
+      layout: this.videoCanvasLayoutKey || 'horizontal',
+      label: this.videoCanvasLayout?.label || VIDEO_CANVAS_LAYOUTS.horizontal.label,
+      width: this.videoCompositeCanvas?.width || this.videoCanvasLayout?.width || 1920,
+      height: this.videoCompositeCanvas?.height || this.videoCanvasLayout?.height || 1080,
+      fit: this.videoCanvasLayout?.fit || 'cover',
+      overlay: this.lastViewerOverlaySummary || null,
+      lastComposite: this.lastVideoCompositeSummary || null,
+    };
+  }
+
+  initViewerCanvasOverlay() {
+    const canvas = document.createElement('canvas');
+    const layout = this.videoCanvasLayout || VIDEO_CANVAS_LAYOUTS.horizontal;
+    canvas.width = layout.width;
+    canvas.height = layout.height;
+    const ctx = canvas.getContext('2d');
+    this.viewerOverlayCanvas = canvas;
+    this.viewerOverlayContext = ctx;
+    this.initVideoCompositeCanvas(this.videoCanvasLayoutKey || 'horizontal');
+  }
+
+  drawViewerRoundedRect(ctx, x, y, w, h, r = 18) {
+    const radius = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.arcTo(x + w, y, x + w, y + h, radius);
+    ctx.arcTo(x + w, y + h, x, y + h, radius);
+    ctx.arcTo(x, y + h, x, y, radius);
+    ctx.arcTo(x, y, x + w, y, radius);
+    ctx.closePath();
+  }
+
+  drawViewerText(ctx, text, x, y, {
+    font = '700 34px Arial Black, Impact, system-ui, sans-serif',
+    fill = '#ffffff',
+    stroke = 'rgba(0,0,0,0.8)',
+    strokeWidth = 6,
+    align = 'left',
+    maxWidth = null,
+  } = {}) {
+    ctx.save();
+    ctx.font = font;
+    ctx.textAlign = align;
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    if (strokeWidth > 0) {
+      ctx.lineWidth = strokeWidth;
+      ctx.strokeStyle = stroke;
+      ctx.strokeText(String(text || ''), x, y, maxWidth || undefined);
+    }
+    ctx.fillStyle = fill;
+    ctx.fillText(String(text || ''), x, y, maxWidth || undefined);
+    ctx.restore();
+  }
+
+  getViewerOverlayCaption() {
+    const active = this.activeCaption && this.elapsed <= this.activeCaption.expiresAt ? this.activeCaption : null;
+    if (active) return { title: active.title || 'LIVE EVENT', detail: active.detail || '' };
+    const leader = this.getRanking({ force: false })[0];
+    if (this.state === 'running' && leader) return { title: 'LIVE EVENT', detail: `${leader.name} leads the rush` };
+    if (this.countdownActive) return { title: 'GET READY', detail: 'The gate is about to open' };
+    if (this.state === 'finished') return { title: 'RACE COMPLETE', detail: this.buildPodiumResultLine?.() || 'Podium locked' };
+    return { title: 'MARBLE RUSH', detail: 'Pick your winner' };
+  }
+
+  drawViewerCanvasOverlay() {
+    if (!CANVAS_VIEWER_OVERLAY.enabled || !this.viewerOverlayContext || !this.viewerOverlayCanvas) return;
+    const ctx = this.viewerOverlayContext;
+    const canvas = this.viewerOverlayCanvas;
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const ranking = this.getRanking({ force: false }).slice(0, CANVAS_VIEWER_OVERLAY.maxStandingRows);
+    const leader = ranking[0] || null;
+    const leaderProgress = clamp(leader?.progress || 0, 0, 1);
+    const leaderDistance = Math.max(0, Math.min(this.trackLength || 0, leader?.distance || 0));
+    const caption = this.getViewerOverlayCaption();
+
+    // Live Event caption, top-left.
+    const capX = 46;
+    const capY = 38;
+    const capW = 760;
+    const capH = 132;
+    ctx.save();
+    const capGradient = ctx.createLinearGradient(capX, capY, capX + capW, capY + capH);
+    capGradient.addColorStop(0, 'rgba(255, 128, 0, 0.92)');
+    capGradient.addColorStop(1, 'rgba(255, 214, 64, 0.78)');
+    this.drawViewerRoundedRect(ctx, capX, capY, capW, capH, 30);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.56)';
+    ctx.fill();
+    this.drawViewerRoundedRect(ctx, capX + 8, capY + 8, 160, 40, 18);
+    ctx.fillStyle = capGradient;
+    ctx.fill();
+    this.drawViewerText(ctx, 'LIVE EVENT', capX + 88, capY + 30, { font: '900 23px Arial Black, Impact, sans-serif', fill: '#131313', strokeWidth: 0, align: 'center' });
+    this.drawViewerText(ctx, caption.title, capX + 30, capY + 78, { font: '900 44px Arial Black, Impact, sans-serif', fill: '#fff7b1', maxWidth: capW - 60 });
+    this.drawViewerText(ctx, caption.detail, capX + 30, capY + 116, { font: '800 27px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: capW - 60 });
+    ctx.restore();
+
+    // Live Standing, right side.
+    const boardX = w - 438;
+    const boardY = 44;
+    const boardW = 390;
+    const rowH = 62;
+    const boardH = 94 + rowH * CANVAS_VIEWER_OVERLAY.maxStandingRows;
+    this.drawViewerRoundedRect(ctx, boardX, boardY, boardW, boardH, 28);
+    ctx.fillStyle = 'rgba(3, 8, 18, 0.74)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.32)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    this.drawViewerText(ctx, 'LIVE STANDING', boardX + 24, boardY + 36, { font: '900 31px Arial Black, Impact, sans-serif', fill: '#8df7ff', strokeWidth: 5 });
+    ranking.forEach((data, index) => {
+      const y = boardY + 74 + index * rowH;
+      const color = `#${(data.color || 0xffffff).toString(16).padStart(6, '0')}`;
+      this.drawViewerRoundedRect(ctx, boardX + 18, y, boardW - 36, 50, 16);
+      ctx.fillStyle = index === 0 ? 'rgba(255, 214, 64, 0.28)' : 'rgba(255,255,255,0.10)';
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(boardX + 88, y + 25, 12, 0, Math.PI * 2);
+      ctx.fill();
+      this.drawViewerText(ctx, `#${index + 1}`, boardX + 34, y + 26, { font: '900 23px Arial Black, Impact, sans-serif', fill: index === 0 ? '#ffdf3f' : '#ffffff', strokeWidth: 4 });
+      this.drawViewerText(ctx, data.name || `Marble ${data.id + 1}`, boardX + 116, y + 25, { font: '800 22px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: 168 });
+      const label = data.defeated ? 'DNF' : data.finished ? `${(data.finishTime || this.elapsed || 0).toFixed(1)}s` : `${Math.round((data.progress || 0) * 100)}%`;
+      this.drawViewerText(ctx, label, boardX + boardW - 36, y + 25, { font: '900 22px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, align: 'right' });
+    });
+
+    // Bottom CTA and channel handle.
+    const ctaX = 54;
+    const ctaY = h - 132;
+    const ctaW = 610;
+    const ctaH = 86;
+    this.drawViewerRoundedRect(ctx, ctaX, ctaY, ctaW, ctaH, 28);
+    ctx.fillStyle = 'rgba(255, 36, 66, 0.92)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.ctaPrimary, ctaX + 32, ctaY + 33, { font: '900 37px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 5 });
+    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.channelHandle, ctaX + 34, ctaY + 66, { font: '800 25px Arial, system-ui, sans-serif', fill: '#fff3a0', strokeWidth: 4 });
+
+    // Time / progress / distance lower-third.
+    const infoX = 690;
+    const infoY = h - 116;
+    const infoW = 700;
+    const infoH = 66;
+    this.drawViewerRoundedRect(ctx, infoX, infoY, infoW, infoH, 22);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
+    ctx.fill();
+    const progressX = infoX + 238;
+    const progressY = infoY + 38;
+    const progressW = 250;
+    const progressH = 12;
+    this.drawViewerText(ctx, `TIME ${this.elapsed.toFixed(1)}s`, infoX + 28, infoY + 34, { font: '900 26px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 4 });
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, progressW, progressH, 7);
+    ctx.fill();
+    ctx.fillStyle = '#35f2ff';
+    this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, Math.max(6, progressW * leaderProgress), progressH, 7);
+    ctx.fill();
+    this.drawViewerText(ctx, `PROGRESS ${Math.round(leaderProgress * 100)}%`, progressX + progressW + 18, infoY + 25, { font: '900 20px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, maxWidth: 168 });
+    this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, progressX + progressW + 18, infoY + 50, { font: '800 17px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, maxWidth: 168 });
+
+    this.lastViewerOverlaySummary = {
+      enabled: true,
+      canvasSize: `${w}x${h}`,
+      liveEventTitle: caption.title,
+      liveEventDetail: caption.detail,
+      liveStandingCount: ranking.length,
+      channelHandle: CANVAS_VIEWER_OVERLAY.channelHandle,
+      ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
+      elapsed: Number(this.elapsed.toFixed(2)),
+      leaderProgress: Number(leaderProgress.toFixed(3)),
+      leaderDistance: Number(leaderDistance.toFixed(1)),
+    };
+  }
+
+  getVideoCompositeSourceRect(sourceWidth, sourceHeight, targetWidth, targetHeight, fit = 'cover') {
+    const srcW = Math.max(1, Number(sourceWidth) || 1);
+    const srcH = Math.max(1, Number(sourceHeight) || 1);
+    const dstW = Math.max(1, Number(targetWidth) || 1);
+    const dstH = Math.max(1, Number(targetHeight) || 1);
+    const sourceRatio = srcW / srcH;
+    const targetRatio = dstW / dstH;
+    let sx = 0;
+    let sy = 0;
+    let sw = srcW;
+    let sh = srcH;
+    if (fit === 'contain') {
+      return { sx, sy, sw, sh, dx: 0, dy: 0, dw: dstW, dh: dstH, letterbox: true };
+    }
+    if (sourceRatio > targetRatio) {
+      sw = srcH * targetRatio;
+      sx = (srcW - sw) / 2;
+    } else if (sourceRatio < targetRatio) {
+      sh = srcW / targetRatio;
+      sy = (srcH - sh) / 2;
+    }
+    return { sx, sy, sw, sh, dx: 0, dy: 0, dw: dstW, dh: dstH, letterbox: false };
+  }
+
+  drawVideoCompositeFrame() {
+    const composite = this.videoCompositeCanvas;
+    const ctx = this.videoCompositeContext;
+    const source = this.renderer?.domElement;
+    if (!composite || !ctx || !source) return null;
+    const layout = this.videoCanvasLayout || VIDEO_CANVAS_LAYOUTS.horizontal;
+    const w = composite.width;
+    const h = composite.height;
+    ctx.save();
+    ctx.fillStyle = '#020611';
+    ctx.fillRect(0, 0, w, h);
+    const rect = this.getVideoCompositeSourceRect(source.width || source.clientWidth || w, source.height || source.clientHeight || h, w, h, layout.fit || 'cover');
+    try {
+      ctx.drawImage(source, rect.sx, rect.sy, rect.sw, rect.sh, rect.dx, rect.dy, rect.dw, rect.dh);
+    } catch (error) {
+      this.lastVideoCompositeSummary = {
+        ok: false,
+        reason: error?.message || 'drawImage-failed',
+        layout: layout.key,
+        canvasSize: `${w}x${h}`,
+      };
+      ctx.restore();
+      return this.lastVideoCompositeSummary;
+    }
+    if (this.viewerOverlayCanvas) {
+      ctx.drawImage(this.viewerOverlayCanvas, 0, 0, w, h);
+    }
+    ctx.restore();
+    this.lastVideoCompositeSummary = {
+      ok: true,
+      layout: layout.key,
+      label: layout.label,
+      canvasSize: `${w}x${h}`,
+      sourceSize: `${source.width || source.clientWidth || 0}x${source.height || source.clientHeight || 0}`,
+      sourceRect: {
+        sx: Number(rect.sx.toFixed(1)),
+        sy: Number(rect.sy.toFixed(1)),
+        sw: Number(rect.sw.toFixed(1)),
+        sh: Number(rect.sh.toFixed(1)),
+      },
+      overlay: this.lastViewerOverlaySummary || null,
+    };
+    return this.lastVideoCompositeSummary;
+  }
+
+  getVideoCaptureCanvas() {
+    if (!this.videoCompositeCanvas) this.initVideoCompositeCanvas(this.videoCanvasLayoutKey || 'horizontal');
+    this.drawVideoCompositeFrame();
+    return this.videoCompositeCanvas || this.renderer?.domElement || document.querySelector('canvas');
+  }
+
+  renderViewerCanvasOverlay() {
+    this.drawViewerCanvasOverlay();
+    this.drawVideoCompositeFrame();
   }
 
   initPhysics() {
@@ -1338,7 +1655,7 @@ class MarbleRace {
     this.ui.importTrackCode?.addEventListener('click', () => this.importTrackDebugCode());
     this.ui.raceMode?.addEventListener('change', () => this.updateRaceMode());
     this.ui.cupSize?.addEventListener('change', () => {
-      if (this.ui.raceMode?.value === 'cup') this.startCupMode(Number(this.ui.cupSize.value) || 20);
+      if (this.ui.raceMode?.value === 'cup') this.startCupMode(Number(this.ui.cupSize.value) || 12);
     });
     this.ui.cupName?.addEventListener('input', () => {
       if (this.cupMode?.active) this.showMatchCard();
@@ -1381,7 +1698,7 @@ class MarbleRace {
 
   updateRaceMode() {
     const mode = this.ui.raceMode?.value || 'single';
-    if (mode === 'cup') this.startCupMode(Number(this.ui.cupSize?.value) || 20);
+    if (mode === 'cup') this.startCupMode(Number(this.ui.cupSize?.value) || 12);
     else {
       this.cupMode = { ...this.cupMode, active: false, status: 'idle', stageIndex: 0, currentEntrants: [], results: [], lastQualified: [], champion: null, podium: [] };
       this.hideMatchCard();
@@ -1408,8 +1725,8 @@ class MarbleRace {
     };
   }
 
-  startCupMode(size = 20, { preserveCurrentSettings = true } = {}) {
-    const rawSize = Math.round(Number(size) || 20);
+  startCupMode(size = 12, { preserveCurrentSettings = true } = {}) {
+    const rawSize = Math.round(Number(size) || 12);
     const cupSize = Math.max(2, Math.min(99, rawSize));
     if (this.ui.raceMode) this.ui.raceMode.value = 'cup';
     if (this.ui.cupSize) this.ui.cupSize.value = String(cupSize);
@@ -1765,8 +2082,8 @@ class MarbleRace {
     }
 
     const requestedCount = this.cupMode?.active
-      ? Math.max(1, this.cupMode.currentEntrants?.length || this.cupMode.size || 20)
-      : Math.max(1, Math.floor(Number(this.ui.count.value) || 20));
+      ? Math.max(1, this.cupMode.currentEntrants?.length || this.cupMode.size || 12)
+      : Math.max(1, Math.floor(Number(this.ui.count.value) || 12));
     if (this.cupMode?.active && this.ui.count) this.ui.count.value = String(requestedCount);
     this.createMarbles(requestedCount);
     this.applyInitialCameraVerticalAxisRotation();
@@ -2676,7 +2993,7 @@ class MarbleRace {
     ground.receiveShadow = PERFORMANCE_TUNING.shadows;
     this.trackGroup.add(ground);
 
-    const floorMat = new THREE.MeshStandardMaterial({
+    const floorMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       map: this.createPinballPlayfieldTexture(),
       roughness: 0.38,
@@ -2685,7 +3002,7 @@ class MarbleRace {
       clearcoatRoughness: 0.18,
       side: THREE.DoubleSide,
     });
-    const railMat = new THREE.MeshStandardMaterial({
+    const railMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       map: this.createNeonRubberTexture(),
       roughness: 0.3,
@@ -8251,7 +8568,7 @@ class MarbleRace {
 
   async startAutoCupRecording({ preferScreenRecording = true, tabOnly = true, includeAudio = true } = {}) {
     this.clearAutoCupRecordingTimer();
-    const cupSize = Number(this.ui.cupSize?.value) || this.cupMode?.size || 16;
+    const cupSize = Number(this.ui.cupSize?.value) || this.cupMode?.size || 12;
     this.autoCupRecording = {
       ...this.autoCupRecording,
       active: true,
@@ -8433,6 +8750,7 @@ class MarbleRace {
     }
     this.updateReplayHighlightPlayback(rawDelta);
     this.renderer.render(this.scene, this.camera);
+    this.renderViewerCanvasOverlay();
   }
 
   getLeaderId() {
@@ -9730,6 +10048,12 @@ class MarbleRace {
         finished: Boolean(data.finished),
         defeated: Boolean(data.defeated),
       })),
+      viewerCanvasOverlay: this.lastViewerOverlaySummary || {
+        enabled: Boolean(CANVAS_VIEWER_OVERLAY.enabled),
+        channelHandle: CANVAS_VIEWER_OVERLAY.channelHandle,
+        ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
+      },
+      videoCompositeCanvas: this.getVideoCompositeCanvasInfo?.() || null,
       broadcastStorylines: {
         eventCount: this.broadcastEvents.length,
         lastEvent: this.broadcastEvents[0] || null,

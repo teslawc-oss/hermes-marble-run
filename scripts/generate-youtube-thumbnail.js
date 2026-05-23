@@ -29,11 +29,13 @@ export function buildThumbnailConfig(args = cliArgs, env = process.env) {
     width: Number(args.get('width') || env.MARBLE_THUMBNAIL_WIDTH || 1280),
     height: Number(args.get('height') || env.MARBLE_THUMBNAIL_HEIGHT || 720),
     maxWords: Number(args.get('max-words') || env.MARBLE_THUMBNAIL_MAX_WORDS || 6),
-    frameStrategy: args.get('frame-strategy') || env.MARBLE_THUMBNAIL_FRAME_STRATEGY || 'early-highlight',
+    frameStrategy: args.get('frame-strategy') || env.MARBLE_THUMBNAIL_FRAME_STRATEGY || 'first-race-30pct',
     noProbeLog: args.get('quiet') === 'true' || env.MARBLE_THUMBNAIL_QUIET === 'true',
     safeCrop: args.get('safe-crop') || env.MARBLE_THUMBNAIL_SAFE_CROP || 'hud-safe',
     fontFamily: args.get('font-family') || env.MARBLE_THUMBNAIL_FONT_FAMILY || 'Comic Sans MS, Chalkboard, Impact, Arial Black, fantasy',
     textPosition: args.get('text-position') || env.MARBLE_THUMBNAIL_TEXT_POSITION || 'auto',
+    badgeText: args.get('badge-text') || env.MARBLE_THUMBNAIL_BADGE_TEXT || '',
+    hideBadge: args.get('hide-badge') === 'true' || env.MARBLE_THUMBNAIL_HIDE_BADGE === 'true',
   };
   config.output = path.resolve(config.output || defaultOutputFor(config.input || path.join(recordingsDir, 'thumbnail-source.webm')));
   config.width = Number.isFinite(config.width) ? Math.max(320, Math.min(3840, Math.round(config.width))) : 1280;
@@ -87,6 +89,69 @@ function getDurationSeconds(videoPath) {
     console.warn('[thumbnail] Could not ffprobe duration:', error?.message || error);
     return 0;
   }
+}
+
+export function pickFirstRaceThirtyPercentFrame({ events, durationSeconds }) {
+  const usableDuration = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0;
+  const firstRaceEvents = events.filter((event) => {
+    const raceIndex = Number(event.activeRaceIndex ?? event.raceIndex ?? event.race ?? event.racesCompleted + 1);
+    return !Number.isFinite(raceIndex) || raceIndex === 1;
+  });
+  const sourceEvents = firstRaceEvents.length ? firstRaceEvents : events;
+  const times = sourceEvents
+    .map((event) => Number(event.suggestedFrameSeconds ?? event.time ?? event.elapsed ?? event.seconds ?? event.at ?? event.timestamp))
+    .filter((time) => Number.isFinite(time) && time > 0);
+  const firstRaceEnd = times.length ? Math.max(...times) : (usableDuration > 0 ? Math.min(usableDuration * 0.18, 120) : 0);
+  const targetTime = firstRaceEnd > 0 ? Math.max(1.2, firstRaceEnd * 0.30) : 2;
+  const windowStart = Math.max(1.2, targetTime - Math.max(1.5, firstRaceEnd * 0.18));
+  const windowEnd = Math.max(windowStart + 0.5, targetTime + Math.max(2, firstRaceEnd * 0.22));
+  const priority = {
+    overtake: 100,
+    battle: 94,
+    obstacle: 90,
+    leader: 84,
+    speed: 80,
+    progress: 74,
+    finish: 42,
+    winner: 34,
+    complete: 24,
+    dnf: 18,
+    general: 10,
+  };
+  const scored = sourceEvents
+    .map((event) => {
+      const rawTime = Number(event.suggestedFrameSeconds ?? event.time ?? event.elapsed ?? event.seconds ?? event.at ?? event.timestamp);
+      const time = Number.isFinite(rawTime) ? rawTime : null;
+      const kind = String(event.kind || 'general');
+      const title = `${event.title || ''} ${event.detail || ''}`;
+      const progress = Number(event.progress);
+      const progressDistance = Number.isFinite(progress) ? Math.abs(progress - 0.30) : 0.18;
+      const targetDistance = time != null ? Math.abs(time - targetTime) : Number.POSITIVE_INFINITY;
+      const windowBonus = time != null && time >= windowStart && time <= windowEnd ? 34 : 0;
+      const progressBonus = Number.isFinite(progress) ? Math.max(0, 18 - progressDistance * 70) : 0;
+      const titleBonus = /overtake|neck|battle|target|buff|speed|burst|leader|hit|chaos|blast/i.test(title) ? 9 : 0;
+      const latePenalty = usableDuration && time != null && time > usableDuration - 0.5 ? 999 : 0;
+      return {
+        event,
+        time,
+        score: (priority[kind] ?? priority.general) + windowBonus + progressBonus + titleBonus - targetDistance * 1.2 - latePenalty,
+      };
+    })
+    .filter((item) => item.time != null && item.time >= 1.2 && (!usableDuration || item.time < usableDuration - 0.5))
+    .sort((a, b) => (b.score - a.score) || Math.abs(a.time - targetTime) - Math.abs(b.time - targetTime) || (a.event.__index - b.event.__index));
+
+  const chosen = scored[0] || null;
+  if (chosen) {
+    return {
+      seconds: Math.max(0.8, Math.min(chosen.time + 0.15, usableDuration ? Math.max(0.8, usableDuration - 0.5) : chosen.time + 0.15)),
+      reason: `first-race-30pct:${chosen.event.kind || 'general'}:${chosen.event.title || ''}`,
+      event: chosen.event,
+      targetTime: Number(targetTime.toFixed(3)),
+      firstRaceEnd: Number(firstRaceEnd.toFixed(3)),
+    };
+  }
+  const fallback = usableDuration > 0 ? Math.max(1, Math.min(usableDuration * 0.08, 20)) : 2;
+  return { seconds: fallback, reason: 'fallback-first-race-30pct', event: null, targetTime, firstRaceEnd };
 }
 
 export function pickEarlyHighlightFrame({ events, durationSeconds }) {
@@ -306,6 +371,8 @@ export function makeFilter({ width, height, safeCrop = 'hud-safe' }) {
     off: { zoom: 1, x: 0.5, y: 0.5 },
     center: { zoom: 1.12, x: 0.5, y: 0.5 },
     'hud-safe': { zoom: 1.65, x: 0.20, y: 0.30 },
+    'composite-center': { zoom: 1.55, x: 0.50, y: 0.52 },
+    'composite-no-live-event': { zoom: 1.75, x: 0.40, y: 0.58 },
   };
   const profile = cropProfiles[mode] || cropProfiles['hud-safe'];
   const scaledWidth = Math.round(width * profile.zoom);
@@ -331,55 +398,62 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-export function makeThumbnailHtml({ framePath, title, width, height, fontFamily, layout = null }) {
+function formatDurationBadge(durationSeconds) {
+  const seconds = Number(durationSeconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  if (seconds < 90) return `${Math.max(1, Math.round(seconds))} SEC`;
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  return `${minutes} MIN`;
+}
+
+export function makeThumbnailHtml({ framePath, title, width, height, fontFamily, layout = null, badgeText = '' }) {
   const frameUrl = pathToFileURL(framePath).href;
   const { lines, colors, fontSize } = computeThumbnailTextStyle({ title, width, height });
-  const placement = layout?.css || { left: Math.round(width * 0.045), top: Math.round(height * 0.10), width: Math.round(width * 0.62), align: 'left' };
-  const strokeWidth = Math.max(5, Math.round(fontSize * 0.058));
+  const centeredPlacement = { left: Math.round(width * 0.07), top: Math.round(height * 0.50), width: Math.round(width * 0.86), align: 'center' };
+  const placement = layout?.css || centeredPlacement;
+  const strokeWidth = Math.max(5, Math.round(fontSize * 0.065));
   const softShadow = Math.round(fontSize * 0.045);
   const rowGap = Math.round(fontSize * (lines.length >= 3 ? 0.03 : 0.13));
   const renderedLines = lines.map((line, index) => `<span class=\"title-line title-line-${index + 1}\">${escapeHtml(line)}<\/span>`).join('');
   const lineCss = lines.map((line, index) => {
-    const offset = placement.align === 'right'
-      ? (index % 2 === 0 ? 0 : -Math.round(width * 0.055))
-      : placement.align === 'center'
-        ? (index % 2 === 0 ? -Math.round(width * 0.025) : Math.round(width * 0.035))
-        : (index % 2 === 0 ? 0 : Math.round(width * 0.075));
+    const offset = index % 2 === 0 ? -Math.round(width * 0.015) : Math.round(width * 0.018);
     return `.title-line-${index + 1} { color: ${colors[index] || colors[0]}; transform: translateX(${offset}px); }`;
   }).join('\n');
-  const badgeVisible = lines.length <= 2;
+  const badgeVisible = Boolean(badgeText) && lines.length <= 2;
   return `<!doctype html>
 <html><head><meta charset="utf-8"><style>
 html, body { margin: 0; width: ${width}px; height: ${height}px; overflow: hidden; background: #000; }
 .stage { position: relative; width: ${width}px; height: ${height}px; font-family: ${fontFamily}; }
 .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: saturate(1.10) contrast(1.04); }
-.band { position: absolute; left: ${Math.max(0, placement.left - 42)}px; top: ${Math.max(0, placement.top - 24)}px; width: ${Math.min(width, placement.width + 92)}px; height: ${Math.min(height, Math.round(fontSize * lines.length * 1.08 + rowGap * Math.max(0, lines.length - 1) + 58))}px; border-radius: 34px; background: linear-gradient(90deg, rgba(0,0,0,.48), rgba(0,0,0,.26), rgba(0,0,0,.04)); filter: blur(.1px); }
 .title {
   position: absolute; left: ${placement.left}px; top: ${placement.top}px; width: ${placement.width}px;
-  display: flex; flex-direction: column; align-items: ${placement.align === 'right' ? 'flex-end' : placement.align === 'center' ? 'center' : 'flex-start'};
-  gap: ${rowGap}px; box-sizing: border-box; transform: rotate(-6deg);
-  font-size: ${fontSize}px; line-height: .88; font-weight: 1000; letter-spacing: -0.058em; text-transform: uppercase; text-align: ${placement.align};
+  display: flex; flex-direction: column; align-items: center;
+  gap: ${rowGap}px; box-sizing: border-box; transform: translateY(-50%) rotate(-5deg);
+  font-size: ${fontSize}px; line-height: .88; font-weight: 1000; letter-spacing: -0.058em; text-transform: uppercase; text-align: center;
 }
 .title-line {
   display: block; white-space: nowrap; padding: 0 .06em;
   -webkit-text-stroke: ${strokeWidth}px #4d2200;
-  text-shadow: 0 ${softShadow}px 0 rgba(255,132,0,.72), 0 0 ${Math.round(fontSize * 0.13)}px rgba(255,255,255,.42), 0 ${Math.round(fontSize * 0.08)}px ${Math.round(fontSize * 0.07)}px rgba(0,0,0,.44);
-  filter: drop-shadow(0 ${Math.round(fontSize * 0.04)}px ${Math.round(fontSize * 0.03)}px rgba(0,0,0,.40));
+  text-shadow: 0 ${softShadow}px 0 rgba(255,132,0,.76), 0 0 ${Math.round(fontSize * 0.16)}px rgba(255,255,255,.46), 0 ${Math.round(fontSize * 0.09)}px ${Math.round(fontSize * 0.08)}px rgba(0,0,0,.54);
+  filter: drop-shadow(0 ${Math.round(fontSize * 0.045)}px ${Math.round(fontSize * 0.035)}px rgba(0,0,0,.48));
 }
 ${lineCss}
 .badge { display: ${badgeVisible ? 'block' : 'none'}; position: absolute; right: 48px; bottom: 44px; background: rgba(255,222,79,.94); color: #291300; border: 6px solid #4b2100; border-radius: 26px; padding: 10px 24px; font: 900 40px 'Arial Black', Impact, sans-serif; transform: rotate(4deg); box-shadow: 0 8px 0 rgba(0,0,0,.34); }
-</style></head><body><div class="stage"><img class="bg" src="${frameUrl}"><div class="band"></div><div class="title">${renderedLines}</div><div class="badge">10+ MIN</div></div></body></html>`;
+</style></head><body><div class="stage"><img class="bg" src="${frameUrl}"><div class="title">${renderedLines}</div><div class="badge">${escapeHtml(badgeText)}</div></div></body></html>`;
 }
 
 export function buildThumbnailPlan({ config, metadata = {}, durationSeconds }) {
   const events = normalizeEvents(metadata);
   const frame = config.frameStrategy === 'early-highlight'
     ? pickEarlyHighlightFrame({ events, durationSeconds })
-    : { seconds: Math.max(1, Math.min(durationSeconds * 0.28 || 2, 20)), reason: `strategy:${config.frameStrategy}`, event: null };
+    : config.frameStrategy === 'first-race-30pct'
+      ? pickFirstRaceThirtyPercentFrame({ events, durationSeconds })
+      : { seconds: Math.max(1, Math.min(durationSeconds * 0.28 || 2, 20)), reason: `strategy:${config.frameStrategy}`, event: null };
   const rawTitle = config.title || titleFromMetadata(metadata, events);
   const title = compactTitle(rawTitle, config.maxWords);
   const filter = makeFilter({ width: config.width, height: config.height, safeCrop: config.safeCrop });
-  return { events, frame, rawTitle, title, filter };
+  const badgeText = config.hideBadge ? '' : (config.badgeText || formatDurationBadge(durationSeconds));
+  return { events, frame, rawTitle, title, filter, badgeText };
 }
 
 async function renderHtmlToJpeg({ htmlPath, output, width, height }) {
@@ -404,7 +478,7 @@ async function main() {
 
   const metadata = readMetadata(config.metadata) || {};
   const durationSeconds = getDurationSeconds(config.input);
-  const { events, frame, title, filter } = buildThumbnailPlan({ config, metadata, durationSeconds });
+  const { events, frame, title, filter, badgeText } = buildThumbnailPlan({ config, metadata, durationSeconds });
   const workDir = path.join(path.dirname(config.output), `.thumbnail-work-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   mkdirSync(workDir, { recursive: true });
   const framePath = path.join(workDir, 'frame.jpg');
@@ -421,6 +495,7 @@ async function main() {
     selectedEvent: frame.event ? { title: frame.event.title, detail: frame.event.detail, kind: frame.event.kind, time: frame.event.time, progress: frame.event.progress } : null,
     eventCount: events.length,
     durationSeconds: Number(durationSeconds.toFixed(3)),
+    badgeText,
     fontFamily: config.fontFamily,
     safeCrop: config.safeCrop,
     filter,
@@ -437,19 +512,10 @@ async function main() {
       '-q:v', '2',
       framePath,
     ]);
-    const layout = config.textPosition === 'auto'
-      ? analyzeFrameLayout(framePath, config.width, config.height)
-      : { selected: config.textPosition, css: null, zones: [] };
-    const presetLayouts = {
-      left: { left: Math.round(config.width * 0.045), top: Math.round(config.height * 0.10), width: Math.round(config.width * 0.62), align: 'left' },
-      right: { left: Math.round(config.width * 0.36), top: Math.round(config.height * 0.10), width: Math.round(config.width * 0.60), align: 'right' },
-      top: { left: Math.round(config.width * 0.08), top: Math.round(config.height * 0.05), width: Math.round(config.width * 0.84), align: 'center' },
-      bottom: { left: Math.round(config.width * 0.08), top: Math.round(config.height * 0.50), width: Math.round(config.width * 0.84), align: 'center' },
-    };
-    if (!layout.css) layout.css = presetLayouts[layout.selected] || presetLayouts.left;
+    const layout = { selected: 'center', css: { left: Math.round(config.width * 0.07), top: Math.round(config.height * 0.50), width: Math.round(config.width * 0.86), align: 'center' }, zones: [], fixed: true };
     summary.textLayout = layout;
     if (!config.noProbeLog) log('Text layout:', JSON.stringify(summary.textLayout));
-    writeFileSync(htmlPath, makeThumbnailHtml({ framePath, title, width: config.width, height: config.height, fontFamily: config.fontFamily, layout }));
+    writeFileSync(htmlPath, makeThumbnailHtml({ framePath, title, width: config.width, height: config.height, fontFamily: config.fontFamily, layout, badgeText }));
     await renderHtmlToJpeg({ htmlPath, output: config.output, width: config.width, height: config.height });
   } finally {
     rmSync(workDir, { recursive: true, force: true });
