@@ -29,7 +29,7 @@ export function buildThumbnailConfig(args = cliArgs, env = process.env) {
     width: Number(args.get('width') || env.MARBLE_THUMBNAIL_WIDTH || 1280),
     height: Number(args.get('height') || env.MARBLE_THUMBNAIL_HEIGHT || 720),
     maxWords: Number(args.get('max-words') || env.MARBLE_THUMBNAIL_MAX_WORDS || 6),
-    frameStrategy: args.get('frame-strategy') || env.MARBLE_THUMBNAIL_FRAME_STRATEGY || 'first-race-30pct',
+    frameStrategy: args.get('frame-strategy') || env.MARBLE_THUMBNAIL_FRAME_STRATEGY || 'mid-highlight',
     noProbeLog: args.get('quiet') === 'true' || env.MARBLE_THUMBNAIL_QUIET === 'true',
     safeCrop: args.get('safe-crop') || env.MARBLE_THUMBNAIL_SAFE_CROP || 'hud-safe',
     fontFamily: args.get('font-family') || env.MARBLE_THUMBNAIL_FONT_FAMILY || 'Comic Sans MS, Chalkboard, Impact, Arial Black, fantasy',
@@ -152,6 +152,60 @@ export function pickFirstRaceThirtyPercentFrame({ events, durationSeconds }) {
   }
   const fallback = usableDuration > 0 ? Math.max(1, Math.min(usableDuration * 0.08, 20)) : 2;
   return { seconds: fallback, reason: 'fallback-first-race-30pct', event: null, targetTime, firstRaceEnd };
+}
+
+export function pickMidHighlightFrame({ events, durationSeconds }) {
+  const usableDuration = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0;
+  const targetTime = usableDuration > 0 ? Math.max(1.2, usableDuration * 0.50) : 0;
+  const priority = {
+    overtake: 130,
+    battle: 120,
+    obstacle: 112,
+    leader: 82,
+    speed: 76,
+    progress: 64,
+    finish: 38,
+    winner: 30,
+    complete: 20,
+    dnf: 14,
+    general: 8,
+  };
+  const scored = events
+    .map((event) => {
+      const rawTime = Number(event.suggestedFrameSeconds ?? event.time ?? event.elapsed ?? event.seconds ?? event.at ?? event.timestamp);
+      const time = Number.isFinite(rawTime) ? rawTime : null;
+      const kind = String(event.kind || 'general');
+      const text = `${event.title || ''} ${event.detail || ''}`;
+      const progress = Number(event.progress);
+      const progressDistance = Number.isFinite(progress) ? Math.abs(progress - 0.50) : 0.20;
+      const timeDistance = targetTime > 0 && time != null ? Math.abs(time - targetTime) : 0;
+      const preferredKindBonus = ['overtake', 'battle', 'obstacle'].includes(kind) ? 48 : 0;
+      const obstacleHitBonus = kind === 'obstacle' && /hit|obstacle|chaos|blast|kick|snap|collision/i.test(text) ? 18 : 0;
+      const textBonus = /overtake|battle|neck|hit|obstacle|chaos|blast|kick|snap|collision/i.test(text) ? 12 : 0;
+      const progressBonus = Number.isFinite(progress) ? Math.max(0, 36 - progressDistance * 120) : 0;
+      const midpointBonus = targetTime > 0 ? Math.max(0, 42 - timeDistance * 1.4) : 0;
+      const latePenalty = usableDuration && time != null && time > usableDuration - 0.5 ? 999 : 0;
+      return {
+        event,
+        time,
+        score: (priority[kind] ?? priority.general) + preferredKindBonus + obstacleHitBonus + textBonus + progressBonus + midpointBonus - timeDistance * 0.18 - latePenalty,
+      };
+    })
+    .filter((item) => item.time != null && item.time >= 1.2 && (!usableDuration || item.time < usableDuration - 0.5))
+    .sort((a, b) => (b.score - a.score) || Math.abs((a.time || 0) - targetTime) - Math.abs((b.time || 0) - targetTime) || (a.event.__index - b.event.__index));
+
+  const chosen = scored[0] || null;
+  if (chosen) {
+    return {
+      seconds: Math.max(0.8, Math.min(chosen.time + 0.15, usableDuration ? Math.max(0.8, usableDuration - 0.5) : chosen.time + 0.15)),
+      reason: `mid-highlight:${chosen.event.kind || 'general'}:${chosen.event.title || ''}`,
+      event: chosen.event,
+      targetTime: Number(targetTime.toFixed(3)),
+      score: Number(chosen.score.toFixed(2)),
+    };
+  }
+  const fallback = usableDuration > 0 ? Math.max(1, Math.min(usableDuration * 0.50, Math.max(1, usableDuration - 0.5))) : 2;
+  return { seconds: fallback, reason: 'fallback-mid-video-position', event: null, targetTime };
 }
 
 export function pickEarlyHighlightFrame({ events, durationSeconds }) {
@@ -448,7 +502,9 @@ export function buildThumbnailPlan({ config, metadata = {}, durationSeconds }) {
     ? pickEarlyHighlightFrame({ events, durationSeconds })
     : config.frameStrategy === 'first-race-30pct'
       ? pickFirstRaceThirtyPercentFrame({ events, durationSeconds })
-      : { seconds: Math.max(1, Math.min(durationSeconds * 0.28 || 2, 20)), reason: `strategy:${config.frameStrategy}`, event: null };
+      : config.frameStrategy === 'mid-highlight'
+        ? pickMidHighlightFrame({ events, durationSeconds })
+        : { seconds: Math.max(1, Math.min(durationSeconds * 0.50 || 2, durationSeconds ? Math.max(1, durationSeconds - 0.5) : 20)), reason: `strategy:${config.frameStrategy}`, event: null };
   const rawTitle = config.title || titleFromMetadata(metadata, events);
   const title = compactTitle(rawTitle, config.maxWords);
   const filter = makeFilter({ width: config.width, height: config.height, safeCrop: config.safeCrop });

@@ -49,7 +49,7 @@ const config = {
   thumbnail: args.get('thumbnail') !== 'false' && process.env.MARBLE_RENDER_THUMBNAIL !== 'false',
   thumbnailTitle: args.get('thumbnail-title') || process.env.MARBLE_RENDER_THUMBNAIL_TITLE || '',
   thumbnailOutput: args.get('thumbnail-output') || process.env.MARBLE_RENDER_THUMBNAIL_OUTPUT || '',
-  thumbnailFrameStrategy: args.get('thumbnail-frame-strategy') || process.env.MARBLE_RENDER_THUMBNAIL_FRAME_STRATEGY || 'first-race-30pct',
+  thumbnailFrameStrategy: args.get('thumbnail-frame-strategy') || process.env.MARBLE_RENDER_THUMBNAIL_FRAME_STRATEGY || 'mid-highlight',
   thumbnailSafeCrop: args.get('thumbnail-safe-crop') || process.env.MARBLE_RENDER_THUMBNAIL_SAFE_CROP || 'hud-safe',
   thumbnailMaxWords: Number(args.get('thumbnail-max-words') || process.env.MARBLE_RENDER_THUMBNAIL_MAX_WORDS || 6),
   eventMarkersOutput: args.get('event-markers-output') || process.env.MARBLE_RENDER_EVENT_MARKERS_OUTPUT || '',
@@ -522,7 +522,7 @@ async function main() {
     const sourceEvents = firstRaceEvents.length ? firstRaceEvents : events;
     const sourceTimes = sourceEvents.map((event) => Number(event.time)).filter((time) => Number.isFinite(time) && time > 0);
     const firstRaceEnd = sourceTimes.length ? Math.max(...sourceTimes) : 0;
-    const firstRaceTarget = firstRaceEnd > 0 ? Math.max(1.2, firstRaceEnd * 0.30) : 0;
+    const firstRaceTarget = firstRaceEnd > 0 ? Math.max(1.2, firstRaceEnd * 0.50) : 0;
     const thumbnailCandidates = events
       .map((event) => {
         const time = Number(event.time);
@@ -531,9 +531,9 @@ async function main() {
         const firstRace = sourceEvents.includes(event);
         const firstRaceBonus = firstRace ? 45 : 0;
         const firstRaceTargetBonus = firstRace && firstRaceTarget > 0 ? Math.max(0, 28 - Math.abs(time - firstRaceTarget) * 2.2) : 0;
-        const progressTargetBonus = Number.isFinite(progress) ? Math.max(0, 18 - Math.abs(progress - 0.30) * 70) : 0;
-        const progressBonus = Number.isFinite(progress) && progress >= 0.12 && progress <= 0.78 ? 8 : 0;
-        const textBonus = /overtake|battle|target|buff|speed|burst|leader|blast|kick|snap/i.test(`${event.title} ${event.detail || ''}`) ? 8 : 0;
+        const progressTargetBonus = Number.isFinite(progress) ? Math.max(0, 30 - Math.abs(progress - 0.50) * 100) : 0;
+        const progressBonus = Number.isFinite(progress) && progress >= 0.25 && progress <= 0.75 ? 12 : 0;
+        const textBonus = /overtake|battle|hit|obstacle|chaos|blast|kick|snap|collision/i.test(`${event.title} ${event.detail || ''}`) ? 12 : 0;
         const score = (eventPriority[event.kind] || eventPriority.general) + firstRaceBonus + firstRaceTargetBonus + progressTargetBonus + earlyBonus + progressBonus + textBonus - Math.max(0, time - 180) * 0.12;
         return { ...event, score: Number(score.toFixed(2)), firstRace, firstRaceTarget: firstRaceTarget ? Number(firstRaceTarget.toFixed(3)) : null, suggestedFrameSeconds: Number(Math.max(0.8, time + 0.15).toFixed(3)) };
       })
