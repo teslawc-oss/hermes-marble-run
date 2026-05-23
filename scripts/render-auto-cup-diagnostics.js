@@ -14,7 +14,7 @@ export const renderAutoCupDiagnostics = {
     && source.includes('Number(state.racesCompleted || 0) >= Number(state.totalRaces || 0)'),
   hasThirtySecondProgressPoller: source.includes("logRenderProgressSnapshot(page, 'periodic')")
     && source.includes('}, 30000)'),
-  hasProgressFields: ['active', 'phase', 'racesCompleted', 'totalRaces', 'elapsed', 'chunks', 'mb', 'browserFps', 'simulationLag']
+  hasProgressFields: ['active', 'phase', 'racesCompleted', 'totalRaces', 'jobElapsedSeconds', 'gameElapsedSeconds', 'captureElapsedSeconds', 'chunks', 'estimatedTotalChunks', 'totalChunkProgress', 'mb', 'browserFps', 'simulationLag']
     .every((field) => source.includes(field)),
 };
 

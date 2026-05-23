@@ -530,6 +530,14 @@ async function main() {
   const logRenderProgressSnapshot = async (page, reason = 'periodic') => {
     const snapshot = await readRenderProgressSnapshot(page);
     if (!snapshot) return null;
+    const jobElapsedSeconds = Number(((Date.now() - renderStartedAt) / 1000).toFixed(1));
+    const gameElapsedSeconds = Number(snapshot.elapsed?.toFixed?.(2) ?? snapshot.elapsed);
+    const captureElapsedSeconds = snapshot.capture?.elapsedSeconds != null
+      ? Number(snapshot.capture.elapsedSeconds.toFixed?.(2) ?? snapshot.capture.elapsedSeconds)
+      : null;
+    const expectedChunkIntervalSeconds = 1;
+    const estimatedTotalChunks = Math.max(1, Math.ceil(config.targetSeconds / expectedChunkIntervalSeconds));
+    const totalChunkProgress = Number(Math.min(100, (canvasChunkStats.chunks / estimatedTotalChunks) * 100).toFixed(1));
     log('[progress] render-state', JSON.stringify({
       reason,
       stage: currentStageLabel,
@@ -539,13 +547,22 @@ async function main() {
       state: snapshot.state,
       racesCompleted: snapshot.racesCompleted,
       totalRaces: snapshot.totalRaces,
-      elapsed: Number(snapshot.elapsed?.toFixed?.(2) ?? snapshot.elapsed),
+      jobElapsedSeconds,
+      gameElapsedSeconds,
+      captureElapsedSeconds,
       chunks: canvasChunkStats.chunks,
+      estimatedTotalChunks,
+      totalChunkProgress,
       mb: Number((canvasChunkStats.bytes / 1048576).toFixed(1)),
       browserFps: Number(snapshot.browserFps?.toFixed?.(1) ?? snapshot.browserFps),
       fpsHudText: snapshot.fpsHudText,
       simulationLag: snapshot.simulationLag,
-      capture: snapshot.capture,
+      capture: snapshot.capture ? {
+        ...snapshot.capture,
+        elapsedSeconds: captureElapsedSeconds,
+        estimatedTotalChunks,
+        totalChunkProgress,
+      } : null,
     }));
     return snapshot;
   };
