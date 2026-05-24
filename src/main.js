@@ -2128,7 +2128,7 @@ class MarbleRace {
 
   getCustomTrackLength() {
     const raw = Number(this.ui.customLength?.value || TRACK_PRESETS.medium.base);
-    const meters = Math.round(clamp(Number.isFinite(raw) ? raw : TRACK_PRESETS.medium.base, 80, 3000));
+    const meters = Math.round(clamp(Number.isFinite(raw) ? raw : TRACK_PRESETS.medium.base, 30, 3000));
     if (this.ui.customLength) this.ui.customLength.value = String(meters);
     return meters;
   }
@@ -9757,6 +9757,7 @@ class MarbleRace {
   }
 
   checkFinishers() {
+    if (this.state === 'finished') return;
     this.marbleData.forEach((data) => {
       const finishThreshold = FINISH_LINE_RULE.threshold ?? 0.08;
       if (!data.finished && !data.defeated && !data.pendingFallRespawn && data.distance >= this.trackLength - finishThreshold) {

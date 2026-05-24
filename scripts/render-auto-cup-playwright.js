@@ -83,7 +83,7 @@ const config = {
 config.captureScale = Number.isFinite(config.captureScale) && config.captureScale > 0 ? config.captureScale : 1;
 config.targetSeconds = Number.isFinite(config.targetSeconds) ? Math.max(60, Math.min(7200, Math.round(config.targetSeconds))) : 600;
 config.lengthMode = config.lengthMode === 'fixed-track' ? 'fixed-track' : 'target-duration';
-config.trackLength = Number.isFinite(config.trackLength) ? Math.max(80, Math.min(3000, Math.round(config.trackLength))) : 600;
+config.trackLength = Number.isFinite(config.trackLength) ? Math.max(30, Math.min(3000, Math.round(config.trackLength))) : 600;
 const configuredMaxRaceSeconds = hasExplicitMaxRaceSeconds && Number.isFinite(config.maxRaceSeconds) && config.maxRaceSeconds > 0
   ? Math.max(45, Math.min(1200, Math.round(config.maxRaceSeconds)))
   : 0;
@@ -108,17 +108,87 @@ config.obstacleDistribution = ['random', 'zoned'].includes(config.obstacleDistri
 
 const renderStartedAt = Date.now();
 let currentStageLabel = 'init';
+let renderLogStream = null;
+let renderLogPath = '';
 const elapsedLabel = () => `${((Date.now() - renderStartedAt) / 1000).toFixed(1)}s`;
-const log = (...parts) => console.log(`[render:auto-cup +${elapsedLabel()}]`, ...parts);
+const formatLogPart = (part) => {
+  if (part instanceof Error) return part.stack || part.message;
+  if (typeof part === 'string') return part;
+  try {
+    return JSON.stringify(part);
+  } catch {
+    return String(part);
+  }
+};
+const writeRenderLogLine = (line) => {
+  if (!renderLogStream) return;
+  renderLogStream.write(`${line}\n`);
+};
+const log = (...parts) => {
+  const line = [`[render:auto-cup +${elapsedLabel()}]`, ...parts.map(formatLogPart)].join(' ');
+  console.log(line);
+  writeRenderLogLine(line);
+};
+const warn = (...parts) => {
+  const line = [`[render:auto-cup +${elapsedLabel()}] WARN`, ...parts.map(formatLogPart)].join(' ');
+  console.warn(line);
+  writeRenderLogLine(line);
+};
 const progress = (stage, detail = '') => {
   currentStageLabel = stage;
   log(`[progress] ${stage}${detail ? `: ${detail}` : ''}`);
 };
 const fail = (message, error = null) => {
-  console.error(`[render:auto-cup +${elapsedLabel()}] ERROR (${currentStageLabel}):`, message);
-  if (error) console.error(error);
+  const line = `[render:auto-cup +${elapsedLabel()}] ERROR (${currentStageLabel}): ${message}`;
+  console.error(line);
+  writeRenderLogLine(line);
+  if (error) {
+    const errorText = formatLogPart(error);
+    console.error(error);
+    writeRenderLogLine(errorText);
+  }
   process.exit(1);
 };
+const safeJson = (value) => JSON.stringify(value, (key, innerValue) => {
+  if (key === 'parent' || key === 'children') return undefined;
+  if (typeof innerValue === 'function') return undefined;
+  if (innerValue instanceof Error) return innerValue.stack || innerValue.message;
+  return innerValue;
+});
+const sanitizeRenderCompletion = (state = {}) => ({
+  done: Boolean(state.done ?? true),
+  ok: state.ok !== false,
+  reason: state.reason || undefined,
+  mode: state.mode || null,
+  phase: state.phase || null,
+  active: Boolean(state.active),
+  state: state.state || null,
+  elapsed: Number(state.elapsed || 0),
+  racesCompleted: state.racesCompleted ?? null,
+  totalRaces: state.totalRaces ?? null,
+  cupStatus: state.cupStatus || null,
+  champion: state.champion || null,
+  captureTargetSeconds: state.captureTargetSeconds ?? null,
+  captureElapsedSeconds: state.capture?.elapsedSeconds ?? state.captureElapsedSeconds ?? null,
+  captureChunks: state.capture?.chunkCount ?? state.chunks ?? null,
+  podium: state.podium ? {
+    active: Boolean(state.podium.active),
+    elapsedSeconds: state.podium.elapsedSeconds ?? null,
+    duration: state.podium.duration ?? null,
+    confettiComplete: Boolean(state.podium.confettiComplete),
+    medalists: state.podium.medalists ?? null,
+    isCupChampionCeremony: Boolean(state.podium.isCupChampionCeremony),
+  } : null,
+  commentary: state.commentary ? {
+    enabled: Boolean(state.commentary.enabled),
+    voiceEnabled: Boolean(state.commentary.voiceEnabled),
+    speaking: Boolean(state.commentary.speaking),
+    preparing: Boolean(state.commentary.preparing),
+    queueLength: state.commentary.queueLength ?? null,
+    activeRemainingSeconds: state.commentary.activeRemainingSeconds ?? null,
+    activeKind: state.commentary.activeKind || null,
+  } : null,
+});
 
 const commandExists = (command) => spawnSync('sh', ['-lc', `command -v ${command}`], { stdio: 'ignore' }).status === 0;
 const sanitizeSingleLine = (value, fallback = '') => String(value || fallback)
@@ -447,10 +517,13 @@ const audioCaptureBridge = `(() => {
 })()`;
 
 async function main() {
-  progress('startup', `output=${config.output}`);
-  if (!commandExists('ffmpeg')) fail('ffmpeg is required. Install it first, e.g. `brew install ffmpeg`.');
   mkdirSync(recordingsDir, { recursive: true });
   mkdirSync(path.dirname(config.output), { recursive: true });
+  renderLogPath = path.resolve(`${config.output.replace(/\.[^.]+$/, '')}.render.log`);
+  renderLogStream = createWriteStream(renderLogPath, { flags: 'a' });
+  progress('startup', `output=${config.output}`);
+  log(`Render log: ${renderLogPath}`);
+  if (!commandExists('ffmpeg')) fail('ffmpeg is required. Install it first, e.g. `brew install ffmpeg`.');
 
   if (!config.noBuild) {
     progress('build', 'npm run build');
@@ -484,6 +557,8 @@ async function main() {
   let canvasChunkOutput = null;
   let canvasChunkWriteChain = Promise.resolve();
   const canvasChunkStats = { chunks: 0, bytes: 0, lastLogAt: Date.now() };
+  let canvasCaptureStopRequestedAt = null;
+  let canvasCaptureStopRequestedChunk = null;
 
   const waitForCanvasChunkWrites = async () => {
     await canvasChunkWriteChain;
@@ -506,6 +581,9 @@ async function main() {
           ? app.continuousRecording
           : app.autoCupRecording;
       const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__?.getInfo?.() || null;
+      const podium = app.podiumCeremony || null;
+      const activeCommentary = app.activeCommentary || null;
+      const commentaryQueueLength = Array.isArray(app.commentaryVoiceQueue) ? app.commentaryVoiceQueue.length : 0;
       return {
         active: Boolean(activeRecording?.active),
         mode: activeRecording?.mode || null,
@@ -517,10 +595,32 @@ async function main() {
         browserFps: Number(app.lastFps || 0),
         fpsHudText: app.ui?.fps?.textContent || null,
         simulationLag: app.performanceProfile?.simulationLag ?? app.simulationLag ?? null,
+        podium: podium ? {
+          active: Boolean(podium.active),
+          elapsedSeconds: Number(podium.elapsedSeconds || 0),
+          duration: Number.isFinite(podium.duration) ? podium.duration : null,
+          confettiComplete: Boolean(podium.confettiComplete),
+          medalists: Array.isArray(podium.medalists) ? podium.medalists.length : 0,
+          isCupChampionCeremony: Boolean(podium.isCupChampionCeremony),
+        } : null,
+        commentary: {
+          enabled: Boolean(app.commentaryEnabled),
+          voiceEnabled: Boolean(app.commentaryVoiceEnabled),
+          speaking: Boolean(app.commentaryVoiceSpeaking),
+          preparing: Boolean(app.commentaryVoicePreparing),
+          queueLength: commentaryQueueLength,
+          currentLine: app.commentaryVoiceCurrentLine || null,
+          activeLine: activeCommentary?.line || null,
+          activeKind: activeCommentary?.kind || null,
+          activeExpiresAt: activeCommentary?.expiresAt ?? null,
+          activeRemainingSeconds: activeCommentary?.expiresAt != null ? Math.max(0, Number(activeCommentary.expiresAt || 0) - Number(app.elapsed || 0)) : 0,
+        },
         capture: capture ? {
           state: capture.state,
           requestedFps: capture.requestedFps,
           elapsedSeconds: capture.elapsedSeconds,
+          targetSeconds: capture.targetSeconds ?? null,
+          chunkCount: capture.chunkCount ?? null,
           trackSettings: capture.trackSettings,
         } : null,
       };
@@ -535,8 +635,9 @@ async function main() {
     const captureElapsedSeconds = snapshot.capture?.elapsedSeconds != null
       ? Number(snapshot.capture.elapsedSeconds.toFixed?.(2) ?? snapshot.capture.elapsedSeconds)
       : null;
-    const expectedChunkIntervalSeconds = 1;
-    const estimatedTotalChunks = Math.max(1, Math.ceil(config.targetSeconds / expectedChunkIntervalSeconds));
+    const expectedChunkIntervalSeconds = 2;
+    const effectiveTargetSeconds = snapshot.capture?.targetSeconds || config.targetSeconds;
+    const estimatedTotalChunks = Math.max(1, Math.ceil(effectiveTargetSeconds / expectedChunkIntervalSeconds));
     const totalChunkProgress = Number(Math.min(100, (canvasChunkStats.chunks / estimatedTotalChunks) * 100).toFixed(1));
     log('[progress] render-state', JSON.stringify({
       reason,
@@ -557,6 +658,8 @@ async function main() {
       browserFps: Number(snapshot.browserFps?.toFixed?.(1) ?? snapshot.browserFps),
       fpsHudText: snapshot.fpsHudText,
       simulationLag: snapshot.simulationLag,
+      podium: snapshot.podium || null,
+      commentary: snapshot.commentary || null,
       capture: snapshot.capture ? {
         ...snapshot.capture,
         elapsedSeconds: captureElapsedSeconds,
@@ -567,9 +670,136 @@ async function main() {
     return snapshot;
   };
 
+  const finalRaceCompletionBufferSeconds = Math.max(0, Number(args.get('final-race-buffer-seconds') || process.env.MARBLE_RENDER_FINAL_RACE_BUFFER_SECONDS || 5));
+
+  const renderWaitDonePhases = new Set([
+    'completed-all-races',
+    'final-complete',
+    'playwright-smoke-complete',
+    'completed-all-races-render-stop',
+    'completed-all-races-render-stop-scheduled',
+  ]);
+
   const isTerminalContinuousCompletionState = (state) => state?.mode === 'continuous'
-    && state.phase === 'completed-all-races'
-    && Number(state.racesCompleted || 0) >= Number(state.totalRaces || 0);
+    && Number(state.racesCompleted || 0) >= Number(state.totalRaces || 0)
+    && (
+      state.phase === 'waiting-final-stop'
+      || renderWaitDonePhases.has(state.phase)
+    );
+
+  const isFinalRaceFinishedState = (state) => state?.mode === 'continuous'
+    && Number(state.racesCompleted || 0) >= Number(state.totalRaces || 0)
+    && Number(state.totalRaces || 0) > 0
+    && (
+      state.phase === 'waiting-final-stop'
+      || state.phase === 'racing'
+      || state.phase === 'ceremony-hold'
+      || renderWaitDonePhases.has(state.phase)
+    );
+
+  const isPodiumCeremonyComplete = (state = {}) => {
+    const podium = state.podium;
+    if (!podium) return false;
+    const duration = Number(podium.duration);
+    const elapsedSeconds = Number(podium.elapsedSeconds || 0);
+    const hasPodiumStarted = Number(podium.medalists || 0) > 0 || elapsedSeconds > 0 || podium.active === true;
+    if (!hasPodiumStarted) return false;
+    if (Number.isFinite(duration) && duration > 0) return elapsedSeconds >= duration || (podium.active === false && elapsedSeconds > 0);
+    return podium.active === false && (elapsedSeconds > 0 || Boolean(podium.confettiComplete));
+  };
+
+  const isCommentaryComplete = (state = {}) => {
+    const commentary = state.commentary || {};
+    if (!commentary.enabled) return true;
+    const voiceBusy = Boolean(commentary.voiceEnabled) && (
+      Boolean(commentary.speaking)
+      || Boolean(commentary.preparing)
+      || Number(commentary.queueLength || 0) > 0
+    );
+    return !voiceBusy;
+  };
+
+  const isFinalCeremonyCommentaryCompleteState = (state = {}) => isFinalRaceFinishedState(state)
+    && isPodiumCeremonyComplete(state)
+    && isCommentaryComplete(state);
+
+  const getActualCanvasCaptureElapsedSeconds = (state = {}) => {
+    const captureElapsed = Number(state.capture?.elapsedSeconds ?? state.captureElapsedSeconds);
+    if (Number.isFinite(captureElapsed) && captureElapsed > 0) return Math.max(0, captureElapsed);
+    const nodeElapsed = (Date.now() - renderStartedAt) / 1000;
+    return Number.isFinite(nodeElapsed) ? Math.max(0, nodeElapsed) : 0;
+  };
+
+  const getFinalRaceCompletionCaptureTargetSeconds = (state = {}) => {
+    const actualElapsed = getActualCanvasCaptureElapsedSeconds(state);
+    return Math.max(1, Math.ceil(actualElapsed + finalRaceCompletionBufferSeconds));
+  };
+
+  const waitThenStopCanvasCapture = async (page, delaySeconds = 0, reason = 'final-race-finished-plus-buffer') => {
+    if (config.videoCapture !== 'canvas' || !page || page.isClosed?.()) return null;
+    const delayMs = Math.max(0, Number(delaySeconds || 0)) * 1000;
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    return requestCanvasCaptureStop(page, reason);
+  };
+
+  const armBrowserCanvasStopTimer = async (page, delaySeconds = 0, reason = 'final-race-finished-plus-buffer') => {
+    if (config.videoCapture !== 'canvas' || !page || page.isClosed?.()) return null;
+    return page.evaluate(({ delayMs, reason: stopReason }) => {
+      const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__;
+      if (!capture) return { ok: false, reason: 'capture-missing' };
+      if (capture.browserStopTimerArmedAt != null) {
+        return { ok: true, alreadyArmed: true, armedAt: capture.browserStopTimerArmedAt, delayMs: capture.browserStopTimerDelayMs, stopReason: capture.stopReason || stopReason };
+      }
+      capture.browserStopTimerArmedAt = performance.now();
+      capture.browserStopTimerDelayMs = Math.max(0, Number(delayMs || 0));
+      capture.stopReason = stopReason;
+      window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS = Math.max(1, Math.ceil(((performance.now() - capture.startedAt) / 1000) + (capture.browserStopTimerDelayMs / 1000)));
+      capture.browserStopTimer = setTimeout(() => {
+        try { capture.requestStop?.(stopReason); } catch {}
+      }, capture.browserStopTimerDelayMs);
+      return { ok: true, armedAt: capture.browserStopTimerArmedAt, delayMs: capture.browserStopTimerDelayMs, stopReason };
+    }, { delayMs: Math.max(0, Number(delaySeconds || 0)) * 1000, reason }).catch((error) => ({ ok: false, reason: error?.message || String(error) }));
+  };
+
+  const calculateContinuousCompletionCaptureTargetSeconds = (state = {}) => {
+    const actualElapsed = getActualCanvasCaptureElapsedSeconds(state);
+    const finalizationGraceSeconds = 2;
+    const configuredTargetSeconds = Math.max(1, Number(config.targetSeconds || 0));
+    return Math.max(1, Math.min(configuredTargetSeconds, Math.ceil(actualElapsed + finalizationGraceSeconds)));
+  };
+
+  const requestCanvasCaptureStop = async (page, reason = 'app-completed') => {
+    if (config.videoCapture !== 'canvas' || !page || page.isClosed?.()) return null;
+    return page.evaluate((stopReason) => {
+      const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__;
+      if (!capture) return { ok: false, reason: 'capture-missing' };
+      const beforeStop = capture.getInfo?.() || {};
+      const recorder = capture.recorder;
+      const requestedAt = performance.now();
+      capture.stopReason = stopReason;
+      capture.stopRequestedAt = capture.stopRequestedAt || requestedAt;
+      capture.dropChunks = true;
+      const stopResult = typeof capture.requestStop === 'function'
+        ? capture.requestStop(stopReason)
+        : (() => {
+          try {
+            if (recorder?.state === 'paused') recorder.resume?.();
+            if (recorder?.state === 'recording') recorder.stop();
+            return { ok: true, requestedStop: beforeStop.state === 'recording', state: recorder?.state || beforeStop.state || null };
+          } catch (error) {
+            return { ok: false, reason: error?.message || String(error), state: recorder?.state || null };
+          }
+        })();
+      return {
+        ok: stopResult?.ok !== false,
+        requestedStop: beforeStop.state === 'recording' || beforeStop.state === 'paused',
+        stopReason,
+        beforeStop,
+        requestStop: stopResult,
+        ...(capture.getInfo?.() || beforeStop),
+      };
+    }, reason).catch((error) => ({ ok: false, reason: error?.message || String(error) }));
+  };
 
   const collectEventMarkerSnapshot = async (page, state = eventMarkerState) => {
     if (!page || page.isClosed?.()) return null;
@@ -683,6 +913,15 @@ async function main() {
   let renderSummary = null;
   let eventMarkerPoller = null;
   let progressLogPoller = null;
+  let completionStopPoller = null;
+  let finalRaceStopTimer = null;
+  let finalRaceStopPromise = null;
+  let completionCanvasStopRequested = false;
+  let completionStopPollerRunning = false;
+  let finalRaceStopLogged = false;
+  let finalRaceNodeGateLogged = false;
+  let finalRaceCanvasStopLogged = false;
+  let scheduleFinalRaceCanvasStop = async () => null;
   let eventMarkerState = { samples: [], eventsByKey: new Map(), lastSampleAt: 0 };
   try {
     progress('browser-open', config.url);
@@ -731,6 +970,34 @@ async function main() {
       ...(config.videoCapture === 'playwright' ? { recordVideo: { dir: videoDir, size: { width: config.captureWidth, height: config.captureHeight } } } : {}),
     });
     const page = await context.newPage();
+    await page.exposeBinding('marbleRenderNotifyFinalRaceFinished', async (_source, payload = {}) => {
+      if (config.videoCapture !== 'canvas') return { ok: false, reason: 'not-canvas-capture' };
+      const snapshot = {
+        done: true,
+        ok: true,
+        mode: payload.mode || 'continuous',
+        phase: payload.phase || 'app-final-race-finished-event',
+        active: payload.active !== false,
+        state: payload.state || null,
+        elapsed: Number(payload.elapsed || 0),
+        racesCompleted: payload.racesCompleted ?? null,
+        totalRaces: payload.totalRaces ?? null,
+        captureElapsedSeconds: payload.captureElapsedSeconds ?? payload.capture?.elapsedSeconds ?? null,
+        capture: payload.capture || null,
+        podium: payload.podium || null,
+        commentary: payload.commentary || null,
+        eventSource: payload.eventSource || 'app-binding',
+      };
+      if (!isFinalRaceFinishedState(snapshot)) return { ok: false, reason: 'not-final-race-finished', snapshot: sanitizeRenderCompletion(snapshot) };
+      scheduleFinalRaceCanvasStop(snapshot, 'app-binding').catch((error) => {
+        warn('[progress] final-race-stop-schedule-failed', safeJson({
+          source: 'app-binding',
+          reason: error?.message || String(error),
+          snapshot: sanitizeRenderCompletion(snapshot),
+        }));
+      });
+      return { ok: true, scheduled: true, snapshot: sanitizeRenderCompletion(snapshot) };
+    });
     if (config.videoCapture === 'canvas') {
       canvasChunkOutput = path.join(videoDir, `canvas-capture-${defaultStamp}.webm`);
       canvasChunkStream = createWriteStream(canvasChunkOutput);
@@ -738,6 +1005,21 @@ async function main() {
         const bytes = Array.isArray(payload.bytes) ? Buffer.from(payload.bytes) : Buffer.alloc(0);
         if (!bytes.length) return { ok: false, reason: 'empty-chunk', index: payload.index ?? null };
         const index = Number(payload.index ?? 0);
+        if (canvasCaptureStopRequestedAt !== null) {
+          const droppedAfterStop = {
+            ok: false,
+            reason: 'canvas-stop-requested-drop-late-chunk',
+            index,
+            bytes: bytes.length,
+            stopRequestedChunk: canvasCaptureStopRequestedChunk,
+            msAfterStopRequest: Date.now() - canvasCaptureStopRequestedAt,
+          };
+          if (Date.now() - canvasChunkStats.lastLogAt >= 5000) {
+            canvasChunkStats.lastLogAt = Date.now();
+            log('[progress] canvas-chunk-dropped-after-stop-request', JSON.stringify(droppedAfterStop));
+          }
+          return droppedAfterStop;
+        }
         canvasChunkStats.chunks += 1;
         canvasChunkStats.bytes += bytes.length;
         const now = Date.now();
@@ -745,7 +1027,14 @@ async function main() {
           canvasChunkStats.lastLogAt = now;
           log('[progress] canvas-recording', JSON.stringify({ chunks: canvasChunkStats.chunks, mb: Number((canvasChunkStats.bytes / 1048576).toFixed(1)), webm: canvasChunkOutput }));
         }
+        if (!canvasChunkStream?.writable || canvasChunkStream.destroyed || canvasChunkStream.closed) {
+          return { ok: false, reason: 'stream-closed', index, bytes: bytes.length };
+        }
         canvasChunkWriteChain = canvasChunkWriteChain.then(() => new Promise((resolve, reject) => {
+          if (!canvasChunkStream?.writable || canvasChunkStream.destroyed || canvasChunkStream.closed) {
+            resolve();
+            return;
+          }
           canvasChunkStream.write(bytes, (error) => (error ? reject(error) : resolve()));
         }));
         await canvasChunkWriteChain;
@@ -772,7 +1061,8 @@ async function main() {
     let canvasCaptureInfo = null;
     if (config.videoCapture === 'canvas') {
       progress('canvas-capture-start', config.videoCanvasLayout);
-      canvasCaptureInfo = await page.evaluate(async ({ fps, width, height, videoCanvasLayout }) => {
+      canvasCaptureInfo = await page.evaluate(async ({ fps, width, height, videoCanvasLayout, targetSeconds }) => {
+        window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS = Math.max(1, Number(targetSeconds || 0) || 1);
         const app = window.__MARBLE_RACE_APP__;
         const requestedLayout = ['horizontal', 'vertical'].includes(String(videoCanvasLayout || '').toLowerCase()) ? String(videoCanvasLayout).toLowerCase() : 'horizontal';
         const canvas = app?.setVideoCanvasLayout?.(requestedLayout) && app?.getVideoCaptureCanvas?.() || app?.getVideoCaptureCanvas?.() || app?.renderer?.domElement || document.querySelector('canvas');
@@ -786,22 +1076,49 @@ async function main() {
         ];
         const mimeType = mimeTypes.find((type) => MediaRecorder.isTypeSupported(type)) || '';
         const stream = canvas.captureStream(Math.max(1, Math.round(Number(fps) || 60)));
-        const recorderOptions = mimeType ? { mimeType, videoBitsPerSecond: 24_000_000 } : { videoBitsPerSecond: 24_000_000 };
+        const videoBitsPerSecond = Math.max(4_000_000, Math.min(16_000_000, Math.round(Number(window.__MARBLE_RENDER_CANVAS_BITRATE || 10_000_000))));
+        const recorderOptions = mimeType ? { mimeType, videoBitsPerSecond } : { videoBitsPerSecond };
         const recorder = new MediaRecorder(stream, recorderOptions);
+        const captureTargetSeconds = Math.max(1, Number(window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS || 0) || 0);
         const chunks = [];
+        const pendingWrites = new Set();
         let bytes = 0;
         let chunkCount = 0;
+        let stoppedResolve;
+        let stoppedFallbackTimer = null;
+        const waitForPendingWrites = async (timeoutMs = 5000) => {
+          const deadline = performance.now() + Math.max(0, Number(timeoutMs || 0));
+          while (pendingWrites.size && performance.now() < deadline) {
+            await Promise.race(Array.from(pendingWrites));
+          }
+          return pendingWrites.size;
+        };
         const writeChunk = async (blob) => {
+          const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__;
+          if (capture?.dropChunks || capture?.stopRequestedAt != null) return;
           if (!blob?.size) return;
           const index = chunkCount;
+          if (typeof window.marbleRenderWriteCanvasChunk === 'function') {
+            const arrayBuffer = await blob.arrayBuffer();
+            if (capture?.dropChunks || capture?.stopRequestedAt != null) return;
+            const byteArray = Array.from(new Uint8Array(arrayBuffer));
+            const writePromise = Promise.resolve(window.marbleRenderWriteCanvasChunk({ index, bytes: byteArray, type: blob.type || recorder.mimeType || mimeType || 'video/webm' }));
+            pendingWrites.add(writePromise);
+            try {
+              const result = await writePromise;
+              if (result?.ok) {
+                chunkCount += 1;
+                bytes += blob.size;
+                chunks.push({ id: index, size: blob.size, type: blob.type || recorder.mimeType || mimeType || 'video/webm' });
+              }
+              return result;
+            } finally {
+              pendingWrites.delete(writePromise);
+            }
+          }
           chunkCount += 1;
           bytes += blob.size;
           chunks.push({ id: index, size: blob.size, type: blob.type || recorder.mimeType || mimeType || 'video/webm' });
-          if (typeof window.marbleRenderWriteCanvasChunk === 'function') {
-            const arrayBuffer = await blob.arrayBuffer();
-            const byteArray = Array.from(new Uint8Array(arrayBuffer));
-            await window.marbleRenderWriteCanvasChunk({ index, bytes: byteArray, type: blob.type || recorder.mimeType || mimeType || 'video/webm' });
-          }
         };
         recorder.addEventListener('dataavailable', (event) => {
           if (event.data?.size) {
@@ -811,10 +1128,19 @@ async function main() {
           }
         });
         const stopped = new Promise((resolve) => {
-          recorder.addEventListener('stop', async () => {
+          stoppedResolve = resolve;
+          const resolveStopped = (fallbackReason = null) => {
+            if (!stoppedResolve) return;
+            const resolveNow = stoppedResolve;
+            stoppedResolve = null;
+            if (stoppedFallbackTimer) {
+              clearTimeout(stoppedFallbackTimer);
+              stoppedFallbackTimer = null;
+            }
             const bytes = chunks.reduce((sum, chunk) => sum + (chunk.size || 0), 0);
-            resolve({
+            resolveNow({
               ok: true,
+              fallbackReason,
               mimeType: recorder.mimeType || mimeType || 'video/webm',
               requestedFps: Math.max(1, Math.round(Number(fps) || 60)),
               width: canvas.width || width,
@@ -824,14 +1150,22 @@ async function main() {
               bytes,
               chunkCount: chunks.length,
               chunks,
+              targetSeconds: captureTargetSeconds,
+              videoBitsPerSecond,
+              elapsedSeconds: (performance.now() - window.__MARBLE_RENDER_CANVAS_CAPTURE__.startedAt) / 1000,
             });
-          }, { once: true });
+          };
+          recorder.addEventListener('stop', () => resolveStopped(null), { once: true });
+          window.__MARBLE_RENDER_RESOLVE_CANVAS_STOP__ = resolveStopped;
         });
         window.__MARBLE_RENDER_CANVAS_CAPTURE__ = {
           stream,
           recorder,
           chunks,
           startedAt: performance.now(),
+          stopRequestedAt: null,
+          stopReason: null,
+          dropChunks: false,
           getInfo: () => ({
             ok: true,
             state: recorder.state,
@@ -839,18 +1173,67 @@ async function main() {
             requestedFps: Math.max(1, Math.round(Number(fps) || 60)),
             chunkCount: chunks.length,
             elapsedSeconds: (performance.now() - window.__MARBLE_RENDER_CANVAS_CAPTURE__.startedAt) / 1000,
+            targetSeconds: Number(window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS || captureTargetSeconds || 0) || captureTargetSeconds,
+            stopRequestedAt: window.__MARBLE_RENDER_CANVAS_CAPTURE__.stopRequestedAt,
+            stopReason: window.__MARBLE_RENDER_CANVAS_CAPTURE__.stopReason || null,
+            videoBitsPerSecond,
             trackSettings: stream.getVideoTracks()[0]?.getSettings?.() || null,
             videoCanvas: app?.getVideoCompositeCanvasInfo?.() || null,
           }),
-          stop: () => {
-            if (recorder.state === 'recording') recorder.stop();
-            else if (recorder.state === 'inactive') return stopped;
-            return stopped.finally(() => stream.getTracks().forEach((track) => track.stop()));
+          requestStop: (reason = 'manual-stop') => {
+            const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__;
+            capture.stopReason = reason || capture.stopReason || 'manual-stop';
+            capture.stopRequestedAt = capture.stopRequestedAt || performance.now();
+            capture.dropChunks = true;
+            let stopCalled = false;
+            let stopError = null;
+            try {
+              if (recorder.state === 'paused') recorder.resume?.();
+              if (recorder.state === 'recording') {
+                recorder.stop();
+                stopCalled = true;
+              }
+              stream.getTracks().forEach((track) => {
+                try { track.stop(); } catch {}
+              });
+              if (recorder.state !== 'recording' && recorder.state !== 'paused') {
+                setTimeout(() => {
+                  window.__MARBLE_RENDER_RESOLVE_CANVAS_STOP__?.('already-inactive-after-request-stop');
+                }, 0);
+              }
+            } catch (error) {
+              stopError = error?.message || String(error);
+            }
+            if (!stoppedFallbackTimer) {
+              stoppedFallbackTimer = setTimeout(() => {
+                window.__MARBLE_RENDER_RESOLVE_CANVAS_STOP__?.('fallback-after-stop-request');
+              }, 1500);
+            }
+            return {
+              ok: !stopError,
+              reason: stopError || null,
+              requestedStop: stopCalled,
+              state: recorder.state,
+              stopReason: capture.stopReason,
+              stopRequestedAt: capture.stopRequestedAt,
+            };
+          },
+          stop: async (reason = 'manual-stop') => {
+            const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__;
+            if (capture.stopPromise) return capture.stopPromise;
+            const requested = capture.requestStop(reason);
+            capture.stopPromise = (async () => {
+              const result = await stopped;
+              await waitForPendingWrites(1000);
+              stream.getTracks().forEach((track) => track.stop());
+              return { ...result, requestStop: requested, pendingWrites: pendingWrites.size, stopReason: capture.stopReason, stopRequestedAt: capture.stopRequestedAt };
+            })();
+            return capture.stopPromise;
           },
         };
-        recorder.start(1000);
+        recorder.start(2000);
         return window.__MARBLE_RENDER_CANVAS_CAPTURE__.getInfo();
-      }, { fps: config.fps, width: config.captureWidth, height: config.captureHeight, videoCanvasLayout: config.videoCanvasLayout });
+      }, { fps: config.fps, width: config.captureWidth, height: config.captureHeight, videoCanvasLayout: config.videoCanvasLayout, targetSeconds: config.targetSeconds });
       if (!canvasCaptureInfo?.ok) fail(`Could not start canvas video capture: ${JSON.stringify(canvasCaptureInfo)}`);
       log('Canvas video capture started:', JSON.stringify(canvasCaptureInfo));
     }
@@ -1055,6 +1438,56 @@ async function main() {
           pendingTimer: null,
           playwrightRender: true,
         };
+        const originalHandleContinuousRecordingRaceComplete = app.handleContinuousRecordingRaceComplete?.bind(app);
+        if (originalHandleContinuousRecordingRaceComplete && !app.__playwrightContinuousFinalRaceSignalWrapped) {
+          app.handleContinuousRecordingRaceComplete = (...args) => {
+            const result = originalHandleContinuousRecordingRaceComplete(...args);
+            const recording = app.continuousRecording;
+            const totalRaces = Math.max(1, Number(recording?.totalRaces || 0));
+            const racesCompleted = Number(recording?.racesCompleted || 0);
+            if (recording?.playwrightRender && racesCompleted >= totalRaces && totalRaces > 0) {
+              const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__?.getInfo?.() || null;
+              const activeCommentary = app.activeCommentary || null;
+              const payload = {
+                eventSource: 'handleContinuousRecordingRaceComplete',
+                mode: recording.mode || 'continuous',
+                phase: recording.phase || 'waiting-final-stop',
+                active: Boolean(recording.active),
+                state: app.state || null,
+                elapsed: Number(app.elapsed || 0),
+                racesCompleted,
+                totalRaces,
+                captureElapsedSeconds: capture?.elapsedSeconds ?? null,
+                capture,
+                podium: app.podiumCeremony ? {
+                  active: Boolean(app.podiumCeremony.active),
+                  elapsedSeconds: Number(app.podiumCeremony.elapsedSeconds || 0),
+                  duration: Number.isFinite(app.podiumCeremony.duration) ? app.podiumCeremony.duration : null,
+                  confettiComplete: Boolean(app.podiumCeremony.confettiComplete),
+                  medalists: Array.isArray(app.podiumCeremony.medalists) ? app.podiumCeremony.medalists.length : 0,
+                  isCupChampionCeremony: Boolean(app.podiumCeremony.isCupChampionCeremony),
+                } : null,
+                commentary: {
+                  enabled: Boolean(app.commentaryEnabled),
+                  voiceEnabled: Boolean(app.commentaryVoiceEnabled),
+                  speaking: Boolean(app.commentaryVoiceSpeaking),
+                  preparing: Boolean(app.commentaryVoicePreparing),
+                  queueLength: Array.isArray(app.commentaryVoiceQueue) ? app.commentaryVoiceQueue.length : 0,
+                  currentLine: app.commentaryVoiceCurrentLine || null,
+                  activeKind: activeCommentary?.kind || null,
+                  activeRemainingSeconds: activeCommentary?.expiresAt != null ? Math.max(0, Number(activeCommentary.expiresAt || 0) - Number(app.elapsed || 0)) : 0,
+                },
+              };
+              if (typeof window.marbleRenderNotifyFinalRaceFinished === 'function') {
+                Promise.resolve(window.marbleRenderNotifyFinalRaceFinished(payload)).catch((error) => {
+                  console.warn('[render:auto-cup] final-race binding notify failed', error?.message || error);
+                });
+              }
+            }
+            return result;
+          };
+          app.__playwrightContinuousFinalRaceSignalWrapped = true;
+        }
         if (maxRaceSeconds > 0) {
           const originalStartContinuousRecordingRace = app.startContinuousRecordingRace?.bind(app);
           if (originalStartContinuousRecordingRace && !app.__playwrightContinuousRaceTimeoutWrapped) {
@@ -1222,6 +1655,113 @@ async function main() {
     eventMarkerPoller = setInterval(() => {
       collectEventMarkerSnapshot(page).catch(() => {});
     }, config.eventMarkerIntervalSeconds * 1000);
+    scheduleFinalRaceCanvasStop = async (snapshot, source = 'poller') => {
+      if (completionCanvasStopRequested || finalRaceStopPromise) return finalRaceStopPromise;
+      completionCanvasStopRequested = true;
+      if (completionStopPoller) {
+        clearInterval(completionStopPoller);
+        completionStopPoller = null;
+      }
+      const initialSnapshot = snapshot;
+      log('[progress] final-race-finished-awaiting-ceremony-commentary', safeJson({
+        source,
+        completion: sanitizeRenderCompletion(initialSnapshot),
+        waitFor: ['podium-complete', 'commentary-voice-idle'],
+        bufferSeconds: finalRaceCompletionBufferSeconds,
+      }));
+
+      finalRaceStopPromise = (async () => {
+        let completionSnapshot = initialSnapshot;
+        const waitStartedAt = Date.now();
+        let lastWaitLogAt = 0;
+        const maxWaitMs = Math.max(15000, (Number(initialSnapshot.podium?.duration || 9) + 45) * 1000);
+        while (!isFinalCeremonyCommentaryCompleteState(completionSnapshot)) {
+          const waitedMs = Date.now() - waitStartedAt;
+          if (waitedMs - lastWaitLogAt >= 5000) {
+            lastWaitLogAt = waitedMs;
+            log('[progress] final-race-ceremony-commentary-waiting', safeJson({
+              source,
+              waitedSeconds: Number((waitedMs / 1000).toFixed(1)),
+              completion: sanitizeRenderCompletion(completionSnapshot),
+              podiumComplete: isPodiumCeremonyComplete(completionSnapshot),
+              commentaryComplete: isCommentaryComplete(completionSnapshot),
+            }));
+          }
+          if (waitedMs > maxWaitMs) {
+            warn('[progress] final-race-ceremony-commentary-wait-timeout', safeJson({
+              source,
+              waitedSeconds: Number((waitedMs / 1000).toFixed(1)),
+              completion: sanitizeRenderCompletion(completionSnapshot),
+            }));
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          const latest = await readRenderProgressSnapshot(page);
+          if (latest && isFinalRaceFinishedState(latest)) completionSnapshot = latest;
+        }
+
+        const captureTargetSeconds = getFinalRaceCompletionCaptureTargetSeconds(completionSnapshot);
+        if (!finalRaceStopLogged) {
+          finalRaceStopLogged = true;
+          log('[progress] final-race-finished-buffer-start', safeJson({
+            source,
+            completion: sanitizeRenderCompletion(completionSnapshot),
+            waitedForCeremonyAndCommentarySeconds: Number(((Date.now() - waitStartedAt) / 1000).toFixed(1)),
+            bufferSeconds: finalRaceCompletionBufferSeconds,
+            captureTargetSeconds,
+          }));
+        }
+        let browserStopTimerArm = null;
+        try {
+          browserStopTimerArm = await armBrowserCanvasStopTimer(page, finalRaceCompletionBufferSeconds, 'final-race-ceremony-commentary-complete-plus-buffer');
+        } catch (error) {
+          browserStopTimerArm = { ok: false, reason: error?.message || String(error) };
+        }
+        page.evaluate(({ captureTargetSeconds }) => {
+          window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS = Math.max(1, Number(captureTargetSeconds || 0) || 1);
+        }, { captureTargetSeconds }).catch(() => null);
+
+        await new Promise((resolve) => {
+          finalRaceStopTimer = setTimeout(resolve, finalRaceCompletionBufferSeconds * 1000);
+        });
+        finalRaceStopTimer = null;
+        if (canvasCaptureStopRequestedAt === null) {
+          canvasCaptureStopRequestedAt = Date.now();
+          canvasCaptureStopRequestedChunk = canvasChunkStats.chunks;
+        }
+        const nodeGateActualElapsedSeconds = getActualCanvasCaptureElapsedSeconds(completionSnapshot);
+        if (!finalRaceNodeGateLogged) {
+          finalRaceNodeGateLogged = true;
+          log('[progress] canvas-stop-request-node-gate', JSON.stringify({ reason: 'final-race-ceremony-commentary-complete-plus-buffer', source, acceptedChunks: canvasChunkStats.chunks, mb: Number((canvasChunkStats.bytes / 1048576).toFixed(1)), nodeGateActualElapsedSeconds: Number(nodeGateActualElapsedSeconds.toFixed(3)), cutTimeSource: 'actual-capture-elapsed', browserStopTimerArm, completion: sanitizeRenderCompletion(completionSnapshot) }));
+        }
+        let canvasStopRequest = null;
+        try {
+          canvasStopRequest = await requestCanvasCaptureStop(page, 'final-race-ceremony-commentary-complete-plus-buffer');
+        } catch (error) {
+          canvasStopRequest = { ok: false, reason: error?.message || String(error) };
+        }
+        if (canvasStopRequest && !finalRaceCanvasStopLogged) {
+          finalRaceCanvasStopLogged = true;
+          log('[progress] canvas-stop-requested-after-final-race-buffer', safeJson({ completion: sanitizeRenderCompletion(completionSnapshot), bufferSeconds: finalRaceCompletionBufferSeconds, canvasStopRequest }));
+        }
+        return canvasStopRequest;
+      })();
+      return finalRaceStopPromise;
+    };
+
+    if (config.videoCapture === 'canvas') {
+      completionStopPoller = setInterval(() => {
+        if (completionCanvasStopRequested || completionStopPollerRunning || !page || page.isClosed?.()) return;
+        completionStopPollerRunning = true;
+        readRenderProgressSnapshot(page)
+          .then((snapshot) => {
+            if (!isFinalRaceFinishedState(snapshot)) return null;
+            return scheduleFinalRaceCanvasStop(snapshot, 'poller');
+          })
+          .catch(() => null)
+          .finally(() => { completionStopPollerRunning = false; });
+      }, 1000);
+    }
     await logRenderProgressSnapshot(page, 'started');
     progressLogPoller = setInterval(() => {
       logRenderProgressSnapshot(page, 'periodic').catch(() => {});
@@ -1277,17 +1817,29 @@ async function main() {
         () => {
           const app = window.__MARBLE_RACE_APP__;
           if (!app) return { done: true, ok: false, reason: 'app-missing' };
+          const donePhases = ['final-complete', 'playwright-smoke-complete', 'completed-all-races', 'completed-all-races-render-stop', 'completed-all-races-render-stop-scheduled'];
+          const stopRenderCompletion = (reason = 'completed-all-races-render-stop') => {
+            if (!app?.continuousRecording?.playwrightRender) return null;
+            const recording = app.continuousRecording;
+            if (Number(recording.racesCompleted || 0) < Number(recording.totalRaces || 0)) return null;
+            app.clearContinuousRecordingTimer?.();
+            app.stopContinuousRecording?.({ stopRecorder: false, reason });
+            recording.active = false;
+            recording.phase = reason;
+            recording.nextActionAt = null;
+            return recording;
+          };
           const finalDone = app.cupMode?.status === 'complete' && app.autoCupRecording?.active === false;
-          const stopped = app.autoCupRecording?.active === false && ['final-complete', 'playwright-smoke-complete'].includes(app.autoCupRecording?.phase);
-          const singleDone = app.singleRecording?.playwrightRender && app.singleRecording.active === false && ['final-complete', 'playwright-smoke-complete'].includes(app.singleRecording.phase);
-          const continuousDone = app.continuousRecording?.playwrightRender && app.continuousRecording.active === false && ['completed-all-races', 'playwright-smoke-complete'].includes(app.continuousRecording.phase);
+          const stopped = app.autoCupRecording?.active === false && donePhases.includes(app.autoCupRecording?.phase);
+          const singleDone = app.singleRecording?.playwrightRender && app.singleRecording.active === false && donePhases.includes(app.singleRecording.phase);
+          const continuousDone = app.continuousRecording?.playwrightRender && app.continuousRecording.active === false && donePhases.includes(app.continuousRecording.phase);
           const continuousReachedTarget = app.continuousRecording?.playwrightRender
             && Number(app.continuousRecording.racesCompleted || 0) >= Number(app.continuousRecording.totalRaces || 0)
-            && ['waiting-final-stop', 'completed-all-races'].includes(app.continuousRecording.phase);
+            && (app.continuousRecording.phase === 'waiting-final-stop' || donePhases.includes(app.continuousRecording.phase));
+          if (continuousReachedTarget && app.continuousRecording?.active) {
+            stopRenderCompletion('completed-all-races-render-stop');
+          }
           if (finalDone || stopped || singleDone || continuousDone || continuousReachedTarget) {
-            if (continuousReachedTarget && app.continuousRecording?.active) {
-              app.stopContinuousRecording?.({ stopRecorder: false, reason: 'completed-all-races' });
-            }
             const activeRecording = singleDone ? app.singleRecording : (continuousDone || continuousReachedTarget) ? app.continuousRecording : app.autoCupRecording;
             return {
             done: true,
@@ -1310,35 +1862,42 @@ async function main() {
       ).then((handle) => handle.jsonValue()).catch(async (error) => {
         const state = await readRenderProgressSnapshot(page);
         if (isTerminalContinuousCompletionState(state)) {
-          log('[progress] timeout reached after app completed all races; continuing to recorder finalization', JSON.stringify(state));
-          await page.evaluate(() => {
+          const captureTargetSeconds = calculateContinuousCompletionCaptureTargetSeconds(state);
+          log('[progress] timeout reached after app completed all races; continuing to recorder finalization', JSON.stringify({ ...state, captureTargetSeconds }));
+          await page.evaluate(({ captureTargetSeconds }) => {
+            window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS = Math.max(1, Number(captureTargetSeconds || 0) || 1);
             const app = window.__MARBLE_RACE_APP__;
             if (app?.continuousRecording?.playwrightRender) {
-              app.stopContinuousRecording?.({ stopRecorder: false, reason: 'completed-all-races-timeout-finalize' });
+              app.clearContinuousRecordingTimer?.();
+              app.stopContinuousRecording?.({ stopRecorder: false, reason: 'completed-all-races-render-stop' });
               app.continuousRecording.active = false;
-              app.continuousRecording.phase = 'completed-all-races';
+              app.continuousRecording.phase = 'completed-all-races-render-stop';
+              app.continuousRecording.nextActionAt = null;
             }
-          }).catch(() => {});
-          return {
-            done: true,
-            ok: true,
-            mode: state.mode,
-            phase: state.phase,
-            active: state.active,
-            state: state.state,
-            elapsed: state.elapsed,
-            racesCompleted: state.racesCompleted,
-            totalRaces: state.totalRaces,
-            allowedAfterTimeout: true,
-          };
+          }, { captureTargetSeconds }).catch(() => null);
+          return sanitizeRenderCompletion({ ...state, reason: 'completed-all-races-timeout-finalize', captureTargetSeconds });
         }
-        fail(`Timed out waiting for auto cup completion. Last state: ${JSON.stringify(state)}`, error);
+        fail(`Timed out waiting for auto cup completion. Last state: ${safeJson(sanitizeRenderCompletion(state))}`, error);
       });
-      log('Auto cup completed:', JSON.stringify(completion));
+      log('Auto cup completed:', safeJson(sanitizeRenderCompletion(completion)));
+      if (isTerminalContinuousCompletionState(completion) || (completion?.mode === 'continuous' && Number(completion?.racesCompleted || 0) >= Number(completion?.totalRaces || 0))) {
+        if (completionStopPoller) {
+          clearInterval(completionStopPoller);
+          completionStopPoller = null;
+        }
+        if (!finalRaceStopPromise) {
+          await scheduleFinalRaceCanvasStop(completion, 'completion-wait');
+        }
+        if (finalRaceStopPromise) await finalRaceStopPromise;
+      }
     }
 
     progress('capture-finalize', 'collect metadata + stop recorder');
     await page.waitForTimeout(1000);
+    if (completionStopPoller) {
+      clearInterval(completionStopPoller);
+      completionStopPoller = null;
+    }
     if (progressLogPoller) {
       clearInterval(progressLogPoller);
       progressLogPoller = null;
@@ -1414,11 +1973,18 @@ async function main() {
     let canvasSourceWebm = null;
     if (config.videoCapture === 'canvas') {
       progress('canvas-stop');
-      const canvasResult = await page.evaluate(() => {
+      if (canvasCaptureStopRequestedAt === null) {
+        canvasCaptureStopRequestedAt = Date.now();
+        canvasCaptureStopRequestedChunk = canvasChunkStats.chunks;
+        const nodeGateActualElapsedSeconds = getActualCanvasCaptureElapsedSeconds();
+        log('[progress] canvas-stop-request-node-gate', JSON.stringify({ reason: 'finalize-canvas-stop', acceptedChunks: canvasChunkStats.chunks, mb: Number((canvasChunkStats.bytes / 1048576).toFixed(1)), nodeGateActualElapsedSeconds: Number(nodeGateActualElapsedSeconds.toFixed(3)), cutTimeSource: 'actual-capture-elapsed' }));
+      }
+      const canvasStopRequest = finalRaceStopPromise ? await finalRaceStopPromise : await requestCanvasCaptureStop(page, 'finalize-canvas-stop');
+      const canvasResult = await page.evaluate((reason) => {
         const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__;
         if (!capture) return { ok: false, reason: 'capture-missing' };
-        return capture.stop();
-      });
+        return capture.stop(reason);
+      }, canvasStopRequest?.stopReason || 'finalize-canvas-stop');
       if (!canvasResult?.ok || !canvasResult.chunkCount) fail(`Canvas video capture failed: ${JSON.stringify(canvasResult)}`);
       await waitForCanvasChunkWrites();
       canvasSourceWebm = canvasChunkOutput || path.join(videoDir, `canvas-capture-${defaultStamp}.webm`);
@@ -1442,9 +2008,22 @@ async function main() {
     await browser.close();
     browser = null;
   } finally {
+    if (renderLogPath) log(`Render log saved: ${renderLogPath}`);
+    if (renderLogStream) {
+      await new Promise((resolve) => renderLogStream.end(resolve)).catch(() => {});
+      renderLogStream = null;
+    }
     if (progressLogPoller) {
       clearInterval(progressLogPoller);
       progressLogPoller = null;
+    }
+    if (finalRaceStopTimer) {
+      clearTimeout(finalRaceStopTimer);
+      finalRaceStopTimer = null;
+    }
+    if (completionStopPoller) {
+      clearInterval(completionStopPoller);
+      completionStopPoller = null;
     }
     if (eventMarkerPoller) {
       clearInterval(eventMarkerPoller);
