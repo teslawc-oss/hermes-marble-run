@@ -1630,40 +1630,64 @@ async function main() {
         completionStopPoller = null;
       }
       const initialSnapshot = snapshot;
-      finalRaceStopPromise = (async () => {
-        const completionSnapshot = initialSnapshot;
-        const captureTargetSeconds = getFinalRaceCompletionCaptureTargetSeconds(completionSnapshot);
-        if (!finalRaceStopLogged) {
-          finalRaceStopLogged = true;
-          log('[progress] final-race-finished-buffer-start', safeJson({
-            source,
-            completion: sanitizeRenderCompletion(completionSnapshot),
-            bufferSeconds: finalRaceCompletionBufferSeconds,
-            captureTargetSeconds,
-          }));
-        }
-        let browserStopTimerArm = null;
-        try {
-          browserStopTimerArm = await armBrowserCanvasStopTimer(page, finalRaceCompletionBufferSeconds, 'final-race-complete-plus-buffer');
-        } catch (error) {
-          browserStopTimerArm = { ok: false, reason: error?.message || String(error) };
-        }
-        page.evaluate(({ captureTargetSeconds }) => {
-          window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS = Math.max(1, Number(captureTargetSeconds || 0) || 1);
-        }, { captureTargetSeconds }).catch(() => null);
-
-        await new Promise((resolve) => {
-          finalRaceStopTimer = setTimeout(resolve, finalRaceCompletionBufferSeconds * 1000);
+      const finalRaceDetectedAt = Date.now();
+      const nodeGateDelayMs = Math.max(0, Number(finalRaceCompletionBufferSeconds || 0)) * 1000;
+      let browserStopTimerArm = { status: 'not-started' };
+      let browserStopTimerArmSettled = false;
+      let browserStopTimerArmPromise = null;
+      const nodeGatePromise = new Promise((resolve) => {
+        finalRaceStopTimer = setTimeout(resolve, nodeGateDelayMs);
+      });
+      const completionSnapshot = initialSnapshot;
+      const captureTargetSeconds = getFinalRaceCompletionCaptureTargetSeconds(completionSnapshot);
+      if (!finalRaceStopLogged) {
+        finalRaceStopLogged = true;
+        log('[progress] final-race-finished-buffer-start', safeJson({
+          source,
+          completion: sanitizeRenderCompletion(completionSnapshot),
+          bufferSeconds: finalRaceCompletionBufferSeconds,
+          nodeGateDelayMs,
+          captureTargetSeconds,
+        }));
+      }
+      browserStopTimerArmPromise = armBrowserCanvasStopTimer(page, finalRaceCompletionBufferSeconds, 'final-race-complete-plus-buffer')
+        .then((result) => {
+          browserStopTimerArmSettled = true;
+          browserStopTimerArm = { status: 'settled', result };
+          return result;
+        })
+        .catch((error) => {
+          browserStopTimerArmSettled = true;
+          browserStopTimerArm = { status: 'rejected', reason: error?.message || String(error) };
+          return browserStopTimerArm;
         });
+      page.evaluate(({ captureTargetSeconds }) => {
+        window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS = Math.max(1, Number(captureTargetSeconds || 0) || 1);
+      }, { captureTargetSeconds }).catch(() => null);
+
+      finalRaceStopPromise = (async () => {
+        await nodeGatePromise;
         finalRaceStopTimer = null;
+        const nodeGateFiredAt = Date.now();
         if (canvasCaptureStopRequestedAt === null) {
-          canvasCaptureStopRequestedAt = Date.now();
+          canvasCaptureStopRequestedAt = nodeGateFiredAt;
           canvasCaptureStopRequestedChunk = canvasChunkStats.chunks;
         }
         const nodeGateActualElapsedSeconds = getActualCanvasCaptureElapsedSeconds(completionSnapshot);
         if (!finalRaceNodeGateLogged) {
           finalRaceNodeGateLogged = true;
-          log('[progress] canvas-stop-request-node-gate', JSON.stringify({ reason: 'final-race-complete-plus-buffer', source, acceptedChunks: canvasChunkStats.chunks, mb: Number((canvasChunkStats.bytes / 1048576).toFixed(1)), nodeGateActualElapsedSeconds: Number(nodeGateActualElapsedSeconds.toFixed(3)), cutTimeSource: 'actual-capture-elapsed', browserStopTimerArm, completion: sanitizeRenderCompletion(completionSnapshot) }));
+          log('[progress] canvas-stop-request-node-gate', JSON.stringify({
+            reason: 'final-race-complete-plus-buffer',
+            source,
+            acceptedChunks: canvasChunkStats.chunks,
+            mb: Number((canvasChunkStats.bytes / 1048576).toFixed(1)),
+            nodeGateActualElapsedSeconds: Number(nodeGateActualElapsedSeconds.toFixed(3)),
+            nodeGateWallElapsedSeconds: Number(((nodeGateFiredAt - finalRaceDetectedAt) / 1000).toFixed(3)),
+            secondsSinceFinalRaceDetected: Number(((nodeGateFiredAt - finalRaceDetectedAt) / 1000).toFixed(3)),
+            cutTimeSource: 'actual-capture-elapsed',
+            browserStopTimerArm: browserStopTimerArmSettled ? browserStopTimerArm : { status: 'pending' },
+            completion: sanitizeRenderCompletion(completionSnapshot),
+          }));
         }
         let canvasStopRequest = null;
         try {
@@ -1673,8 +1697,16 @@ async function main() {
         }
         if (canvasStopRequest && !finalRaceCanvasStopLogged) {
           finalRaceCanvasStopLogged = true;
-          log('[progress] canvas-stop-requested-after-final-race-buffer', safeJson({ completion: sanitizeRenderCompletion(completionSnapshot), bufferSeconds: finalRaceCompletionBufferSeconds, canvasStopRequest }));
+          log('[progress] canvas-stop-requested-after-final-race-buffer', safeJson({
+            completion: sanitizeRenderCompletion(completionSnapshot),
+            bufferSeconds: finalRaceCompletionBufferSeconds,
+            nodeGateWallElapsedSeconds: Number(((Date.now() - finalRaceDetectedAt) / 1000).toFixed(3)),
+            secondsSinceFinalRaceDetected: Number(((Date.now() - finalRaceDetectedAt) / 1000).toFixed(3)),
+            browserStopTimerArm: browserStopTimerArmSettled ? browserStopTimerArm : { status: 'pending' },
+            canvasStopRequest,
+          }));
         }
+        if (browserStopTimerArmPromise) browserStopTimerArmPromise.catch(() => null);
         return canvasStopRequest;
       })();
       return finalRaceStopPromise;
