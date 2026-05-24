@@ -697,32 +697,6 @@ async function main() {
       || renderWaitDonePhases.has(state.phase)
     );
 
-  const isPodiumCeremonyComplete = (state = {}) => {
-    const podium = state.podium;
-    if (!podium) return false;
-    const duration = Number(podium.duration);
-    const elapsedSeconds = Number(podium.elapsedSeconds || 0);
-    const hasPodiumStarted = Number(podium.medalists || 0) > 0 || elapsedSeconds > 0 || podium.active === true;
-    if (!hasPodiumStarted) return false;
-    if (Number.isFinite(duration) && duration > 0) return elapsedSeconds >= duration || (podium.active === false && elapsedSeconds > 0);
-    return podium.active === false && (elapsedSeconds > 0 || Boolean(podium.confettiComplete));
-  };
-
-  const isCommentaryComplete = (state = {}) => {
-    const commentary = state.commentary || {};
-    if (!commentary.enabled) return true;
-    const voiceBusy = Boolean(commentary.voiceEnabled) && (
-      Boolean(commentary.speaking)
-      || Boolean(commentary.preparing)
-      || Number(commentary.queueLength || 0) > 0
-    );
-    return !voiceBusy;
-  };
-
-  const isFinalCeremonyCommentaryCompleteState = (state = {}) => isFinalRaceFinishedState(state)
-    && isPodiumCeremonyComplete(state)
-    && isCommentaryComplete(state);
-
   const getActualCanvasCaptureElapsedSeconds = (state = {}) => {
     const captureElapsed = Number(state.capture?.elapsedSeconds ?? state.captureElapsedSeconds);
     if (Number.isFinite(captureElapsed) && captureElapsed > 0) return Math.max(0, captureElapsed);
@@ -733,13 +707,6 @@ async function main() {
   const getFinalRaceCompletionCaptureTargetSeconds = (state = {}) => {
     const actualElapsed = getActualCanvasCaptureElapsedSeconds(state);
     return Math.max(1, Math.ceil(actualElapsed + finalRaceCompletionBufferSeconds));
-  };
-
-  const waitThenStopCanvasCapture = async (page, delaySeconds = 0, reason = 'final-race-finished-plus-buffer') => {
-    if (config.videoCapture !== 'canvas' || !page || page.isClosed?.()) return null;
-    const delayMs = Math.max(0, Number(delaySeconds || 0)) * 1000;
-    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-    return requestCanvasCaptureStop(page, reason);
   };
 
   const armBrowserCanvasStopTimer = async (page, delaySeconds = 0, reason = 'final-race-finished-plus-buffer') => {
@@ -1663,57 +1630,21 @@ async function main() {
         completionStopPoller = null;
       }
       const initialSnapshot = snapshot;
-      log('[progress] final-race-finished-awaiting-ceremony-commentary', safeJson({
-        source,
-        completion: sanitizeRenderCompletion(initialSnapshot),
-        waitFor: ['podium-complete', 'commentary-voice-idle'],
-        bufferSeconds: finalRaceCompletionBufferSeconds,
-      }));
-
       finalRaceStopPromise = (async () => {
-        let completionSnapshot = initialSnapshot;
-        const waitStartedAt = Date.now();
-        let lastWaitLogAt = 0;
-        const maxWaitMs = Math.max(15000, (Number(initialSnapshot.podium?.duration || 9) + 45) * 1000);
-        while (!isFinalCeremonyCommentaryCompleteState(completionSnapshot)) {
-          const waitedMs = Date.now() - waitStartedAt;
-          if (waitedMs - lastWaitLogAt >= 5000) {
-            lastWaitLogAt = waitedMs;
-            log('[progress] final-race-ceremony-commentary-waiting', safeJson({
-              source,
-              waitedSeconds: Number((waitedMs / 1000).toFixed(1)),
-              completion: sanitizeRenderCompletion(completionSnapshot),
-              podiumComplete: isPodiumCeremonyComplete(completionSnapshot),
-              commentaryComplete: isCommentaryComplete(completionSnapshot),
-            }));
-          }
-          if (waitedMs > maxWaitMs) {
-            warn('[progress] final-race-ceremony-commentary-wait-timeout', safeJson({
-              source,
-              waitedSeconds: Number((waitedMs / 1000).toFixed(1)),
-              completion: sanitizeRenderCompletion(completionSnapshot),
-            }));
-            break;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 250));
-          const latest = await readRenderProgressSnapshot(page);
-          if (latest && isFinalRaceFinishedState(latest)) completionSnapshot = latest;
-        }
-
+        const completionSnapshot = initialSnapshot;
         const captureTargetSeconds = getFinalRaceCompletionCaptureTargetSeconds(completionSnapshot);
         if (!finalRaceStopLogged) {
           finalRaceStopLogged = true;
           log('[progress] final-race-finished-buffer-start', safeJson({
             source,
             completion: sanitizeRenderCompletion(completionSnapshot),
-            waitedForCeremonyAndCommentarySeconds: Number(((Date.now() - waitStartedAt) / 1000).toFixed(1)),
             bufferSeconds: finalRaceCompletionBufferSeconds,
             captureTargetSeconds,
           }));
         }
         let browserStopTimerArm = null;
         try {
-          browserStopTimerArm = await armBrowserCanvasStopTimer(page, finalRaceCompletionBufferSeconds, 'final-race-ceremony-commentary-complete-plus-buffer');
+          browserStopTimerArm = await armBrowserCanvasStopTimer(page, finalRaceCompletionBufferSeconds, 'final-race-complete-plus-buffer');
         } catch (error) {
           browserStopTimerArm = { ok: false, reason: error?.message || String(error) };
         }
@@ -1732,11 +1663,11 @@ async function main() {
         const nodeGateActualElapsedSeconds = getActualCanvasCaptureElapsedSeconds(completionSnapshot);
         if (!finalRaceNodeGateLogged) {
           finalRaceNodeGateLogged = true;
-          log('[progress] canvas-stop-request-node-gate', JSON.stringify({ reason: 'final-race-ceremony-commentary-complete-plus-buffer', source, acceptedChunks: canvasChunkStats.chunks, mb: Number((canvasChunkStats.bytes / 1048576).toFixed(1)), nodeGateActualElapsedSeconds: Number(nodeGateActualElapsedSeconds.toFixed(3)), cutTimeSource: 'actual-capture-elapsed', browserStopTimerArm, completion: sanitizeRenderCompletion(completionSnapshot) }));
+          log('[progress] canvas-stop-request-node-gate', JSON.stringify({ reason: 'final-race-complete-plus-buffer', source, acceptedChunks: canvasChunkStats.chunks, mb: Number((canvasChunkStats.bytes / 1048576).toFixed(1)), nodeGateActualElapsedSeconds: Number(nodeGateActualElapsedSeconds.toFixed(3)), cutTimeSource: 'actual-capture-elapsed', browserStopTimerArm, completion: sanitizeRenderCompletion(completionSnapshot) }));
         }
         let canvasStopRequest = null;
         try {
-          canvasStopRequest = await requestCanvasCaptureStop(page, 'final-race-ceremony-commentary-complete-plus-buffer');
+          canvasStopRequest = await requestCanvasCaptureStop(page, 'final-race-complete-plus-buffer');
         } catch (error) {
           canvasStopRequest = { ok: false, reason: error?.message || String(error) };
         }
