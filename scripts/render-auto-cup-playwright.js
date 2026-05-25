@@ -670,7 +670,7 @@ async function main() {
     return snapshot;
   };
 
-  const finalRaceCompletionBufferSeconds = Math.max(0, Number(args.get('final-race-buffer-seconds') || process.env.MARBLE_RENDER_FINAL_RACE_BUFFER_SECONDS || 13));
+  const finalRaceCompletionBufferSeconds = Math.max(0, Number(args.get('final-race-buffer-seconds') || process.env.MARBLE_RENDER_FINAL_RACE_BUFFER_SECONDS || 18));
 
   const renderWaitDonePhases = new Set([
     'completed-all-races',
