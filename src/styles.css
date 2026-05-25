@@ -33,6 +33,23 @@ html, body, #app {
   height: 100%;
 }
 
+#canvas-container .web-viewer-overlay-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 4;
+  pointer-events: none;
+}
+
+/* Web viewer mode: the canvas overlay now carries the audience-facing
+   standings/channel UI, so hide the duplicate DOM right HUD and handle pill.
+   The recording/dashboard composite canvas is unaffected by these DOM rules. */
+.hud-right,
+.right-ui-toggle {
+  display: none !important;
+}
+
 .hud {
   position: fixed;
   top: 18px;

@@ -36,7 +36,7 @@ const config = {
   width: Number(args.get('width') || process.env.MARBLE_RENDER_WIDTH || 1920),
   height: Number(args.get('height') || process.env.MARBLE_RENDER_HEIGHT || 1080),
   captureScale: Number(args.get('capture-scale') || process.env.MARBLE_RENDER_CAPTURE_SCALE || 1),
-  fps: Number(args.get('fps') || process.env.MARBLE_RENDER_FPS || 45),
+  fps: Number(args.get('fps') || process.env.MARBLE_RENDER_FPS || 60),
   videoCrf: Number(args.get('crf') || process.env.MARBLE_RENDER_CRF || 18),
   videoPreset: args.get('video-preset') || process.env.MARBLE_RENDER_VIDEO_PRESET || 'veryfast',
   timeoutSeconds: Number(args.get('timeout') || process.env.MARBLE_RENDER_TIMEOUT || 900),
@@ -65,6 +65,10 @@ const config = {
   eventMarkerIntervalSeconds: Number(args.get('event-marker-interval-seconds') || process.env.MARBLE_RENDER_EVENT_MARKER_INTERVAL_SECONDS || 5),
   youtubeMetadata: args.get('youtube-metadata') !== 'false' && process.env.MARBLE_RENDER_YOUTUBE_METADATA !== 'false',
   youtubeMetadataOutput: args.get('youtube-metadata-output') || process.env.MARBLE_RENDER_YOUTUBE_METADATA_OUTPUT || '',
+  uploadYoutube: args.get('upload-youtube') === 'true' || process.env.MARBLE_RENDER_UPLOAD_YOUTUBE === 'true',
+  youtubePrivacy: args.get('youtube-privacy') || process.env.MARBLE_RENDER_YOUTUBE_PRIVACY || 'private',
+  youtubeUploadOutput: args.get('youtube-upload-output') || process.env.MARBLE_RENDER_YOUTUBE_UPLOAD_OUTPUT || '',
+  youtubeUploadToken: args.get('youtube-upload-token') || process.env.MARBLE_RENDER_YOUTUBE_UPLOAD_TOKEN || '',
   keepEventMarkers: args.get('keep-event-markers') === 'true' || process.env.MARBLE_RENDER_KEEP_EVENT_MARKERS === 'true',
   keepThumbnailMetadata: args.get('keep-thumbnail-metadata') === 'true' || process.env.MARBLE_RENDER_KEEP_THUMBNAIL_METADATA === 'true',
   youtubeMetadataTemplate: args.get('youtube-metadata-template') || process.env.MARBLE_RENDER_YOUTUBE_METADATA_TEMPLATE || path.join(rootDir, 'config/youtube-video-metadata-template.json'),
@@ -102,6 +106,10 @@ config.eventMarkerIntervalSeconds = Number.isFinite(config.eventMarkerIntervalSe
 config.eventMarkersOutput = config.eventMarkersOutput ? path.resolve(config.eventMarkersOutput) : '';
 config.youtubeTitleHistoryLimit = Number.isFinite(config.youtubeTitleHistoryLimit) ? Math.max(0, Math.min(50, Math.round(config.youtubeTitleHistoryLimit))) : 10;
 config.youtubeTitleHistory = String(config.youtubeTitleHistory || '').trim();
+config.youtubePrivacy = ['private', 'unlisted', 'public'].includes(String(config.youtubePrivacy).toLowerCase()) ? String(config.youtubePrivacy).toLowerCase() : 'private';
+config.youtubeUploadOutput = config.youtubeUploadOutput ? path.resolve(config.youtubeUploadOutput) : '';
+config.youtubeUploadToken = String(config.youtubeUploadToken || '').trim();
+if (config.uploadYoutube) config.youtubeMetadata = true;
 
 config.ttsVoice = String(config.ttsVoice || 'Alex').replace(/[^\w .'-]/g, '').trim().slice(0, 48) || 'Alex';
 config.obstacleDistribution = ['random', 'zoned'].includes(config.obstacleDistribution) ? config.obstacleDistribution : 'random';
@@ -355,7 +363,7 @@ function pickMidRaceThumbnailEvent(events = [], summary = {}) {
   };
 }
 
-function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput, metadataOutput = '', companionWebmOutput, eventMarkersOutput = '', thumbnailEvent = null }) {
+function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput, metadataOutput = '', companionWebmOutput, eventMarkersOutput = '', thumbnailEvent = null, thumbnailAudit = null }) {
   const template = readYoutubeMetadataTemplate(config.youtubeMetadataTemplate);
   const raceCount = config.mode === 'continuous'
     ? config.multipleRaceCount
@@ -363,7 +371,7 @@ function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput
       ? 1
       : Number(renderSummary.raceCount || renderSummary.stageSummaries?.length || template.defaults.raceCount || 10));
   const marbleCount = Number(renderSummary.marbleCount || config.cupSize || template.defaults.marbleCount || 30);
-  const baseTitle = config.thumbnailTitle || renderSummary.thumbnailTitle || renderSummary.title || renderSummary.cupName || config.cupName || template.defaults.fallbackTitle;
+  const baseTitle = config.thumbnailTitle || thumbnailAudit?.rawTitle || renderSummary.thumbnailTitle || renderSummary.title || renderSummary.cupName || config.cupName || template.defaults.fallbackTitle;
   const recentTitles = readYoutubeTitleHistory(config.youtubeTitleHistory, config.youtubeTitleHistoryLimit);
   const titleResult = makeClickbaitVideoTitle(baseTitle, { fallbackTitle: template.defaults.fallbackTitle, recentTitles, historyLimit: config.youtubeTitleHistoryLimit });
   const title = titleResult.title;
@@ -382,8 +390,11 @@ function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput
     hashtags: template.hashtags,
     recentTitleTypesAvoided: [...new Set(recentTitles.map((item) => item.titleType))],
     source: {
-      titleSource: config.thumbnailTitle ? 'thumbnailTitle' : 'renderMetadata',
-      thumbnailTitle: config.thumbnailTitle || '',
+      titleSource: config.thumbnailTitle ? 'thumbnailTitle' : (thumbnailAudit?.titleSource || 'renderMetadata'),
+      thumbnailTitle: config.thumbnailTitle || thumbnailAudit?.rawTitle || '',
+      generatedThumbnailTitle: thumbnailAudit?.rawTitle || '',
+      thumbnailTitleSource: thumbnailAudit?.titleSource || '',
+      thumbnailSelectedEvent: thumbnailAudit?.selectedEvent || null,
       cupName: config.cupName,
       raceCount,
       marbleCount,
@@ -2123,22 +2134,54 @@ async function main() {
       `--frame-strategy=${config.thumbnailFrameStrategy}`,
       `--safe-crop=${config.thumbnailSafeCrop}`,
       `--max-words=${config.thumbnailMaxWords}`,
+      `--title-history=${config.youtubeTitleHistory}`,
+      `--title-history-limit=${config.youtubeTitleHistoryLimit}`,
     ];
     if (config.thumbnailTitle) thumbnailArgs.push(`--title=${config.thumbnailTitle}`);
     run('node', thumbnailArgs);
     if (!config.keepThumbnailMetadata) {
       rmSync(metadataOutput, { force: true });
-      rmSync(`${thumbnailOutput}.json`, { force: true });
+    }
+    const thumbnailAuditPath = `${thumbnailOutput}.json`;
+    let thumbnailAudit = null;
+    if (existsSync(thumbnailAuditPath)) {
+      try {
+        thumbnailAudit = JSON.parse(readFileSync(thumbnailAuditPath, 'utf8'));
+        log(`Thumbnail title: ${thumbnailAudit.rawTitle || thumbnailAudit.title || ''} (${thumbnailAudit.titleSource || 'unknown'})`);
+      } catch (error) {
+        console.warn('[render:auto-cup] Could not read thumbnail audit JSON:', error?.message || error);
+      }
+    }
+    if (!config.keepThumbnailMetadata) {
+      rmSync(thumbnailAuditPath, { force: true });
     }
     if (!existsSync(thumbnailOutput) || statSync(thumbnailOutput).size <= 0) fail(`Thumbnail was not created: ${thumbnailOutput}`);
     log(`Thumbnail: ${thumbnailOutput}`);
     if (config.youtubeMetadata) {
-      const youtubeMetadata = buildYoutubeVideoMetadata({ config, renderSummary, thumbnailOutput, metadataOutput: config.keepThumbnailMetadata ? metadataOutput : '', companionWebmOutput, eventMarkersOutput: config.keepEventMarkers ? eventMarkersOutput : '' });
+      const youtubeMetadata = buildYoutubeVideoMetadata({ config, renderSummary, thumbnailOutput, metadataOutput: config.keepThumbnailMetadata ? metadataOutput : '', companionWebmOutput, eventMarkersOutput: config.keepEventMarkers ? eventMarkersOutput : '', thumbnailAudit });
       mkdirSync(path.dirname(youtubeMetadataOutput), { recursive: true });
       writeFileSync(youtubeMetadataOutput, `${JSON.stringify(youtubeMetadata, null, 2)}\n`);
       log(`YouTube metadata: ${youtubeMetadataOutput}`);
       log(`YouTube title: ${youtubeMetadata.title}`);
       log(`YouTube title type: ${youtubeMetadata.titleType}; avoided recent types: ${youtubeMetadata.recentTitleTypesAvoided.join(', ') || 'none'}`);
+      if (config.uploadYoutube) {
+        progress('youtube-upload', `${config.youtubePrivacy} ${youtubeMetadata.title}`);
+        const uploadOutput = path.resolve(config.youtubeUploadOutput || `${config.output.replace(/\.[^.]+$/, '')}.youtube-upload.json`);
+        const uploadArgs = [
+          'scripts/upload-youtube-bundle.js',
+          `--video=${config.output}`,
+          `--thumbnail=${thumbnailOutput}`,
+          `--metadata=${youtubeMetadataOutput}`,
+          `--privacy=${config.youtubePrivacy}`,
+          `--output=${uploadOutput}`,
+        ];
+        if (config.youtubeUploadToken) uploadArgs.push(`--token=${config.youtubeUploadToken}`);
+        run('node', uploadArgs);
+        if (!existsSync(uploadOutput) || statSync(uploadOutput).size <= 0) fail(`YouTube upload record was not created: ${uploadOutput}`);
+        log(`YouTube upload record: ${uploadOutput}`);
+      }
+    } else if (config.uploadYoutube) {
+      fail('YouTube upload requested but metadata generation is disabled. Enable --youtube-metadata=true.');
     }
   }
   if (!config.keepWebm) rmSync(videoDir, { recursive: true, force: true });

@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, statSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
@@ -36,11 +36,15 @@ export function buildThumbnailConfig(args = cliArgs, env = process.env) {
     textPosition: args.get('text-position') || env.MARBLE_THUMBNAIL_TEXT_POSITION || 'auto',
     badgeText: args.get('badge-text') || env.MARBLE_THUMBNAIL_BADGE_TEXT || '',
     hideBadge: args.get('hide-badge') === 'true' || env.MARBLE_THUMBNAIL_HIDE_BADGE === 'true',
+    titleHistory: args.get('title-history') || env.MARBLE_THUMBNAIL_TITLE_HISTORY || recordingsDir,
+    titleHistoryLimit: Number(args.get('title-history-limit') || env.MARBLE_THUMBNAIL_TITLE_HISTORY_LIMIT || 10),
   };
   config.output = path.resolve(config.output || defaultOutputFor(config.input || path.join(recordingsDir, 'thumbnail-source.webm')));
   config.width = Number.isFinite(config.width) ? Math.max(320, Math.min(3840, Math.round(config.width))) : 1280;
   config.height = Number.isFinite(config.height) ? Math.max(180, Math.min(2160, Math.round(config.height))) : 720;
   config.maxWords = Number.isFinite(config.maxWords) ? Math.max(2, Math.min(10, Math.round(config.maxWords))) : 6;
+  config.titleHistoryLimit = Number.isFinite(config.titleHistoryLimit) ? Math.max(0, Math.min(50, Math.round(config.titleHistoryLimit))) : 10;
+  config.titleHistory = String(config.titleHistory || '').trim();
   return config;
 }
 
@@ -280,6 +284,243 @@ export function titleFromMetadata(metadata, events) {
   return 'Epic Marble Race';
 }
 
+export const EVENT_TITLE_TEMPLATES = {
+  obstacle: [
+    'Crazy First Hit',
+    'Obstacle Mayhem',
+    'Brutal Marble Hit',
+    'Track Trap Chaos',
+    'Big Impact Moment',
+    'Marble Gets Smashed',
+    'This Hit Changed Everything',
+    'Obstacle Wipeout',
+    'Wild Track Collision',
+    'Hit By The Trap',
+  ],
+  overtake: [
+    'Huge Overtake',
+    'Insane Pass',
+    'Marble Takes The Lead',
+    'Unbelievable Overtake',
+    'Last Second Pass',
+    'Leader Gets Caught',
+    'Epic Position Fight',
+    'The Pass Was Crazy',
+    'Marble Steals First',
+    'What A Comeback Pass',
+  ],
+  battle: [
+    'Insane Marble Battle',
+    'Neck And Neck',
+    'Close Marble Fight',
+    'Battle For First',
+    'Total Race War',
+    'Marbles Go Head To Head',
+    'This Battle Is Wild',
+    'Crazy Front Pack',
+    'Marble Showdown',
+    'Too Close To Call',
+  ],
+  speed: [
+    'Speed Burst Madness',
+    'Fastest Marble Wins',
+    'Turbo Marble Run',
+    'Sudden Speed Boost',
+    'Marble Goes Supersonic',
+    'Full Speed Chaos',
+    'Fast Marble Attack',
+    'Speed Changes Everything',
+    'Rocket Marble Moment',
+    'Blink And Miss It',
+  ],
+  leader: [
+    'New Leader Alert',
+    'Marble Takes Control',
+    'Leader Under Pressure',
+    'First Place Fight',
+    'Can It Stay First',
+    'The Lead Changed',
+    'Marble Leads The Pack',
+    'Front Runner Trouble',
+    'Race Lead Drama',
+    'Who Can Catch It',
+  ],
+  finish: [
+    'Closest Finish Ever',
+    'Insane Finish',
+    'Photo Finish Chaos',
+    'Last Second Win',
+    'Race Ends In Madness',
+    'Finish Line Drama',
+    'Winner At The Line',
+    'Unreal Final Push',
+    'Nobody Saw This Finish',
+    'Final Marble Wins',
+  ],
+  winner: [
+    'Unexpected Marble Win',
+    'Winner Takes All',
+    'This Marble Won',
+    'Champion Marble Moment',
+    'No Way It Wins',
+    'One Marble Survives',
+    'The Winner Shocked Everyone',
+    'Marble Victory Chaos',
+    'Biggest Win Yet',
+    'Champion At Last',
+  ],
+  dnf: [
+    'Marble Disaster Incoming',
+    'They Did Not Survive',
+    'Total Marble Fail',
+    'Track Claims Another',
+    'Eliminated In Chaos',
+    'Marble Knockout',
+    'Brutal Race Exit',
+    'Gone From The Race',
+    'This Track Is Savage',
+    'DNF Disaster',
+  ],
+  chaos: [
+    'Total Marble Chaos',
+    'Absolute Track Madness',
+    'Everything Went Wrong',
+    'Marble Mayhem',
+    'Wild Marble Moment',
+    'Chaos On The Track',
+    'This Race Is Crazy',
+    'Track Goes Insane',
+    'Marbles Lose Control',
+    'Pure Marble Madness',
+  ],
+  progress: [
+    'Halfway Chaos Begins',
+    'The Race Heats Up',
+    'Mid Race Madness',
+    'Anything Can Happen',
+    'Track Pressure Builds',
+    'Race Gets Serious',
+    'Marbles Under Pressure',
+    'Momentum Is Shifting',
+    'The Pack Is Closing',
+    'No Safe Lead',
+  ],
+  general: [
+    'Epic Marble Race',
+    'Marble Race Chaos',
+    'Ultimate Marble Race',
+    'This Track Is Wild',
+    'Crazy Marble Race',
+    'Marble Rush Madness',
+    'Can It Win',
+    'Race To The Finish',
+    'Big Marble Battle',
+    'Who Will Survive',
+  ],
+};
+
+function normalizeTitleForHistory(value) {
+  return sanitizeTitle(value).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+function titleHashString(value) {
+  let hash = 2166136261;
+  for (const char of String(value || '')) {
+    hash ^= char.codePointAt(0) || 0;
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function classifyThumbnailEventKind(event = {}) {
+  const kind = String(event?.kind || '').toLowerCase();
+  const text = `${event?.title || ''} ${event?.detail || ''}`.toLowerCase();
+  if (kind === 'obstacle' || /obstacle|hit|crash|collision|trap|wipeout|blast|kick|snap/.test(text)) return 'obstacle';
+  if (kind === 'overtake' || /overtake|pass|steals? first|takes? first|takes? p1/.test(text)) return 'overtake';
+  if (kind === 'battle' || /battle|neck|showdown|duel|head to head/.test(text)) return 'battle';
+  if (kind === 'speed' || /speed|burst|boost|turbo|fast|rocket/.test(text)) return 'speed';
+  if (kind === 'leader' || /leader|lead|first place|front runner/.test(text)) return 'leader';
+  if (['finish', 'complete'].includes(kind) || /finish|winner|wins|line|champion/.test(text)) return 'finish';
+  if (kind === 'winner') return 'winner';
+  if (kind === 'dnf' || /dnf|eliminated|disaster|fail|survive/.test(text)) return 'dnf';
+  if (/chaos|mayhem|madness|wild|crazy/.test(text)) return 'chaos';
+  if (kind === 'progress') return 'progress';
+  return 'general';
+}
+
+function readRecentThumbnailTitles(historyPath, limit = 10) {
+  if (!historyPath || limit <= 0) return [];
+  const root = path.resolve(historyPath);
+  if (!existsSync(root)) return [];
+  const files = [];
+  const collect = (dir, depth = 0) => {
+    if (depth > 3) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) collect(full, depth + 1);
+      else if (/\.thumbnail\.jpg\.json$|\.thumbnail\.jpg\.metadata\.json$|\.youtube\.json$/i.test(entry.name)) {
+        files.push({ path: full, mtimeMs: statSync(full).mtimeMs });
+      }
+    }
+  };
+  try {
+    if (statSync(root).isDirectory()) collect(root);
+    else files.push({ path: root, mtimeMs: statSync(root).mtimeMs });
+  } catch {
+    return [];
+  }
+  return files
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, limit)
+    .map((file) => {
+      try {
+        const parsed = JSON.parse(readFileSync(file.path, 'utf8'));
+        const title = parsed.title || parsed.rawTitle || parsed.thumbnailTitle || parsed?.source?.thumbnailTitle || parsed?.source?.baseThumbnailTitle || '';
+        return title ? { title: sanitizeTitle(title), normalized: normalizeTitleForHistory(title), path: file.path } : null;
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+export function titleFromSelectedEvent({ event = null, metadata = {}, recentTitles = [], seed = '' } = {}) {
+  const eventKind = classifyThumbnailEventKind(event);
+  const pools = [eventKind, eventKind === 'finish' ? 'winner' : '', 'chaos', 'general']
+    .filter(Boolean)
+    .map((key) => ({ key, templates: EVENT_TITLE_TEMPLATES[key] || [] }))
+    .filter((pool) => pool.templates.length);
+  const recentSet = new Set((recentTitles || []).map((item) => normalizeTitleForHistory(item.title || item)).filter(Boolean));
+  const seedValue = titleHashString(`${seed}|${eventKind}|${event?.title || ''}|${event?.detail || ''}|${event?.time || ''}|${event?.progress || ''}`);
+  let firstFallback = null;
+  for (const pool of pools) {
+    const rotated = pool.templates.map((_, index) => pool.templates[(seedValue + index) % pool.templates.length]);
+    if (!firstFallback) firstFallback = { title: rotated[0], key: pool.key };
+    const selected = rotated.find((title) => !recentSet.has(normalizeTitleForHistory(title)));
+    if (selected) {
+      return {
+        title: selected,
+        source: event ? 'selectedEvent' : 'fallback',
+        eventKind: pool.key,
+        selectedEventKind: eventKind,
+        recentTitlesAvoided: [...recentSet].slice(0, 20),
+        availableTemplates: pool.templates.length,
+      };
+    }
+  }
+  if (firstFallback?.title) {
+    return {
+      title: firstFallback.title,
+      source: event ? 'selectedEvent-repeat-after-exhausted-history' : 'fallback-repeat-after-exhausted-history',
+      eventKind: firstFallback.key,
+      selectedEventKind: eventKind,
+      recentTitlesAvoided: [...recentSet].slice(0, 20),
+      availableTemplates: EVENT_TITLE_TEMPLATES[firstFallback.key]?.length || 0,
+    };
+  }
+  return { title: titleFromMetadata(metadata, normalizeEvents(metadata)), source: 'metadata-fallback', eventKind: 'general', selectedEventKind: eventKind, recentTitlesAvoided: [...recentSet].slice(0, 20), availableTemplates: 0 };
+}
+
 export function compactTitle(title, maxWords = 6) {
   const cleaned = sanitizeTitle(title).replace(/[^\p{L}\p{N} &'!-]+/gu, ' ');
   const words = cleaned.split(/\s+/).filter(Boolean);
@@ -505,11 +746,18 @@ export function buildThumbnailPlan({ config, metadata = {}, durationSeconds }) {
       : config.frameStrategy === 'mid-highlight'
         ? pickMidHighlightFrame({ events, durationSeconds })
         : { seconds: Math.max(1, Math.min(durationSeconds * 0.50 || 2, durationSeconds ? Math.max(1, durationSeconds - 0.5) : 20)), reason: `strategy:${config.frameStrategy}`, event: null };
-  const rawTitle = config.title || titleFromMetadata(metadata, events);
+  const recentTitles = readRecentThumbnailTitles(config.titleHistory, config.titleHistoryLimit);
+  const generatedTitle = titleFromSelectedEvent({
+    event: frame.event,
+    metadata,
+    recentTitles,
+    seed: `${config.input || metadata.renderOutput || metadata.generatedFrom || ''}|${durationSeconds || ''}`,
+  });
+  const rawTitle = config.title || generatedTitle.title || titleFromMetadata(metadata, events);
   const title = compactTitle(rawTitle, config.maxWords);
   const filter = makeFilter({ width: config.width, height: config.height, safeCrop: config.safeCrop });
   const badgeText = config.hideBadge ? '' : (config.badgeText || formatDurationBadge(durationSeconds));
-  return { events, frame, rawTitle, title, filter, badgeText };
+  return { events, frame, rawTitle, title, filter, badgeText, generatedTitle, recentTitles };
 }
 
 async function renderHtmlToJpeg({ htmlPath, output, width, height }) {
@@ -534,7 +782,7 @@ async function main() {
 
   const metadata = readMetadata(config.metadata) || {};
   const durationSeconds = getDurationSeconds(config.input);
-  const { events, frame, title, filter, badgeText } = buildThumbnailPlan({ config, metadata, durationSeconds });
+  const { events, frame, rawTitle, title, filter, badgeText, generatedTitle, recentTitles } = buildThumbnailPlan({ config, metadata, durationSeconds });
   const workDir = path.join(path.dirname(config.output), `.thumbnail-work-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   mkdirSync(workDir, { recursive: true });
   const framePath = path.join(workDir, 'frame.jpg');
@@ -546,6 +794,9 @@ async function main() {
     width: config.width,
     height: config.height,
     title,
+    rawTitle,
+    titleSource: config.title ? 'manual' : generatedTitle.source,
+    generatedTitle,
     frameSeconds: Number(frame.seconds.toFixed(3)),
     frameReason: frame.reason,
     selectedEvent: frame.event ? { title: frame.event.title, detail: frame.event.detail, kind: frame.event.kind, time: frame.event.time, progress: frame.event.progress } : null,
@@ -554,6 +805,9 @@ async function main() {
     badgeText,
     fontFamily: config.fontFamily,
     safeCrop: config.safeCrop,
+    titleHistory: config.titleHistory,
+    titleHistoryLimit: config.titleHistoryLimit,
+    recentThumbnailTitles: recentTitles.map((item) => ({ title: item.title, path: item.path })),
     filter,
   };
   if (!config.noProbeLog) log('Plan:', JSON.stringify(summary));

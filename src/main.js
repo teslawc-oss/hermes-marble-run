@@ -925,6 +925,9 @@ class MarbleRace {
     this.viewerOverlayCanvas = null;
     this.viewerOverlayContext = null;
     this.lastViewerOverlaySummary = null;
+    this.webViewerOverlayCanvas = null;
+    this.webViewerOverlayContext = null;
+    this.lastWebViewerOverlaySummary = null;
     this.videoCanvasLayoutKey = 'horizontal';
     this.videoCanvasLayout = { ...VIDEO_CANVAS_LAYOUTS.horizontal };
     this.videoCompositeCanvas = null;
@@ -1279,6 +1282,7 @@ class MarbleRace {
     this.renderer.shadowMap.type = THREE.BasicShadowMap;
     this.container.appendChild(this.renderer.domElement);
     this.initViewerCanvasOverlay();
+    this.initWebViewerCanvasOverlay();
     this.scene.add(this.guidePointGroup);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enabled = true;
@@ -1355,6 +1359,38 @@ class MarbleRace {
     this.initVideoCompositeCanvas(this.videoCanvasLayoutKey || 'horizontal');
   }
 
+  initWebViewerCanvasOverlay() {
+    const canvas = document.createElement('canvas');
+    canvas.className = 'web-viewer-overlay-canvas';
+    canvas.dataset.webViewerOverlay = 'true';
+    canvas.setAttribute('aria-hidden', 'true');
+    const ctx = canvas.getContext('2d');
+    this.webViewerOverlayCanvas = canvas;
+    this.webViewerOverlayContext = ctx;
+    this.container?.appendChild(canvas);
+    this.resizeWebViewerCanvasOverlay();
+  }
+
+  resizeWebViewerCanvasOverlay() {
+    if (!this.webViewerOverlayCanvas) return null;
+    const width = Math.max(1, Math.round(window.innerWidth || this.container?.clientWidth || 1920));
+    const height = Math.max(1, Math.round(window.innerHeight || this.container?.clientHeight || 1080));
+    if (this.webViewerOverlayCanvas.width !== width) this.webViewerOverlayCanvas.width = width;
+    if (this.webViewerOverlayCanvas.height !== height) this.webViewerOverlayCanvas.height = height;
+    return { width, height };
+  }
+
+  getWebViewerOverlayInfo() {
+    return {
+      enabled: Boolean(this.webViewerOverlayCanvas),
+      separateFromRecordingOverlay: this.webViewerOverlayCanvas !== this.viewerOverlayCanvas,
+      separateFromVideoComposite: this.webViewerOverlayCanvas !== this.videoCompositeCanvas,
+      canvasSize: this.webViewerOverlayCanvas ? `${this.webViewerOverlayCanvas.width}x${this.webViewerOverlayCanvas.height}` : null,
+      cssClass: this.webViewerOverlayCanvas?.className || null,
+      lastOverlay: this.lastWebViewerOverlaySummary || null,
+    };
+  }
+
   drawViewerRoundedRect(ctx, x, y, w, h, r = 18) {
     const radius = Math.min(r, w / 2, h / 2);
     ctx.beginPath();
@@ -1399,10 +1435,8 @@ class MarbleRace {
     return { title: 'MARBLE RUSH', detail: 'Pick your winner' };
   }
 
-  drawViewerCanvasOverlay() {
-    if (!CANVAS_VIEWER_OVERLAY.enabled || !this.viewerOverlayContext || !this.viewerOverlayCanvas) return;
-    const ctx = this.viewerOverlayContext;
-    const canvas = this.viewerOverlayCanvas;
+  drawViewerCanvasOverlay({ canvas = this.viewerOverlayCanvas, ctx = this.viewerOverlayContext, summaryTarget = 'recording' } = {}) {
+    if (!CANVAS_VIEWER_OVERLAY.enabled || !ctx || !canvas) return;
     const w = canvas.width;
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
@@ -1498,8 +1532,9 @@ class MarbleRace {
     this.drawViewerText(ctx, `PROGRESS ${Math.round(leaderProgress * 100)}%`, progressX + progressW + 18, infoY + 25, { font: '900 20px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, maxWidth: 168 });
     this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, progressX + progressW + 18, infoY + 50, { font: '800 17px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, maxWidth: 168 });
 
-    this.lastViewerOverlaySummary = {
+    const overlaySummary = {
       enabled: true,
+      target: summaryTarget,
       canvasSize: `${w}x${h}`,
       liveEventTitle: caption.title,
       liveEventDetail: caption.detail,
@@ -1510,6 +1545,8 @@ class MarbleRace {
       leaderProgress: Number(leaderProgress.toFixed(3)),
       leaderDistance: Number(leaderDistance.toFixed(1)),
     };
+    if (summaryTarget === 'web') this.lastWebViewerOverlaySummary = overlaySummary;
+    else this.lastViewerOverlaySummary = overlaySummary;
   }
 
   getVideoCompositeSourceRect(sourceWidth, sourceHeight, targetWidth, targetHeight, fit = 'cover') {
@@ -1588,7 +1625,10 @@ class MarbleRace {
   }
 
   renderViewerCanvasOverlay() {
-    this.drawViewerCanvasOverlay();
+    this.drawViewerCanvasOverlay({ canvas: this.viewerOverlayCanvas, ctx: this.viewerOverlayContext, summaryTarget: 'recording' });
+    if (this.webViewerOverlayCanvas && this.webViewerOverlayContext) {
+      this.drawViewerCanvasOverlay({ canvas: this.webViewerOverlayCanvas, ctx: this.webViewerOverlayContext, summaryTarget: 'web' });
+    }
     this.drawVideoCompositeFrame();
   }
 
@@ -10054,6 +10094,7 @@ class MarbleRace {
         channelHandle: CANVAS_VIEWER_OVERLAY.channelHandle,
         ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
       },
+      webViewerOverlayCanvas: this.getWebViewerOverlayInfo?.() || null,
       videoCompositeCanvas: this.getVideoCompositeCanvasInfo?.() || null,
       broadcastStorylines: {
         eventCount: this.broadcastEvents.length,
@@ -11598,6 +11639,7 @@ class MarbleRace {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.resizeWebViewerCanvasOverlay();
   }
 }
 
