@@ -1323,7 +1323,19 @@ class MarbleRace {
     this.videoCompositeCanvas = canvas;
     this.videoCompositeContext = ctx;
     this.lastVideoCompositeSummary = null;
+    this.syncViewerOverlayCanvasToVideoLayout();
     return canvas;
+  }
+
+  syncViewerOverlayCanvasToVideoLayout() {
+    if (!this.viewerOverlayCanvas) return null;
+    const layout = this.videoCanvasLayout || VIDEO_CANVAS_LAYOUTS.horizontal;
+    const width = Math.max(1, Number(layout.width) || VIDEO_CANVAS_LAYOUTS.horizontal.width);
+    const height = Math.max(1, Number(layout.height) || VIDEO_CANVAS_LAYOUTS.horizontal.height);
+    if (this.viewerOverlayCanvas.width !== width) this.viewerOverlayCanvas.width = width;
+    if (this.viewerOverlayCanvas.height !== height) this.viewerOverlayCanvas.height = height;
+    this.viewerOverlayCanvas.dataset.videoCanvasLayout = layout.key || 'horizontal';
+    return { width, height, layout: layout.key || 'horizontal' };
   }
 
   setVideoCanvasLayout(layoutKey = 'horizontal') {
@@ -1441,11 +1453,18 @@ class MarbleRace {
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
 
-    const ranking = this.getRanking({ force: false }).slice(0, CANVAS_VIEWER_OVERLAY.maxStandingRows);
+    const layoutKey = this.videoCanvasLayoutKey || (w < h ? 'vertical' : 'horizontal');
+    const isVertical = layoutKey === 'vertical' || h > w * 1.2;
+    const maxRows = isVertical ? 3 : CANVAS_VIEWER_OVERLAY.maxStandingRows;
+    const ranking = this.getRanking({ force: false }).slice(0, maxRows);
     const leader = ranking[0] || null;
     const leaderProgress = clamp(leader?.progress || 0, 0, 1);
     const leaderDistance = Math.max(0, Math.min(this.trackLength || 0, leader?.distance || 0));
     const caption = this.getViewerOverlayCaption();
+    if (isVertical) {
+      this.drawVerticalViewerCanvasOverlay({ ctx, canvas, ranking, leaderProgress, leaderDistance, caption, summaryTarget });
+      return;
+    }
 
     // Live Event caption, top-left.
     const capX = 46;
@@ -1539,6 +1558,116 @@ class MarbleRace {
       liveEventTitle: caption.title,
       liveEventDetail: caption.detail,
       liveStandingCount: ranking.length,
+      layout: 'horizontal',
+      maxStandingRows: CANVAS_VIEWER_OVERLAY.maxStandingRows,
+      channelHandle: CANVAS_VIEWER_OVERLAY.channelHandle,
+      ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
+      elapsed: Number(this.elapsed.toFixed(2)),
+      leaderProgress: Number(leaderProgress.toFixed(3)),
+      leaderDistance: Number(leaderDistance.toFixed(1)),
+    };
+    if (summaryTarget === 'web') this.lastWebViewerOverlaySummary = overlaySummary;
+    else this.lastViewerOverlaySummary = overlaySummary;
+  }
+
+  drawVerticalViewerCanvasOverlay({ ctx, canvas, ranking = [], leaderProgress = 0, leaderDistance = 0, caption = {}, summaryTarget = 'recording' } = {}) {
+    const w = canvas.width;
+    const h = canvas.height;
+    const margin = 42;
+
+    // Compact Shorts event card at the top.
+    const capX = margin;
+    const capY = 54;
+    const capW = w - margin * 2;
+    const capH = 172;
+    ctx.save();
+    const capGradient = ctx.createLinearGradient(capX, capY, capX + capW, capY + capH);
+    capGradient.addColorStop(0, 'rgba(255, 128, 0, 0.94)');
+    capGradient.addColorStop(1, 'rgba(255, 224, 80, 0.80)');
+    this.drawViewerRoundedRect(ctx, capX, capY, capW, capH, 34);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.54)';
+    ctx.fill();
+    this.drawViewerRoundedRect(ctx, capX + 18, capY + 18, 182, 44, 20);
+    ctx.fillStyle = capGradient;
+    ctx.fill();
+    this.drawViewerText(ctx, 'LIVE EVENT', capX + 109, capY + 41, { font: '900 25px Arial Black, Impact, sans-serif', fill: '#141414', strokeWidth: 0, align: 'center' });
+    this.drawViewerText(ctx, caption.title || 'MARBLE RUSH', capX + 34, capY + 100, { font: '900 54px Arial Black, Impact, sans-serif', fill: '#fff7b1', maxWidth: capW - 68 });
+    this.drawViewerText(ctx, caption.detail || 'Pick your winner', capX + 34, capY + 145, { font: '800 30px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: capW - 68 });
+    ctx.restore();
+
+    // Shorts-friendly top-three standings card. Keep it compact so the middle race action stays visible.
+    const boardW = w - margin * 2;
+    const rowH = 72;
+    const boardH = 92 + rowH * Math.max(1, ranking.length || 3);
+    const boardX = margin;
+    const boardY = Math.min(h - 720, 270);
+    this.drawViewerRoundedRect(ctx, boardX, boardY, boardW, boardH, 34);
+    ctx.fillStyle = 'rgba(3, 8, 18, 0.70)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.30)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    this.drawViewerText(ctx, 'LIVE STANDING', boardX + 30, boardY + 42, { font: '900 38px Arial Black, Impact, sans-serif', fill: '#8df7ff', strokeWidth: 5 });
+    ranking.forEach((data, index) => {
+      const y = boardY + 76 + index * rowH;
+      const color = `#${(data.color || 0xffffff).toString(16).padStart(6, '0')}`;
+      this.drawViewerRoundedRect(ctx, boardX + 24, y, boardW - 48, 56, 18);
+      ctx.fillStyle = index === 0 ? 'rgba(255, 214, 64, 0.30)' : 'rgba(255,255,255,0.11)';
+      ctx.fill();
+      this.drawViewerText(ctx, `#${index + 1}`, boardX + 48, y + 28, { font: '900 28px Arial Black, Impact, sans-serif', fill: index === 0 ? '#ffdf3f' : '#ffffff', strokeWidth: 4 });
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(boardX + 130, y + 28, 14, 0, Math.PI * 2);
+      ctx.fill();
+      this.drawViewerText(ctx, data.name || `Marble ${data.id + 1}`, boardX + 160, y + 28, { font: '800 27px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: boardW - 340 });
+      const label = data.defeated ? 'DNF' : data.finished ? `${(data.finishTime || this.elapsed || 0).toFixed(1)}s` : `${Math.round((data.progress || 0) * 100)}%`;
+      this.drawViewerText(ctx, label, boardX + boardW - 52, y + 28, { font: '900 27px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, align: 'right' });
+    });
+
+    // Bottom stacked CTA and progress lower-third.
+    const ctaX = margin;
+    const ctaY = h - 292;
+    const ctaW = w - margin * 2;
+    const ctaH = 94;
+    this.drawViewerRoundedRect(ctx, ctaX, ctaY, ctaW, ctaH, 32);
+    ctx.fillStyle = 'rgba(255, 36, 66, 0.92)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.ctaPrimary, ctaX + ctaW / 2, ctaY + 38, { font: '900 46px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 5, align: 'center', maxWidth: ctaW - 60 });
+    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.channelHandle, ctaX + ctaW / 2, ctaY + 73, { font: '800 27px Arial, system-ui, sans-serif', fill: '#fff3a0', strokeWidth: 4, align: 'center', maxWidth: ctaW - 60 });
+
+    const infoX = margin;
+    const infoY = h - 172;
+    const infoW = w - margin * 2;
+    const infoH = 112;
+    this.drawViewerRoundedRect(ctx, infoX, infoY, infoW, infoH, 30);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.64)';
+    ctx.fill();
+    this.drawViewerText(ctx, `TIME ${this.elapsed.toFixed(1)}s`, infoX + 34, infoY + 38, { font: '900 31px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 4 });
+    this.drawViewerText(ctx, `PROGRESS ${Math.round(leaderProgress * 100)}%`, infoX + infoW - 34, infoY + 38, { font: '900 29px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, align: 'right' });
+    const progressX = infoX + 34;
+    const progressY = infoY + 78;
+    const progressW = infoW - 68;
+    const progressH = 16;
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, progressW, progressH, 8);
+    ctx.fill();
+    ctx.fillStyle = '#35f2ff';
+    this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, Math.max(8, progressW * leaderProgress), progressH, 8);
+    ctx.fill();
+    this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, infoX + infoW / 2, infoY + 102, { font: '800 23px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, align: 'center', maxWidth: infoW - 68 });
+
+    const overlaySummary = {
+      enabled: true,
+      target: summaryTarget,
+      layout: 'vertical',
+      canvasSize: `${w}x${h}`,
+      liveEventTitle: caption.title,
+      liveEventDetail: caption.detail,
+      liveStandingCount: ranking.length,
+      maxStandingRows: 3,
       channelHandle: CANVAS_VIEWER_OVERLAY.channelHandle,
       ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
       elapsed: Number(this.elapsed.toFixed(2)),

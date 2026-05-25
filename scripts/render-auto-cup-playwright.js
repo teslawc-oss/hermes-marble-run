@@ -99,6 +99,10 @@ const dynamicTimeoutSeconds = Math.ceil((timeoutRaceSecondsEstimate * estimatedR
 config.timeoutSeconds = hasExplicitTimeout && Number.isFinite(config.timeoutSeconds) && config.timeoutSeconds > 0
   ? Math.max(120, Math.min(7200, Math.round(config.timeoutSeconds)))
   : Math.max(120, Math.min(7200, dynamicTimeoutSeconds));
+if (config.videoCanvasLayout === 'vertical' && !args.has('width') && !process.env.MARBLE_RENDER_WIDTH) config.width = 1080;
+if (config.videoCanvasLayout === 'vertical' && !args.has('height') && !process.env.MARBLE_RENDER_HEIGHT) config.height = 1920;
+config.youtubeKind = config.videoCanvasLayout === 'vertical' ? 'shorts' : 'long';
+config.outputAspectRatio = config.videoCanvasLayout === 'vertical' ? '9:16' : '16:9';
 config.captureWidth = Math.round(config.width * config.captureScale);
 config.captureHeight = Math.round(config.height * config.captureScale);
 config.thumbnailMaxWords = Number.isFinite(config.thumbnailMaxWords) ? Math.max(2, Math.min(10, Math.round(config.thumbnailMaxWords))) : 6;
@@ -382,15 +386,24 @@ function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput
     .replace(/\{marbleCount\}/g, String(marbleCount))
     .replace(/\{title\}/g, title)
     .replace(/\{cupName\}/g, sanitizeSingleLine(config.cupName || renderSummary.cupName || 'Marble Rush'));
-  const description = `${descriptionBody}\n\n${template.hashtags.join(' ')}`;
+  const baseHashtags = template.hashtags;
+  const hashtags = config.youtubeKind === 'shorts'
+    ? [...new Set(['#Shorts', ...baseHashtags])]
+    : baseHashtags;
+  const description = `${descriptionBody}
+
+${hashtags.join(' ')}`;
   return {
     title,
     titleType,
+    youtubeKind: config.youtubeKind || 'long',
+    aspectRatio: config.outputAspectRatio || (config.videoCanvasLayout === 'vertical' ? '9:16' : '16:9'),
+    videoCanvasLayout: config.videoCanvasLayout || 'horizontal',
     description,
-    hashtags: template.hashtags,
+    hashtags,
     recentTitleTypesAvoided: [...new Set(recentTitles.map((item) => item.titleType))],
     source: {
-      titleSource: config.thumbnailTitle ? 'thumbnailTitle' : (thumbnailAudit?.titleSource || 'renderMetadata'),
+
       thumbnailTitle: config.thumbnailTitle || thumbnailAudit?.rawTitle || '',
       generatedThumbnailTitle: thumbnailAudit?.rawTitle || '',
       thumbnailTitleSource: thumbnailAudit?.titleSource || '',
@@ -2136,6 +2149,8 @@ async function main() {
       `--max-words=${config.thumbnailMaxWords}`,
       `--title-history=${config.youtubeTitleHistory}`,
       `--title-history-limit=${config.youtubeTitleHistoryLimit}`,
+      `--width=${config.videoCanvasLayout === 'vertical' ? 1080 : 1280}`,
+      `--height=${config.videoCanvasLayout === 'vertical' ? 1920 : 720}`,
     ];
     if (config.thumbnailTitle) thumbnailArgs.push(`--title=${config.thumbnailTitle}`);
     run('node', thumbnailArgs);
