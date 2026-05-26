@@ -403,7 +403,8 @@ ${hashtags.join(' ')}`;
     hashtags,
     recentTitleTypesAvoided: [...new Set(recentTitles.map((item) => item.titleType))],
     source: {
-
+      titleSource: thumbnailAudit?.titleSource || (config.thumbnailTitle ? 'manual-thumbnail-title' : (renderSummary.thumbnailTitle ? 'render-summary-thumbnail-title' : (renderSummary.title ? 'render-summary-title' : (renderSummary.cupName || config.cupName ? 'cup-name' : 'template-fallback')))),
+      baseTitle,
       thumbnailTitle: config.thumbnailTitle || thumbnailAudit?.rawTitle || '',
       generatedThumbnailTitle: thumbnailAudit?.rawTitle || '',
       thumbnailTitleSource: thumbnailAudit?.titleSource || '',
