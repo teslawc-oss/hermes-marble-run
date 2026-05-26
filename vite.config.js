@@ -143,6 +143,9 @@ function macTtsBridgePlugin() {
 export default defineConfig({
   plugins: [macTtsBridgePlugin()],
   server: {
+    host: '127.0.0.1',
+    port: Number(process.env.MARBLE_INTERNAL_PORT || 5174),
+    strictPort: true,
     allowedHosts: ['itdog.mynetgear.com'],
   },
 });
