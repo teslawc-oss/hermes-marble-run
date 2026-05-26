@@ -594,13 +594,21 @@ export function computeThumbnailTextStyle({ title, width, height }) {
   const lines = splitTitleLines(title);
   const longest = Math.max(...lines.map((line) => line.length), 1);
   const lineCount = lines.length;
-  const widthRatio = lineCount >= 3 ? 0.70 : 0.68;
-  const heightRatio = lineCount >= 3 ? 0.18 : 0.205;
-  const maxFontSize = lineCount >= 3 ? 132 : 152;
+  const isVertical = height > width;
+  const widthRatio = isVertical
+    ? (lineCount >= 3 ? 0.86 : 0.82)
+    : (lineCount >= 3 ? 0.70 : 0.68);
+  const heightRatio = isVertical
+    ? (lineCount >= 3 ? 0.12 : 0.14)
+    : (lineCount >= 3 ? 0.18 : 0.205);
+  const maxFontSize = isVertical
+    ? (lineCount >= 3 ? 235 : 275)
+    : (lineCount >= 3 ? 132 : 152);
+  const minFontSize = isVertical ? 112 : 72;
   const byWidth = Math.floor((width * widthRatio) / Math.max(longest, 4) * 1.55);
   const byHeight = Math.floor(height * heightRatio);
-  const fontSize = Math.max(72, Math.min(maxFontSize, byWidth, byHeight));
-  return { lines, colors: pickLineColors(title), fontSize };
+  const fontSize = Math.max(minFontSize, Math.min(maxFontSize, byWidth, byHeight));
+  return { lines, colors: pickLineColors(title), fontSize, isVertical };
 }
 
 function parsePpmPixels(buffer) {
@@ -661,7 +669,16 @@ export function analyzeFrameLayout(framePath, width, height) {
 
 export function makeFilter({ width, height, safeCrop = 'hud-safe' }) {
   const mode = String(safeCrop || '').toLowerCase();
-  const cropProfiles = {
+  const isVertical = height > width;
+  const cropProfiles = isVertical ? {
+    none: { zoom: 1, x: 0.5, y: 0.5 },
+    off: { zoom: 1, x: 0.5, y: 0.5 },
+    center: { zoom: 1.08, x: 0.5, y: 0.5 },
+    'hud-safe': { zoom: 1.28, x: 0.50, y: 0.52 },
+    'vertical-shorts-clean': { zoom: 1.72, x: 0.50, y: 0.82 },
+    'composite-center': { zoom: 1.22, x: 0.50, y: 0.52 },
+    'composite-no-live-event': { zoom: 1.38, x: 0.50, y: 0.54 },
+  } : {
     none: { zoom: 1, x: 0.5, y: 0.5 },
     off: { zoom: 1, x: 0.5, y: 0.5 },
     center: { zoom: 1.12, x: 0.5, y: 0.5 },
@@ -703,18 +720,20 @@ function formatDurationBadge(durationSeconds) {
 
 export function makeThumbnailHtml({ framePath, title, width, height, fontFamily, layout = null, badgeText = '' }) {
   const frameUrl = pathToFileURL(framePath).href;
-  const { lines, colors, fontSize } = computeThumbnailTextStyle({ title, width, height });
-  const centeredPlacement = { left: Math.round(width * 0.07), top: Math.round(height * 0.50), width: Math.round(width * 0.86), align: 'center' };
+  const { lines, colors, fontSize, isVertical } = computeThumbnailTextStyle({ title, width, height });
+  const centeredPlacement = isVertical
+    ? { left: Math.round(width * 0.045), top: Math.round(height * 0.48), width: Math.round(width * 0.91), align: 'center' }
+    : { left: Math.round(width * 0.07), top: Math.round(height * 0.50), width: Math.round(width * 0.86), align: 'center' };
   const placement = layout?.css || centeredPlacement;
-  const strokeWidth = Math.max(5, Math.round(fontSize * 0.065));
-  const softShadow = Math.round(fontSize * 0.045);
-  const rowGap = Math.round(fontSize * (lines.length >= 3 ? 0.03 : 0.13));
+  const strokeWidth = Math.max(isVertical ? 8 : 5, Math.round(fontSize * (isVertical ? 0.052 : 0.065)));
+  const softShadow = Math.round(fontSize * (isVertical ? 0.035 : 0.045));
+  const rowGap = Math.round(fontSize * (lines.length >= 3 ? (isVertical ? 0.00 : 0.03) : (isVertical ? 0.08 : 0.13)));
   const renderedLines = lines.map((line, index) => `<span class=\"title-line title-line-${index + 1}\">${escapeHtml(line)}<\/span>`).join('');
   const lineCss = lines.map((line, index) => {
-    const offset = index % 2 === 0 ? -Math.round(width * 0.015) : Math.round(width * 0.018);
+    const offset = isVertical ? 0 : (index % 2 === 0 ? -Math.round(width * 0.015) : Math.round(width * 0.018));
     return `.title-line-${index + 1} { color: ${colors[index] || colors[0]}; transform: translateX(${offset}px); }`;
   }).join('\n');
-  const badgeVisible = Boolean(badgeText) && lines.length <= 2;
+  const badgeVisible = Boolean(badgeText) && lines.length <= 2 && !isVertical;
   return `<!doctype html>
 <html><head><meta charset="utf-8"><style>
 html, body { margin: 0; width: ${width}px; height: ${height}px; overflow: hidden; background: #000; }
@@ -822,7 +841,9 @@ async function main() {
       '-q:v', '2',
       framePath,
     ]);
-    const layout = { selected: 'center', css: { left: Math.round(config.width * 0.07), top: Math.round(config.height * 0.50), width: Math.round(config.width * 0.86), align: 'center' }, zones: [], fixed: true };
+    const layout = config.height > config.width
+      ? { selected: 'center', css: { left: Math.round(config.width * 0.045), top: Math.round(config.height * 0.48), width: Math.round(config.width * 0.91), align: 'center' }, zones: [], fixed: true, vertical: true }
+      : { selected: 'center', css: { left: Math.round(config.width * 0.07), top: Math.round(config.height * 0.50), width: Math.round(config.width * 0.86), align: 'center' }, zones: [], fixed: true };
     summary.textLayout = layout;
     if (!config.noProbeLog) log('Text layout:', JSON.stringify(summary.textLayout));
     writeFileSync(htmlPath, makeThumbnailHtml({ framePath, title, width: config.width, height: config.height, fontFamily: config.fontFamily, layout, badgeText }));
