@@ -457,12 +457,14 @@ const OBSTACLE_CATEGORIES = {
 
 const PINBALL_OBSTACLE_TYPES = [
   'popBumper',
+  'pinBumper',
   'slingshot',
   'spinnerGate',
   'dropTarget',
 ];
 const PINBALL_OBSTACLE_TYPE_METADATA = {
   popBumper: { label: 'Pop Bumper', category: 'normal' },
+  pinBumper: { label: 'Pin Bumper', category: 'normal' },
   slingshot: { label: 'Slingshot', category: 'normal' },
   spinnerGate: { label: 'Spinner Gate', category: 'normal' },
   dropTarget: { label: 'Drop Target', category: 'normal' },
@@ -672,6 +674,9 @@ const PERFORMANCE_TUNING = {
 const PINBALL_PHYSICS = {
   popBumperRadius: 1.55,
   popBumperImpulse: 7.2,
+  pinBumperRadius: 1.12,
+  pinBumperImpulse: 5.6,
+  pinBumperCount: 5,
   slingshotRadius: 1.75,
   slingshotImpulse: 6.6,
   spinnerRadius: 1.25,
@@ -956,6 +961,7 @@ class MarbleRace {
     this.scene?.add?.(this.guidePointGroup);
     this.pinballInteractions = {
       popBumper: 0,
+      pinBumper: 0,
       slingshot: 0,
       spinnerGate: 0,
       dropTarget: 0,
@@ -2351,6 +2357,9 @@ class MarbleRace {
         resetInSeconds: obstacle.resetAt != null ? Number(Math.max(0, obstacle.resetAt - this.elapsed).toFixed(2)) : null,
         dropTargetScale: obstacle.dropTargetScale ?? null,
         dropTargetDimensions: obstacle.dropTargetDimensions ?? null,
+        pinCount: obstacle.pinCount ?? null,
+        pinBumperDimensions: obstacle.pinBumperDimensions ?? null,
+        lastHitPinIndex: obstacle.lastHitPinIndex ?? null,
         bankSignText: obstacle.bankSignText ?? null,
         targets: obstacle.targets?.map((target) => ({
           index: target.index,
@@ -2436,6 +2445,9 @@ class MarbleRace {
         resetInSeconds: obstacle.resetAt != null ? Number(Math.max(0, obstacle.resetAt - this.elapsed).toFixed(2)) : null,
         dropTargetScale: obstacle.dropTargetScale ?? null,
         dropTargetDimensions: obstacle.dropTargetDimensions ?? null,
+        pinCount: obstacle.pinCount ?? null,
+        pinBumperDimensions: obstacle.pinBumperDimensions ?? null,
+        lastHitPinIndex: obstacle.lastHitPinIndex ?? null,
         bankSignText: obstacle.bankSignText ?? null,
         targets: obstacle.targets?.map((target) => ({
           index: target.index,
@@ -2538,6 +2550,7 @@ class MarbleRace {
     this.obstacleDistributionSummary = null;
     this.pinballInteractions = {
       popBumper: 0,
+      pinBumper: 0,
       slingshot: 0,
       spinnerGate: 0,
       dropTarget: 0,
@@ -2939,6 +2952,48 @@ class MarbleRace {
       ctx.stroke();
     }
     return this.finishTexture(canvas, 1, 1);
+  }
+
+  createPinBumperMetalTexture() {
+    const { canvas, ctx } = this.createTextureCanvas(256, '#b8c1c9');
+    const grad = ctx.createLinearGradient(0, 0, 256, 0);
+    grad.addColorStop(0, '#737c84');
+    grad.addColorStop(0.18, '#eef5fa');
+    grad.addColorStop(0.42, '#aeb8c1');
+    grad.addColorStop(0.64, '#f8fdff');
+    grad.addColorStop(1, '#6f7880');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 256, 256);
+
+    for (let y = 0; y < 256; y += 2) {
+      const wave = Math.sin(y * 0.23) * 0.035 + Math.sin(y * 0.07) * 0.025;
+      ctx.fillStyle = `rgba(255,255,255,${0.08 + Math.max(0, wave)})`;
+      ctx.fillRect(0, y, 256, 1);
+      ctx.fillStyle = `rgba(20,24,28,${0.035 + Math.max(0, -wave)})`;
+      ctx.fillRect(0, y + 1, 256, 1);
+    }
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = 3;
+    for (let x = -64; x < 320; x += 28) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x + 96, 256);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = 'rgba(30,34,38,0.18)';
+    ctx.lineWidth = 2;
+    for (let x = -32; x < 288; x += 40) {
+      ctx.beginPath();
+      ctx.moveTo(x, 256);
+      ctx.lineTo(x + 72, 0);
+      ctx.stroke();
+    }
+
+    const texture = this.finishTexture(canvas, 1, 3);
+    texture.userData = { style: 'brushed-metal-pin-bumper', size: 256 };
+    return texture;
   }
 
   finishTexture(canvas, repeatX = 1, repeatY = 1) {
@@ -4594,6 +4649,8 @@ class MarbleRace {
     // 彈珠台換皮膚：高亮壓克力、電鍍金屬、霓虹橡膠，讓障礙物一眼像 pinball table 玩具件。
     const palette = {
       popBumper: new THREE.MeshPhysicalMaterial({ color: 0xff3f9e, roughness: 0.18, metalness: 0.04, clearcoat: 1, clearcoatRoughness: 0.08, emissive: 0x700035, emissiveIntensity: 0.5 }),
+      pinBumper: new THREE.MeshPhysicalMaterial({ color: 0x35f6ff, roughness: 0.16, metalness: 0.08, clearcoat: 1, clearcoatRoughness: 0.06, emissive: 0x007b8a, emissiveIntensity: 0.58 }),
+      pinBumperTip: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.11, metalness: 0.04, clearcoat: 1, clearcoatRoughness: 0.04, emissive: 0x58f7ff, emissiveIntensity: 0.32 }),
       popBumperCap: new THREE.MeshPhysicalMaterial({ color: 0xfff1fa, roughness: 0.12, metalness: 0.02, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0xff5fb7, emissiveIntensity: 0.18 }),
       slingshot: new THREE.MeshPhysicalMaterial({ color: 0x12f0c8, roughness: 0.16, metalness: 0.06, clearcoat: 1, clearcoatRoughness: 0.07, emissive: 0x00685d, emissiveIntensity: 0.46 }),
       spinnerGate: new THREE.MeshPhysicalMaterial({ color: 0x8d7dff, roughness: 0.15, metalness: 0.16, clearcoat: 1, clearcoatRoughness: 0.06, emissive: 0x280090, emissiveIntensity: 0.38 }),
@@ -4789,6 +4846,10 @@ class MarbleRace {
         palette.popBumper.userData.capMaterial = palette.popBumperCap;
         palette.popBumper.userData.ringMaterial = palette.chrome;
         return this.createPopBumperObstacle(trackSurface, yaw, pitch, palette.popBumper);
+      case 'pinBumper':
+        palette.pinBumper.userData.tipMaterial = palette.pinBumperTip;
+        palette.pinBumper.userData.ringMaterial = palette.chrome;
+        return this.createPinBumperObstacle(trackSurface, yaw, pitch, palette.pinBumper);
       case 'slingshot':
         palette.slingshot.userData.insertMaterial = palette.yellowInsert;
         palette.slingshot.userData.chromeMaterial = palette.chrome;
@@ -4856,6 +4917,140 @@ class MarbleRace {
       trackSlopePitch: pitch,
       trackYaw: yaw,
       pulse: 0,
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
+  }
+
+  createPinBumperObstacle(trackSurface, yaw, pitch, material) {
+    const pinCount = Math.max(2, PINBALL_PHYSICS.pinBumperCount || 5);
+    const group = new THREE.Group();
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation(group, yaw, pitch);
+    group.userData.visualStyle = 'clustered-brushed-metal-pin-bumper-bank';
+    this.trackGroup.add(group);
+
+    const pins = [];
+    const bodies = [];
+    const localOffsets = [];
+    const spacing = 0.68;
+    const metalTexture = this.createPinBumperMetalTexture?.() || null;
+    const metalPinMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xdce6ee,
+      map: metalTexture,
+      metalness: 0.96,
+      roughness: 0.2,
+      clearcoat: 0.9,
+      clearcoatRoughness: 0.08,
+      envMapIntensity: 1.35,
+    });
+    const darkGrooveMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0x30363d,
+      metalness: 0.92,
+      roughness: 0.26,
+      clearcoat: 0.55,
+      clearcoatRoughness: 0.14,
+      envMapIntensity: 1.1,
+    });
+    const goldAccentMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xf5c85b,
+      metalness: 0.95,
+      roughness: 0.18,
+      clearcoat: 0.8,
+      clearcoatRoughness: 0.07,
+      envMapIntensity: 1.25,
+    });
+    const rows = [
+      { x: 0, z: -0.78 },
+      { x: -spacing * 0.62, z: -0.24 },
+      { x: spacing * 0.62, z: -0.24 },
+      { x: -spacing * 1.18, z: 0.44 },
+      { x: spacing * 1.18, z: 0.44 },
+    ].slice(0, pinCount);
+
+    rows.forEach((offset, index) => {
+      const stemRadius = 0.2;
+      const stemHeight = 0.8;
+      const pinGroup = new THREE.Group();
+      pinGroup.position.set(offset.x, 0, offset.z);
+      group.add(pinGroup);
+
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(stemRadius * 1.72, stemRadius * 1.9, 0.14, 36), darkGrooveMaterial);
+      base.position.y = 0.07;
+      base.castShadow = PERFORMANCE_TUNING.shadows;
+      base.receiveShadow = PERFORMANCE_TUNING.shadows;
+      pinGroup.add(base);
+
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(stemRadius, stemRadius * 0.82, stemHeight, 36), metalPinMaterial);
+      stem.position.y = 0.14 + stemHeight / 2;
+      stem.castShadow = PERFORMANCE_TUNING.shadows;
+      stem.receiveShadow = PERFORMANCE_TUNING.shadows;
+      pinGroup.add(stem);
+
+      const lowerBand = new THREE.Mesh(new THREE.TorusGeometry(stemRadius * 1.03, 0.018, 8, 36), darkGrooveMaterial);
+      lowerBand.position.y = 0.26;
+      lowerBand.rotation.x = Math.PI / 2;
+      pinGroup.add(lowerBand);
+
+      const topBand = new THREE.Mesh(new THREE.TorusGeometry(stemRadius * 0.88, 0.018, 8, 36), goldAccentMaterial);
+      topBand.position.y = 0.14 + stemHeight * 0.92;
+      topBand.rotation.x = Math.PI / 2;
+      pinGroup.add(topBand);
+
+      const tip = new THREE.Mesh(new THREE.SphereGeometry(stemRadius * 1.18, 28, 14), metalPinMaterial);
+      tip.position.y = 0.14 + stemHeight + stemRadius * 0.5;
+      tip.scale.y = 0.56;
+      tip.castShadow = PERFORMANCE_TUNING.shadows;
+      pinGroup.add(tip);
+
+      const halo = new THREE.Mesh(
+        new THREE.TorusGeometry(stemRadius * 1.85, 0.018, 8, 36),
+        new THREE.MeshBasicMaterial({ color: 0xd8f7ff, transparent: true, opacity: 0.22, depthWrite: false })
+      );
+      halo.position.y = 0.31;
+      halo.rotation.x = Math.PI / 2;
+      halo.renderOrder = 34;
+      pinGroup.add(halo);
+
+      const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
+      body.addShape(new CANNON.Cylinder(stemRadius * 1.16, stemRadius * 1.02, stemHeight + 0.22, 24));
+      const bodyCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(offset.x, 0.52, offset.z, yaw, pitch));
+      this.setSlopeBodyTransform(body, bodyCenter, yaw, pitch);
+      this.addObstacleBody(body, group);
+      bodies.push(body);
+      pins.push({ group: pinGroup, base, stem, tip, halo, x: offset.x, z: offset.z, body, center: bodyCenter });
+      localOffsets.push(offset);
+    });
+
+    const obstacleCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, 0.52, 0, yaw, pitch));
+    const obstacle = {
+      type: 'pinBumper',
+      trackSurface: trackSurface.clone(),
+      center: obstacleCenter,
+      radius: PINBALL_PHYSICS.pinBumperRadius + spacing,
+      impulse: PINBALL_PHYSICS.pinBumperImpulse,
+      cooldown: new Map(),
+      group,
+      pins,
+      bodies,
+      localOffsets,
+      pinCount: pins.length,
+      pinBumperDimensions: {
+        pinCount: pins.length,
+        stemRadius: 0.2,
+        stemHeight: 0.8,
+        spacing,
+        rowPattern: 'five-pin-v-formation',
+        materialStyle: 'brushed-metal-with-gold-accent-rings',
+        textureSize: 256,
+        clusterRadius: PINBALL_PHYSICS.pinBumperRadius + spacing,
+      },
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
+      visualStyle: 'clustered-brushed-metal-pin-bumper-bank',
+      textureStyle: 'brushed-metal-pin-texture-gold-accent-rings',
+      pulse: 0,
+      lastHitPinIndex: null,
     };
     this.pinballObstacles.push(obstacle);
     return obstacle;
@@ -5262,6 +5457,12 @@ class MarbleRace {
         obstacle.mesh?.scale.set(scale, 1 + obstacle.pulse * 0.08, scale);
         obstacle.cap?.scale.set(scale, 0.42 + obstacle.pulse * 0.1, scale);
         obstacle.skirt?.scale.set(scale, scale, scale);
+        obstacle.pins?.forEach((pin, index) => {
+          const pinPulse = index === obstacle.lastHitPinIndex ? obstacle.pulse : obstacle.pulse * 0.55;
+          const pinScale = 1 + pinPulse * 0.22;
+          pin.group?.scale.set(pinScale, 1 + pinPulse * 0.12, pinScale);
+          if (pin.halo?.material) pin.halo.material.opacity = 0.36 + pinPulse * 0.34;
+        });
       }
       this.marbleData.forEach((data) => {
         if (data.finished) return;
@@ -5272,6 +5473,7 @@ class MarbleRace {
         const distSq = dx * dx + dz * dz;
         if (distSq > obstacle.radius * obstacle.radius) return;
         if (obstacle.type === 'popBumper') this.applyPopBumperImpulse(obstacle, data, dx, dz);
+        if (obstacle.type === 'pinBumper') this.applyPinBumperImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'slingshot') this.applySlingshotImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'spinnerGate') this.applySpinnerGateImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'dropTarget') this.applyDropTargetHit(obstacle, data);
@@ -5310,6 +5512,48 @@ class MarbleRace {
     this.pinballInteractions.popBumper += 1;
     this.spawnImpactEffect(obstacle.center, 0xff77b7, 'ring');
     this.pushBroadcastEvent('Bumper Blast', `${data.name} bumper hit`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} bumper hit`, `${data.name} bounces wide`, `${data.name} rebounds`] });
+  }
+
+  applyPinBumperImpulse(obstacle, data, dx, dz) {
+    const closest = this.findClosestProgress(data.body.position);
+    this.noteObstacleHit(data, obstacle, closest.distance);
+    const pins = obstacle.pins || [];
+    let nearestPin = null;
+    let nearestIndex = -1;
+    let nearestDistSq = Infinity;
+    pins.forEach((pin, index) => {
+      const px = data.body.position.x - pin.center.x;
+      const pz = data.body.position.z - pin.center.z;
+      const pinDistSq = px * px + pz * pz;
+      if (pinDistSq < nearestDistSq) {
+        nearestDistSq = pinDistSq;
+        nearestPin = pin;
+        nearestIndex = index;
+      }
+    });
+
+    const source = nearestPin?.center || obstacle.center;
+    const sx = data.body.position.x - source.x;
+    const sz = data.body.position.z - source.z;
+    const dist = Math.max(0.001, Math.hypot(sx || dx, sz || dz));
+    const radial = new THREE.Vector3((sx || dx) / dist, 0, (sz || dz) / dist);
+    const frame = this.getTrackFrameAt(Math.max(closest.distance, data.distance || 0) + this.finishDirectionAssist.lookAhead);
+    const forwardBias = frame.tangent.clone().multiplyScalar(obstacle.impulse * 0.28);
+    const rawImpulse = radial.multiplyScalar(obstacle.impulse).add(forwardBias);
+    data.body.wakeUp();
+    this.applyFinishDirectedImpulse(data, rawImpulse, frame, 0.42);
+    obstacle.cooldown.set(data.id, this.elapsed);
+    obstacle.pulse = 1;
+    obstacle.lastHitPinIndex = nearestIndex;
+    this.pinballInteractions.pinBumper += 1;
+    this.spawnImpactEffect(source, nearestIndex % 2 ? 0xff4ecb : 0x35f6ff, 'spark');
+    this.pushBroadcastEvent('Pin Bumper Pop', `${data.name} hits the pins`, {
+      kind: 'obstacle',
+      marbleId: data.id,
+      distance: data.lastObstacleHitDistance,
+      progress: data.lastObstacleHitProgress,
+      lines: [`${data.name} hits the pins`, `${data.name} pops through traffic`, `${data.name} ricochets off the pins`],
+    });
   }
 
   applySlingshotImpulse(obstacle, data, dx, dz) {
@@ -6191,7 +6435,7 @@ class MarbleRace {
       this.activeCaption = { title, detail, kind: 'replay', expiresAt: this.elapsed + 9999 };
       if (this.ui.captionTitle) this.ui.captionTitle.textContent = title;
       if (this.ui.captionDetail) this.ui.captionDetail.textContent = detail;
-      this.ui.caption.classList.remove('hidden');
+      this.ui.caption.classList.add('hidden');
       return;
     }
     const event = state.event || {};
@@ -6202,7 +6446,7 @@ class MarbleRace {
     this.activeCaption = { title, detail, kind: 'replay', expiresAt: this.elapsed + 9999 };
     if (this.ui.captionTitle) this.ui.captionTitle.textContent = title;
     if (this.ui.captionDetail) this.ui.captionDetail.textContent = this.activeCaption.detail;
-    this.ui.caption.classList.remove('hidden');
+    this.ui.caption.classList.add('hidden');
     if (this.activeCommentary?.replayIndex !== state.activeIndex) {
       this.queueCommentary({ ...event, kind: 'replay', detail, lines }, { force: true });
       if (this.activeCommentary) this.activeCommentary.replayIndex = state.activeIndex;
@@ -6433,7 +6677,7 @@ class MarbleRace {
     this.activeCaption = { ...event, expiresAt: this.elapsed + 2.8 };
     if (this.ui.captionTitle) this.ui.captionTitle.textContent = title;
     if (this.ui.captionDetail) this.ui.captionDetail.textContent = detail;
-    this.ui.caption?.classList.remove('hidden');
+    this.ui.caption?.classList.add('hidden');
     this.queueCommentary(event, { force });
   }
 
