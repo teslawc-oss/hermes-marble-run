@@ -752,6 +752,10 @@ body.recording-cursor-hidden #canvas-container canvas {
   letter-spacing: 0.22em;
 }
 
+.broadcast-caption {
+  display: none !important;
+}
+
 .broadcast-caption strong {
   display: block;
   color: #fff;
