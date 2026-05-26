@@ -4,7 +4,10 @@
   "description": "Browser-based physics marble racing simulator with random tracks, obstacles, cameras, live ranking, and generated racer names.",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "vite --host 127.0.0.1 --port 5174",
+    "dev:backend": "vite --host 127.0.0.1 --port 5174",
+    "dev:stack": "node scripts/marble-dev-stack.js",
+    "proxy:https": "node scripts/marble-https-proxy.js",
     "build": "vite build",
     "render:auto-cup": "node scripts/render-auto-cup-playwright.js",
     "render:auto-cup:smoke": "node scripts/render-auto-cup-playwright.js --smoke-seconds=4 --output=recordings/smoke-auto-cup.webm --format=webm",
@@ -13,7 +16,6 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
-    "@vitejs/plugin-basic-ssl": "^1.2.0",
     "cannon-es": "^0.20.0",
     "three": "^0.160.1",
     "vite": "^5.4.21"

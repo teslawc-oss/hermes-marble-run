@@ -458,6 +458,7 @@ const OBSTACLE_CATEGORIES = {
 const PINBALL_OBSTACLE_TYPES = [
   'popBumper',
   'pinBumper',
+  'gongBumper',
   'slingshot',
   'spinnerGate',
   'dropTarget',
@@ -465,6 +466,7 @@ const PINBALL_OBSTACLE_TYPES = [
 const PINBALL_OBSTACLE_TYPE_METADATA = {
   popBumper: { label: 'Pop Bumper', category: 'normal' },
   pinBumper: { label: 'Pin Bumper', category: 'normal' },
+  gongBumper: { label: 'Gong Bumper', category: 'normal' },
   slingshot: { label: 'Slingshot', category: 'normal' },
   spinnerGate: { label: 'Spinner Gate', category: 'normal' },
   dropTarget: { label: 'Drop Target', category: 'normal' },
@@ -677,6 +679,10 @@ const PINBALL_PHYSICS = {
   pinBumperRadius: 1.12,
   pinBumperImpulse: 5.6,
   pinBumperCount: 5,
+  gongBumperRadius: 2.45,
+  gongBumperImpulse: 7.8,
+  gongBumperPackImpulse: 2.15,
+  gongBumperPackRadius: 6.2,
   slingshotRadius: 1.75,
   slingshotImpulse: 6.6,
   spinnerRadius: 1.25,
@@ -959,13 +965,7 @@ class MarbleRace {
     this.guidePointGroup.name = 'guide-point-marker-group';
     this.guidePointGroup.visible = false;
     this.scene?.add?.(this.guidePointGroup);
-    this.pinballInteractions = {
-      popBumper: 0,
-      pinBumper: 0,
-      slingshot: 0,
-      spinnerGate: 0,
-      dropTarget: 0,
-    };
+    this.pinballInteractions = Object.fromEntries(PINBALL_OBSTACLE_TYPES.map((type) => [type, 0]));
     this.trackStats = { ribbonMeshes: 0, visibleDecks: 0, physicsDecks: 0, railTubes: 0, branchJoinDecks: 0, physicalRailBodies: 0, smoothRailJoinBodies: 0, optimizedRailBodies: 0, broadcastStageMarkers: 0 };
     this.stuckResetPenalty = STUCK_RESET.penaltyDistance;
     this.stuckResetDelay = this.getStallEliminationDelaySeconds();
@@ -2360,6 +2360,13 @@ class MarbleRace {
         pinCount: obstacle.pinCount ?? null,
         pinBumperDimensions: obstacle.pinBumperDimensions ?? null,
         lastHitPinIndex: obstacle.lastHitPinIndex ?? null,
+        gongDimensions: obstacle.gongDimensions ?? null,
+        gongPackRadius: obstacle.packRadius ?? null,
+        gongPackImpulse: obstacle.packImpulse ?? null,
+        gongShake: obstacle.shake != null ? Number(obstacle.shake.toFixed(2)) : null,
+        lastGongHitBy: obstacle.type === 'gongBumper' ? (obstacle.lastHitBy ?? null) : null,
+        lastGongPackShakeCount: obstacle.type === 'gongBumper' ? (obstacle.lastPackShakeCount ?? 0) : null,
+        lastGongCommentaryLines: obstacle.type === 'gongBumper' ? (obstacle.lastCommentaryLines ?? []) : null,
         bankSignText: obstacle.bankSignText ?? null,
         targets: obstacle.targets?.map((target) => ({
           index: target.index,
@@ -2448,6 +2455,13 @@ class MarbleRace {
         pinCount: obstacle.pinCount ?? null,
         pinBumperDimensions: obstacle.pinBumperDimensions ?? null,
         lastHitPinIndex: obstacle.lastHitPinIndex ?? null,
+        gongDimensions: obstacle.gongDimensions ?? null,
+        gongPackRadius: obstacle.packRadius ?? null,
+        gongPackImpulse: obstacle.packImpulse ?? null,
+        gongShake: obstacle.shake != null ? Number(obstacle.shake.toFixed(2)) : null,
+        lastGongHitBy: obstacle.type === 'gongBumper' ? (obstacle.lastHitBy ?? null) : null,
+        lastGongPackShakeCount: obstacle.type === 'gongBumper' ? (obstacle.lastPackShakeCount ?? 0) : null,
+        lastGongCommentaryLines: obstacle.type === 'gongBumper' ? (obstacle.lastCommentaryLines ?? []) : null,
         bankSignText: obstacle.bankSignText ?? null,
         targets: obstacle.targets?.map((target) => ({
           index: target.index,
@@ -2548,13 +2562,7 @@ class MarbleRace {
     this.obstacleMeshes = [];
     this.pinballObstacles = [];
     this.obstacleDistributionSummary = null;
-    this.pinballInteractions = {
-      popBumper: 0,
-      pinBumper: 0,
-      slingshot: 0,
-      spinnerGate: 0,
-      dropTarget: 0,
-    };
+    this.pinballInteractions = Object.fromEntries(PINBALL_OBSTACLE_TYPES.map((type) => [type, 0]));
     this.obstacleTypeCounts = Object.fromEntries(PINBALL_OBSTACLE_TYPES.map((type) => [type, 0]));
     this.obstacleCategoryCounts = Object.fromEntries(Object.keys(OBSTACLE_CATEGORIES).map((category) => [category, 0]));
     this.branchSegments = [];
@@ -2993,6 +3001,61 @@ class MarbleRace {
 
     const texture = this.finishTexture(canvas, 1, 3);
     texture.userData = { style: 'brushed-metal-pin-bumper', size: 256 };
+    return texture;
+  }
+
+  createGongCopperTexture() {
+    const { canvas, ctx } = this.createTextureCanvas(512, '#9b4a20');
+    const bg = ctx.createRadialGradient(256, 236, 18, 256, 256, 330);
+    bg.addColorStop(0, '#fff0ad');
+    bg.addColorStop(0.16, '#d68a3a');
+    bg.addColorStop(0.42, '#b7652b');
+    bg.addColorStop(0.7, '#7b3519');
+    bg.addColorStop(1, '#2c130b');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, 512, 512);
+
+    ctx.globalCompositeOperation = 'screen';
+    for (let r = 42; r <= 238; r += 24) {
+      ctx.strokeStyle = r % 48 === 18 ? 'rgba(255,230,150,0.26)' : 'rgba(255,175,86,0.18)';
+      ctx.lineWidth = r % 48 === 18 ? 7 : 4;
+      ctx.beginPath();
+      ctx.arc(256, 256, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    for (let i = 0; i < 900; i += 1) {
+      const angle = (i * 137.508) * Math.PI / 180;
+      const radius = 18 + ((i * 47) % 236);
+      const x = 256 + Math.cos(angle) * radius;
+      const y = 256 + Math.sin(angle) * radius;
+      const size = 1 + (i % 5 === 0 ? 2 : 0);
+      ctx.fillStyle = i % 3 === 0 ? 'rgba(255,220,140,0.12)' : 'rgba(52,20,8,0.11)';
+      ctx.fillRect(x, y, size, size);
+    }
+
+    for (let y = 0; y < 512; y += 2) {
+      const wave = Math.sin(y * 0.055) * 0.035 + Math.sin(y * 0.17) * 0.018;
+      ctx.fillStyle = `rgba(255,224,150,${0.028 + Math.max(0, wave)})`;
+      ctx.fillRect(0, y, 512, 1);
+      ctx.fillStyle = `rgba(30,10,4,${0.02 + Math.max(0, -wave)})`;
+      ctx.fillRect(0, y + 1, 512, 1);
+    }
+
+    ctx.strokeStyle = 'rgba(255,238,174,0.42)';
+    ctx.lineWidth = 12;
+    ctx.beginPath();
+    ctx.arc(256, 256, 226, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(73,25,10,0.38)';
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.arc(256, 256, 112, 0, Math.PI * 2);
+    ctx.stroke();
+
+    const texture = this.finishTexture(canvas, 1, 1);
+    texture.userData = { style: 'hammered-copper-radial-rings', size: 512 };
     return texture;
   }
 
@@ -4651,6 +4714,8 @@ class MarbleRace {
       popBumper: new THREE.MeshPhysicalMaterial({ color: 0xff3f9e, roughness: 0.18, metalness: 0.04, clearcoat: 1, clearcoatRoughness: 0.08, emissive: 0x700035, emissiveIntensity: 0.5 }),
       pinBumper: new THREE.MeshPhysicalMaterial({ color: 0x35f6ff, roughness: 0.16, metalness: 0.08, clearcoat: 1, clearcoatRoughness: 0.06, emissive: 0x007b8a, emissiveIntensity: 0.58 }),
       pinBumperTip: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.11, metalness: 0.04, clearcoat: 1, clearcoatRoughness: 0.04, emissive: 0x58f7ff, emissiveIntensity: 0.32 }),
+      gongBumper: new THREE.MeshPhysicalMaterial({ color: 0xf8d26a, roughness: 0.18, metalness: 0.88, clearcoat: 0.92, clearcoatRoughness: 0.08, emissive: 0x5f3500, emissiveIntensity: 0.42 }),
+      gongBumperFace: new THREE.MeshPhysicalMaterial({ color: 0xffe08a, roughness: 0.2, metalness: 0.92, clearcoat: 0.95, clearcoatRoughness: 0.06, emissive: 0x7a4300, emissiveIntensity: 0.36 }),
       popBumperCap: new THREE.MeshPhysicalMaterial({ color: 0xfff1fa, roughness: 0.12, metalness: 0.02, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0xff5fb7, emissiveIntensity: 0.18 }),
       slingshot: new THREE.MeshPhysicalMaterial({ color: 0x12f0c8, roughness: 0.16, metalness: 0.06, clearcoat: 1, clearcoatRoughness: 0.07, emissive: 0x00685d, emissiveIntensity: 0.46 }),
       spinnerGate: new THREE.MeshPhysicalMaterial({ color: 0x8d7dff, roughness: 0.15, metalness: 0.16, clearcoat: 1, clearcoatRoughness: 0.06, emissive: 0x280090, emissiveIntensity: 0.38 }),
@@ -4850,6 +4915,10 @@ class MarbleRace {
         palette.pinBumper.userData.tipMaterial = palette.pinBumperTip;
         palette.pinBumper.userData.ringMaterial = palette.chrome;
         return this.createPinBumperObstacle(trackSurface, yaw, pitch, palette.pinBumper);
+      case 'gongBumper':
+        palette.gongBumper.userData.faceMaterial = palette.gongBumperFace;
+        palette.gongBumper.userData.ringMaterial = palette.chrome;
+        return this.createGongBumperObstacle(trackSurface, yaw, pitch, palette.gongBumper);
       case 'slingshot':
         palette.slingshot.userData.insertMaterial = palette.yellowInsert;
         palette.slingshot.userData.chromeMaterial = palette.chrome;
@@ -5051,6 +5120,155 @@ class MarbleRace {
       textureStyle: 'brushed-metal-pin-texture-gold-accent-rings',
       pulse: 0,
       lastHitPinIndex: null,
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
+  }
+
+  createGongBumperObstacle(trackSurface, yaw, pitch, material) {
+    const group = new THREE.Group();
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation(group, yaw, pitch);
+    group.userData.visualStyle = 'large-event-glowing-gong-bumper';
+    this.trackGroup.add(group);
+
+    const gongRadius = 0.92;
+    const gongThickness = 0.2;
+    const standHeight = 1.55;
+    const standWidth = 2.25;
+    const gongCopperTexture = this.createGongCopperTexture();
+    const gongFaceMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xd8893d,
+      map: gongCopperTexture,
+      roughness: 0.28,
+      metalness: 0.96,
+      clearcoat: 0.82,
+      clearcoatRoughness: 0.12,
+      envMapIntensity: 1.45,
+      emissive: 0x2d1200,
+      emissiveIntensity: 0.2,
+    });
+    const faceMaterial = material.userData?.faceMaterial || gongFaceMaterial;
+    if (!faceMaterial.map) faceMaterial.map = gongCopperTexture;
+    if (faceMaterial.color?.setHex) faceMaterial.color.setHex(0xd8893d);
+    faceMaterial.metalness = Math.max(faceMaterial.metalness ?? 0, 0.94);
+    faceMaterial.roughness = Math.max(faceMaterial.roughness ?? 0.18, 0.26);
+    faceMaterial.userData = {
+      ...(faceMaterial.userData || {}),
+      style: 'hammered-copper-gong-face',
+      textureStyle: gongCopperTexture.userData?.style || 'hammered-copper-radial-rings',
+    };
+    const chromeMat = material.userData?.ringMaterial || new THREE.MeshPhysicalMaterial({ color: 0xeaf7ff, roughness: 0.12, metalness: 0.92, clearcoat: 1, clearcoatRoughness: 0.04 });
+    const glowMaterial = new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+    const standMat = new THREE.MeshPhysicalMaterial({ color: 0x23170b, roughness: 0.26, metalness: 0.42, clearcoat: 0.6, clearcoatRoughness: 0.12, emissive: 0x120700, emissiveIntensity: 0.18 });
+
+    const leftPost = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, standHeight, 14), standMat);
+    leftPost.position.set(-standWidth / 2, standHeight / 2, 0);
+    leftPost.castShadow = PERFORMANCE_TUNING.shadows;
+    group.add(leftPost);
+    const rightPost = leftPost.clone();
+    rightPost.position.x = standWidth / 2;
+    group.add(rightPost);
+    const topBar = new THREE.Mesh(new THREE.BoxGeometry(standWidth + 0.28, 0.08, 0.1), standMat);
+    topBar.position.set(0, standHeight + 0.02, 0);
+    topBar.castShadow = PERFORMANCE_TUNING.shadows;
+    group.add(topBar);
+
+    const cordMat = new THREE.MeshBasicMaterial({ color: 0x1a1207 });
+    [-0.36, 0.36].forEach((x) => {
+      const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.58, 8), cordMat);
+      cord.position.set(x, 1.35, 0.015);
+      group.add(cord);
+    });
+
+    const gong = new THREE.Mesh(new THREE.CylinderGeometry(gongRadius, gongRadius * 0.86, gongThickness, 56), faceMaterial);
+    gong.position.set(0, 0.92, 0);
+    gong.rotation.x = Math.PI / 2;
+    gong.castShadow = PERFORMANCE_TUNING.shadows;
+    gong.receiveShadow = PERFORMANCE_TUNING.shadows;
+    group.add(gong);
+
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(gongRadius * 1.02, 0.055, 10, 56), chromeMat);
+    rim.position.copy(gong.position);
+    rim.rotation.x = Math.PI / 2;
+    rim.castShadow = PERFORMANCE_TUNING.shadows;
+    group.add(rim);
+
+    const innerRingMat = new THREE.MeshBasicMaterial({ color: 0x5a2d00, transparent: true, opacity: 0.42, depthWrite: false });
+    [0.42, 0.68].forEach((radius) => {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.018, 8, 48), innerRingMat.clone());
+      ring.position.set(0, 0.92, 0.125);
+      ring.rotation.x = Math.PI / 2;
+      ring.renderOrder = 37;
+      group.add(ring);
+    });
+
+    const boss = new THREE.Mesh(new THREE.SphereGeometry(gongRadius * 0.26, 28, 14), material);
+    boss.position.set(0, 0.92, 0.12);
+    boss.scale.y = 0.35;
+    boss.castShadow = PERFORMANCE_TUNING.shadows;
+    group.add(boss);
+
+    const malletGroup = new THREE.Group();
+    malletGroup.position.set(1.36, 0.9, -0.42);
+    malletGroup.rotation.set(-0.22, 0.08, -0.72);
+    malletGroup.userData.restPosition = { x: 1.36, y: 0.9, z: -0.42 };
+    malletGroup.userData.restRotation = { x: -0.22, y: 0.08, z: -0.72 };
+    malletGroup.userData.swingAxis = 'z';
+    group.add(malletGroup);
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.92, 10), standMat);
+    handle.rotation.z = Math.PI / 2;
+    handle.castShadow = PERFORMANCE_TUNING.shadows;
+    malletGroup.add(handle);
+    const head = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.28, 16), new THREE.MeshPhysicalMaterial({ color: 0xff3d62, roughness: 0.22, metalness: 0.04, clearcoat: 0.7, emissive: 0x5a0015, emissiveIntensity: 0.22 }));
+    head.rotation.x = Math.PI / 2;
+    head.position.x = -0.5;
+    head.castShadow = PERFORMANCE_TUNING.shadows;
+    malletGroup.add(head);
+
+    const glow = new THREE.Mesh(new THREE.RingGeometry(gongRadius * 1.05, gongRadius * 1.36, 64), glowMaterial);
+    glow.position.set(0, 0.92, 0.14);
+    glow.rotation.x = Math.PI / 2;
+    glow.renderOrder = 38;
+    group.add(glow);
+
+    const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
+    body.addShape(new CANNON.Cylinder(gongRadius, gongRadius * 0.9, gongThickness + 0.1, 32));
+    const obstacleCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, 0.92, 0, yaw, pitch));
+    this.setSlopeBodyTransform(body, obstacleCenter, yaw, pitch);
+    this.addObstacleBody(body, group);
+
+    const obstacle = {
+      type: 'gongBumper',
+      kind: 'gongBumper',
+      trackSurface: trackSurface.clone(),
+      center: obstacleCenter,
+      radius: PINBALL_PHYSICS.gongBumperRadius,
+      impulse: PINBALL_PHYSICS.gongBumperImpulse,
+      packImpulse: PINBALL_PHYSICS.gongBumperPackImpulse,
+      packRadius: PINBALL_PHYSICS.gongBumperPackRadius,
+      cooldown: new Map(),
+      group,
+      mesh: gong,
+      gong,
+      rim,
+      boss,
+      glow,
+      malletGroup,
+      body,
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
+      visualStyle: 'large-event-copper-gong-bumper',
+      textureStyle: 'hammered-copper-gong-rim-glow',
+      malletRestPosition: { x: 1.36, y: 0.9, z: -0.42 },
+      malletRestRotation: { x: -0.22, y: 0.08, z: -0.72 },
+      gongDimensions: { gongRadius, gongThickness, standHeight, standWidth, hasHangingCords: true, hasMallet: true, malletSideMounted: true, malletAnimated: true, faceRingCount: 2, packRadius: PINBALL_PHYSICS.gongBumperPackRadius, packImpulse: PINBALL_PHYSICS.gongBumperPackImpulse, faceMaterialStyle: faceMaterial.userData?.style, copperTextureStyle: gongCopperTexture.userData?.style },
+      pulse: 0,
+      shake: 0,
+      malletSwing: 0,
+      lastHitBy: null,
+      lastPackShakeCount: 0,
+      lastCommentaryLines: [],
     };
     this.pinballObstacles.push(obstacle);
     return obstacle;
@@ -5448,6 +5666,34 @@ class MarbleRace {
       if (obstacle.type === 'dropTarget') {
         this.updateDropTargetBank(obstacle, delta);
       }
+      if (obstacle.type === 'gongBumper') {
+        if (obstacle.shake) {
+          obstacle.shake = Math.max(0, obstacle.shake - delta * 4.8);
+          obstacle.malletSwing = Math.max(0, (obstacle.malletSwing || 0) - delta * 3.6);
+          const shakeWave = Math.sin((obstacle.shakeStartAt || 0) * 17 + this.elapsed * 42) * obstacle.shake;
+          obstacle.gong?.rotation.set(Math.PI / 2 + shakeWave * 0.16, shakeWave * 0.1, shakeWave * 0.05);
+          obstacle.rim?.rotation.set(Math.PI / 2 + shakeWave * 0.12, 0, 0);
+          if (obstacle.malletGroup) {
+            const rest = obstacle.malletRestRotation || obstacle.malletGroup.userData?.restRotation || { x: -0.22, y: 0.08, z: -0.72 };
+            const swing = obstacle.malletSwing || 0;
+            const swingStrike = Math.sin(Math.max(0, swing) * Math.PI) * 0.58;
+            const vibration = Math.sin((obstacle.shakeStartAt || 0) * 19 + this.elapsed * 54) * obstacle.shake * 0.16;
+            obstacle.malletGroup.rotation.set(rest.x, rest.y, rest.z - swingStrike - vibration);
+          }
+          obstacle.boss?.position.set(shakeWave * 0.035, 0.92, 0.12 + obstacle.shake * 0.04);
+          if (obstacle.glow?.material) obstacle.glow.material.opacity = 0.28 + obstacle.shake * 0.52;
+        } else {
+          obstacle.gong?.rotation.set(Math.PI / 2, 0, 0);
+          obstacle.rim?.rotation.set(Math.PI / 2, 0, 0);
+          if (obstacle.malletGroup) {
+            const rest = obstacle.malletRestRotation || obstacle.malletGroup.userData?.restRotation || { x: -0.22, y: 0.08, z: -0.72 };
+            obstacle.malletGroup.rotation.set(rest.x, rest.y, rest.z);
+          }
+          obstacle.boss?.position.set(0, 0.92, 0.12);
+          obstacle.malletSwing = 0;
+          if (obstacle.glow?.material) obstacle.glow.material.opacity = 0.28;
+        }
+      }
       if (obstacle.bankSign?.material) {
         obstacle.bankSign.material.opacity = obstacle.bankCleared ? 0.58 : 0.96;
       }
@@ -5463,6 +5709,12 @@ class MarbleRace {
           pin.group?.scale.set(pinScale, 1 + pinPulse * 0.12, pinScale);
           if (pin.halo?.material) pin.halo.material.opacity = 0.36 + pinPulse * 0.34;
         });
+        if (obstacle.type === 'gongBumper') {
+          const gongScale = 1 + obstacle.pulse * 0.12;
+          obstacle.gong?.scale.set(gongScale, gongScale, 1 + obstacle.pulse * 0.04);
+          obstacle.rim?.scale.setScalar(1 + obstacle.pulse * 0.16);
+          obstacle.glow?.scale.setScalar(1 + obstacle.pulse * 0.32);
+        }
       }
       this.marbleData.forEach((data) => {
         if (data.finished) return;
@@ -5474,6 +5726,7 @@ class MarbleRace {
         if (distSq > obstacle.radius * obstacle.radius) return;
         if (obstacle.type === 'popBumper') this.applyPopBumperImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'pinBumper') this.applyPinBumperImpulse(obstacle, data, dx, dz);
+        if (obstacle.type === 'gongBumper') this.applyGongBumperImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'slingshot') this.applySlingshotImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'spinnerGate') this.applySpinnerGateImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'dropTarget') this.applyDropTargetHit(obstacle, data);
@@ -5553,6 +5806,56 @@ class MarbleRace {
       distance: data.lastObstacleHitDistance,
       progress: data.lastObstacleHitProgress,
       lines: [`${data.name} hits the pins`, `${data.name} pops through traffic`, `${data.name} ricochets off the pins`],
+    });
+  }
+
+  applyGongBumperImpulse(obstacle, data, dx, dz) {
+    const dist = Math.max(0.001, Math.hypot(dx, dz));
+    const radial = new THREE.Vector3(dx / dist, 0, dz / dist);
+    const closest = this.findClosestProgress(data.body.position);
+    this.noteObstacleHit(data, obstacle, closest.distance);
+    const frame = this.getTrackFrameAt(Math.max(closest.distance, data.distance || 0) + this.finishDirectionAssist.lookAhead);
+    const forwardBias = frame.tangent.clone().multiplyScalar(obstacle.impulse * 0.22);
+    const rawImpulse = radial.multiplyScalar(obstacle.impulse).add(forwardBias);
+    data.body.wakeUp();
+    this.applyFinishDirectedImpulse(data, rawImpulse, frame, 0.48);
+
+    const packRadius = obstacle.packRadius || PINBALL_PHYSICS.gongBumperPackRadius;
+    const packImpulse = obstacle.packImpulse || PINBALL_PHYSICS.gongBumperPackImpulse;
+    let packShakeCount = 0;
+    this.marbleData.forEach((other) => {
+      if (!other || other.id === data.id || other.finished || !other.body?.position) return;
+      const ox = other.body.position.x - obstacle.center.x;
+      const oz = other.body.position.z - obstacle.center.z;
+      const otherDist = Math.hypot(ox, oz);
+      if (otherDist <= 0.001 || otherDist > packRadius) return;
+      const falloff = 1 - otherDist / packRadius;
+      const sideImpulse = new CANNON.Vec3((ox / otherDist) * packImpulse * falloff, 0.08 * falloff, (oz / otherDist) * packImpulse * falloff);
+      other.body.applyImpulse(sideImpulse, other.body.position);
+      other.body.wakeUp();
+      packShakeCount += 1;
+    });
+
+    obstacle.cooldown.set(data.id, this.elapsed);
+    obstacle.pulse = 1;
+    obstacle.shake = 1;
+    obstacle.malletSwing = 1;
+    obstacle.shakeStartAt = this.elapsed;
+    obstacle.lastHitBy = data.name;
+    obstacle.lastPackShakeCount = packShakeCount;
+    obstacle.lastCommentaryLines = [
+      'The gong shakes the pack!',
+      `${data.name} rings the gong`,
+      `${data.name} sends a shockwave`,
+    ];
+    this.pinballInteractions.gongBumper += 1;
+    this.spawnImpactEffect(obstacle.center, 0xffd166, 'gong');
+    this.pushBroadcastEvent('Gong Bumper', 'The gong shakes the pack!', {
+      kind: 'obstacle',
+      marbleId: data.id,
+      distance: data.lastObstacleHitDistance,
+      progress: data.lastObstacleHitProgress,
+      lines: obstacle.lastCommentaryLines,
     });
   }
 
@@ -6105,14 +6408,24 @@ class MarbleRace {
     if (this.spectacleEffects.length >= PERFORMANCE_TUNING.maxSpectacleEffects) return;
     const meshes = [];
     const base = new THREE.Vector3(position.x, position.y + 0.35, position.z);
-    const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.72, blending: THREE.AdditiveBlending, depthWrite: false });
-    if (kind === 'spark' || kind === 'burst') {
+    const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.72, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    if (kind === 'gong') {
+      const mesh = new THREE.Mesh(new THREE.RingGeometry(0.72, 0.92, 96), material);
+      mesh.position.copy(base);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.renderOrder = 44;
+      mesh.userData.effectStyle = 'single-expanding-ring-shockwave';
+      mesh.userData.replaces = 'old-gong-dot-particles';
+      this.scene.add(mesh);
+      meshes.push(mesh);
+    } else if (kind === 'spark' || kind === 'burst') {
       const count = kind === 'burst' ? 8 : 5;
       for (let i = 0; i < count; i += 1) {
         const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 4), material.clone());
         mesh.position.copy(base);
         const angle = (i / count) * Math.PI * 2;
-        mesh.userData.velocity = new THREE.Vector3(Math.cos(angle) * (2.4 + i * 0.08), 1.2 + (i % 3) * 0.25, Math.sin(angle) * (2.4 + i * 0.08));
+        const speed = 2.4 + i * 0.08;
+        mesh.userData.velocity = new THREE.Vector3(Math.cos(angle) * speed, 1.2 + (i % 3) * 0.25, Math.sin(angle) * speed);
         this.scene.add(mesh);
         meshes.push(mesh);
       }
@@ -6123,7 +6436,14 @@ class MarbleRace {
       this.scene.add(mesh);
       meshes.push(mesh);
     }
-    this.spectacleEffects.push({ kind, meshes, age: 0, life: kind === 'ring' ? 0.75 : 0.9 });
+    this.spectacleEffects.push({
+      kind,
+      meshes,
+      age: 0,
+      life: kind === 'ring' ? 0.75 : (kind === 'gong' ? 1.1 : 0.9),
+      style: kind === 'gong' ? 'single-expanding-ring-shockwave' : kind,
+      meshCount: meshes.length,
+    });
   }
 
   updateSpectacleEffects(delta) {
@@ -6132,8 +6452,15 @@ class MarbleRace {
       const t = clamp(effect.age / effect.life, 0, 1);
       effect.meshes.forEach((mesh) => {
         if (effect.kind === 'ring') mesh.scale.setScalar(1 + t * 5.5);
+        if (effect.kind === 'gong') {
+          const scale = 1 + t * 8.8;
+          mesh.scale.set(scale, scale, 1);
+        }
         if (mesh.userData.velocity) mesh.position.addScaledVector(mesh.userData.velocity, delta);
-        if (mesh.material) mesh.material.opacity = Math.max(0, 0.72 * (1 - t));
+        if (mesh.material) {
+          const baseOpacity = effect.kind === 'gong' ? 0.82 : 0.72;
+          mesh.material.opacity = Math.max(0, baseOpacity * (1 - t));
+        }
       });
       if (t >= 1) {
         effect.meshes.forEach((mesh) => this.scene.remove(mesh));
@@ -8151,6 +8478,7 @@ class MarbleRace {
       slingshot: { frequency: 260, duration: 0.09, type: 'square', gain: 0.09 },
       spinnerGate: { frequency: 320, duration: 0.08, type: 'triangle', gain: 0.08 },
       popBumper: { frequency: 520, duration: 0.06, type: 'triangle', gain: 0.08 },
+      gongBumper: { frequency: 142, duration: 0.34, type: 'sine', gain: 0.14 },
       impact: { frequency: 240, duration: 0.08, type: 'square', gain: 0.08 },
     }[kind] || { frequency: 240, duration: 0.08, type: 'square', gain: 0.08 };
     this.playTone(preset);
