@@ -1064,13 +1064,13 @@ async function main() {
         if (typeof canvas.captureStream !== 'function') return { ok: false, reason: 'captureStream-unsupported' };
         if (typeof MediaRecorder === 'undefined') return { ok: false, reason: 'MediaRecorder-unsupported' };
         const mimeTypes = [
-          'video/webm;codecs=vp9',
           'video/webm;codecs=vp8',
+          'video/webm;codecs=vp9',
           'video/webm',
         ];
         const mimeType = mimeTypes.find((type) => MediaRecorder.isTypeSupported(type)) || '';
         const stream = canvas.captureStream(Math.max(1, Math.round(Number(fps) || 60)));
-        const videoBitsPerSecond = Math.max(4_000_000, Math.min(16_000_000, Math.round(Number(window.__MARBLE_RENDER_CANVAS_BITRATE || 10_000_000))));
+        const videoBitsPerSecond = Math.max(4_000_000, Math.min(16_000_000, Math.round(Number(window.__MARBLE_RENDER_CANVAS_BITRATE || 7_000_000))));
         const recorderOptions = mimeType ? { mimeType, videoBitsPerSecond } : { videoBitsPerSecond };
         const recorder = new MediaRecorder(stream, recorderOptions);
         const captureTargetSeconds = Math.max(1, Number(window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS || 0) || 0);
