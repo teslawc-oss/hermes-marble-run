@@ -644,6 +644,10 @@ const PERFORMANCE_TUNING = {
   decorationStepMeters: 26,
   disableDecorativePointLights: true,
   renderNameLabelUpdateMs: 0,
+  nameLabelRankUpdateMs: 220,
+  nameLabelScaleTargetUpdateMs: 120,
+  nameLabelPositionWriteThresholdSq: 0.0004,
+  nameLabelScaleWriteThreshold: 0.005,
   renderSkipOrbitControlsUpdate: false,
   renderSkipSpectacleEffects: false,
   nameLabelScaleSmoothing: 0.18,
@@ -657,6 +661,8 @@ const UI_THROTTLE_PROFILES = {
     debugUpdateMs: PERFORMANCE_TUNING.debugUpdateMs,
     leaderboardUpdateMs: PERFORMANCE_TUNING.leaderboardUpdateMs,
     rankingCacheMs: PERFORMANCE_TUNING.rankingCacheMs,
+    nameLabelRankUpdateMs: PERFORMANCE_TUNING.nameLabelRankUpdateMs,
+    nameLabelScaleTargetUpdateMs: PERFORMANCE_TUNING.nameLabelScaleTargetUpdateMs,
   },
   smooth1080p: {
     key: 'smooth1080p',
@@ -665,6 +671,8 @@ const UI_THROTTLE_PROFILES = {
     debugUpdateMs: 2600,
     leaderboardUpdateMs: 1800,
     rankingCacheMs: 700,
+    nameLabelRankUpdateMs: 450,
+    nameLabelScaleTargetUpdateMs: 180,
   },
 };
 
@@ -920,6 +928,13 @@ class MarbleRace {
       leaderboardSignature: '',
       debugPayloads: 0,
       debugConsoleWrites: 0,
+      labelRankingRefreshes: 0,
+      labelTransformPasses: 0,
+      labelPositionWrites: 0,
+      labelScaleTargetRefreshes: 0,
+      labelScaleWrites: 0,
+      labelHiddenSkips: 0,
+      labelVisibilityWrites: 0,
       profileKey: 'live',
     };
     this.cachedRanking = null;
@@ -935,12 +950,22 @@ class MarbleRace {
       debugUpdateMs: PERFORMANCE_TUNING.debugUpdateMs,
       leaderboardUpdateMs: PERFORMANCE_TUNING.leaderboardUpdateMs,
       rankingCacheMs: PERFORMANCE_TUNING.rankingCacheMs,
+      nameLabelRankUpdateMs: PERFORMANCE_TUNING.nameLabelRankUpdateMs,
+      nameLabelScaleTargetUpdateMs: PERFORMANCE_TUNING.nameLabelScaleTargetUpdateMs,
+      nameLabelPositionWriteThresholdSq: PERFORMANCE_TUNING.nameLabelPositionWriteThresholdSq,
+      nameLabelScaleWriteThreshold: PERFORMANCE_TUNING.nameLabelScaleWriteThreshold,
       uiThrottleProfile: 'live',
     };
     this.lastFps = 0;
     this.fpsFrames = 0;
     this.fpsTime = 0;
     this.lastNameLabelUpdate = 0;
+    this.lastNameLabelRankingUpdate = 0;
+    this.lastNameLabelScaleTargetUpdate = 0;
+    this.cachedNameLabelIds = new Set();
+    this.cachedNameLabelIdsKey = '';
+    this.labelScratchPosition = new THREE.Vector3();
+    this.visibleLabelCount = 0;
     this.viewerOverlayCanvas = null;
     this.viewerOverlayContext = null;
     this.lastViewerOverlaySummary = null;
@@ -6375,36 +6400,91 @@ class MarbleRace {
     return sprite;
   }
 
-  updateMarbleNameLabels() {
+  refreshMarbleNameLabelSet(now = performance.now(), force = false) {
     const labelsAllowed = !MARBLE_LABEL_POLICY.showOnlyAfterRaceStart
       || this.state === 'running'
       || this.state === 'finished';
-    const topLabelIds = new Set(
-      labelsAllowed
-        ? this.getRanking({ force: true })
-          .slice(0, Math.max(0, MARBLE_LABEL_POLICY.visibleTopRankCount ?? 5))
-          .map((data) => data.id)
-        : []
-    );
-    this.visibleLabelCount = 0;
+    const rankUpdateMs = Math.max(0, this.performanceProfile?.nameLabelRankUpdateMs ?? PERFORMANCE_TUNING.nameLabelRankUpdateMs ?? 220);
+    const topCount = Math.max(0, MARBLE_LABEL_POLICY.visibleTopRankCount ?? 5);
+    if (!labelsAllowed) {
+      if (this.cachedNameLabelIds?.size) {
+        this.cachedNameLabelIds = new Set();
+        this.cachedNameLabelIdsKey = '';
+      }
+      this.lastNameLabelRankingUpdate = now;
+      return this.cachedNameLabelIds || new Set();
+    }
+    if (!force && this.cachedNameLabelIds && now - (this.lastNameLabelRankingUpdate || 0) < rankUpdateMs) {
+      return this.cachedNameLabelIds;
+    }
+    const ids = this.getRanking({ force: true })
+      .slice(0, topCount)
+      .map((data) => data.id);
+    this.cachedNameLabelIds = new Set(ids);
+    this.cachedNameLabelIdsKey = ids.join('|');
+    this.lastNameLabelRankingUpdate = now;
+    this.uiThrottleCounters.labelRankingRefreshes += 1;
+    return this.cachedNameLabelIds;
+  }
+
+  updateMarbleNameLabels(delta = 0, { forceRanking = false, forceScaleTarget = false } = {}) {
+    const now = performance.now();
+    const labelsAllowed = !MARBLE_LABEL_POLICY.showOnlyAfterRaceStart
+      || this.state === 'running'
+      || this.state === 'finished';
+    const topLabelIds = labelsAllowed ? this.refreshMarbleNameLabelSet(now, forceRanking) : new Set();
+    const scaleTargetUpdateMs = Math.max(0, this.performanceProfile?.nameLabelScaleTargetUpdateMs ?? PERFORMANCE_TUNING.nameLabelScaleTargetUpdateMs ?? 120);
+    const refreshScaleTargets = forceScaleTarget || !scaleTargetUpdateMs || now - (this.lastNameLabelScaleTargetUpdate || 0) >= scaleTargetUpdateMs;
+    if (refreshScaleTargets) {
+      this.lastNameLabelScaleTargetUpdate = now;
+      this.uiThrottleCounters.labelScaleTargetRefreshes += 1;
+    }
+    const smoothing = clamp(this.performanceProfile?.nameLabelScaleSmoothing ?? PERFORMANCE_TUNING.nameLabelScaleSmoothing ?? 0.18, 0, 1);
+    const positionThresholdSq = Math.max(0, this.performanceProfile?.nameLabelPositionWriteThresholdSq ?? PERFORMANCE_TUNING.nameLabelPositionWriteThresholdSq ?? 0.0004);
+    const scaleWriteThreshold = Math.max(0, this.performanceProfile?.nameLabelScaleWriteThreshold ?? PERFORMANCE_TUNING.nameLabelScaleWriteThreshold ?? 0.005);
+    const renderAllLabels = false;
+    let visibleCount = 0;
+    this.uiThrottleCounters.labelTransformPasses += 1;
     this.marbleData.forEach((data) => {
-      if (!data.labelSprite) return;
-      data.labelSprite.position.copy(data.mesh.position).add(new THREE.Vector3(0, data.radius + 0.72, 0));
-      const cameraDistance = data.labelSprite.position.distanceTo(this.camera.position);
-      const targetScale = clamp(cameraDistance * 0.035, 0.62, 1.25);
-      const previousBaseScale = Number.isFinite(data.labelBaseScale) ? data.labelBaseScale : targetScale;
-      const smoothing = clamp(this.performanceProfile?.nameLabelScaleSmoothing ?? PERFORMANCE_TUNING.nameLabelScaleSmoothing ?? 0.18, 0, 1);
-      const scale = previousBaseScale + (targetScale - previousBaseScale) * smoothing;
-      data.labelBaseScale = scale;
-      data.labelSprite.scale.set(scale * 3.8, scale * 0.95, 1);
+      const sprite = data.labelSprite;
+      if (!sprite) return;
       const fallLabelAllowed = !data.pendingFallRespawn
         || this.elapsed - (data.pendingFallRespawn.detectedAt ?? this.elapsed) < MARBLE_LABEL_POLICY.hidePendingFallAfterSeconds;
-      const renderAllLabels = false;
-      const visible = (renderAllLabels || topLabelIds.has(data.id)) && fallLabelAllowed && labelsAllowed;
-      data.labelSprite.visible = visible;
+      const visible = labelsAllowed && fallLabelAllowed && (renderAllLabels || topLabelIds.has(data.id));
+      if (sprite.visible !== visible) {
+        sprite.visible = visible;
+        this.uiThrottleCounters.labelVisibilityWrites += 1;
+      }
       data.labelVisible = visible;
-      if (visible) this.visibleLabelCount += 1;
+      if (!visible) {
+        this.uiThrottleCounters.labelHiddenSkips += 1;
+        return;
+      }
+      visibleCount += 1;
+
+      const targetPosition = this.labelScratchPosition || new THREE.Vector3();
+      targetPosition.copy(data.mesh.position);
+      targetPosition.y += data.radius + 0.72;
+      if (sprite.position.distanceToSquared(targetPosition) > positionThresholdSq) {
+        sprite.position.copy(targetPosition);
+        this.uiThrottleCounters.labelPositionWrites += 1;
+      }
+
+      if (refreshScaleTargets || !Number.isFinite(data.labelTargetScale)) {
+        const cameraDistance = sprite.position.distanceTo(this.camera.position);
+        data.labelTargetScale = clamp(cameraDistance * 0.035, 0.62, 1.25);
+      }
+      const targetScale = Number.isFinite(data.labelTargetScale) ? data.labelTargetScale : 0.82;
+      const previousBaseScale = Number.isFinite(data.labelBaseScale) ? data.labelBaseScale : targetScale;
+      const scale = previousBaseScale + (targetScale - previousBaseScale) * smoothing;
+      data.labelBaseScale = scale;
+      if (!Number.isFinite(data.labelRenderedBaseScale) || Math.abs(scale - data.labelRenderedBaseScale) > scaleWriteThreshold) {
+        sprite.scale.set(scale * 3.8, scale * 0.95, 1);
+        data.labelRenderedBaseScale = scale;
+        this.uiThrottleCounters.labelScaleWrites += 1;
+      }
     });
+    this.visibleLabelCount = visibleCount;
   }
 
   clearSpectacleEffects({ clearTrails = true } = {}) {
@@ -9466,11 +9546,7 @@ class MarbleRace {
       this.syncMarbles();
     }
     this.updateCamera(delta);
-    const labelUpdateMs = this.performanceProfile?.renderNameLabelUpdateMs || 0;
-    if (!labelUpdateMs || performance.now() - (this.lastNameLabelUpdate || 0) >= labelUpdateMs) {
-      this.lastNameLabelUpdate = performance.now();
-      this.updateMarbleNameLabels();
-    }
+    this.updateMarbleNameLabels(delta);
     this.controls.enabled = true;
     if (!this.performanceProfile?.renderSkipOrbitControlsUpdate) this.controls.update();
     this.fpsFrames += 1;
@@ -10999,6 +11075,8 @@ class MarbleRace {
         'dom-text-write-cache',
         'leaderboard-signature-cache',
         'smooth1080p-render-ui-throttle-profile',
+        'split-name-label-throttle-ranking-and-scale-targets',
+        'visible-name-label-transform-updates-only',
       ],
       measuredFps: this.lastFps,
       motionModel: this.slopeDrive?.model,
