@@ -1294,19 +1294,14 @@ async function main() {
       if (showRightUi && app.rightUICollapsed) app.toggleRightUI?.();
       if (!showRightUi && !app.rightUICollapsed) app.toggleRightUI?.();
       if (renderPerformanceMode) {
-        const profile = app.performanceProfile || {};
-        app.performanceProfile = {
-          ...profile,
+        app.setUIThrottleProfile?.('smooth1080p', {
           mode: 'playwright-render-performance',
           renderPerformanceMode: true,
-          uiUpdateMs: Math.max(profile.uiUpdateMs || 500, 1000),
-          debugUpdateMs: Math.max(profile.debugUpdateMs || 1200, 2600),
-          leaderboardUpdateMs: Math.max(profile.leaderboardUpdateMs || 800, 1800),
-          rankingCacheMs: Math.max(profile.rankingCacheMs || 220, 700),
           renderNameLabelUpdateMs: 0,
           renderSkipOrbitControlsUpdate: false,
           renderSkipSpectacleEffects: false,
-        };
+        });
+        const profile = app.performanceProfile || {};
         const renderPixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
         if (app.renderer?.setPixelRatio) app.renderer.setPixelRatio(renderPixelRatio);
         if (app.renderer?.setSize) app.renderer.setSize(window.innerWidth, window.innerHeight, false);
