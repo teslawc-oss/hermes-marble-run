@@ -75,6 +75,7 @@ const config = {
   youtubeTitleHistory: args.get('youtube-title-history') || process.env.MARBLE_RENDER_YOUTUBE_TITLE_HISTORY || recordingsDir,
   youtubeTitleHistoryLimit: Number(args.get('youtube-title-history-limit') || process.env.MARBLE_RENDER_YOUTUBE_TITLE_HISTORY_LIMIT || 10),
   renderPerformanceMode: args.get('render-performance-mode') !== 'false' && process.env.MARBLE_RENDER_PERFORMANCE_MODE !== 'false',
+  renderPerformanceProfile: args.get('render-performance-profile') || process.env.MARBLE_RENDER_PERFORMANCE_PROFILE || 'turbo60',
   audioOutput: path.resolve(args.get('audio-output') || process.env.MARBLE_RENDER_AUDIO_OUTPUT || path.join(recordingsDir, `auto-cup-${defaultStamp}.wav`)),
   mode: ['cup', 'continuous', 'single'].includes(args.get('mode') || process.env.MARBLE_RENDER_MODE) ? (args.get('mode') || process.env.MARBLE_RENDER_MODE) : 'continuous',
   multipleRaceCount: Number(args.get('multiple-race-count') || process.env.MARBLE_RENDER_MULTIPLE_RACE_COUNT || 5),
@@ -929,6 +930,7 @@ async function main() {
       showRightUi: config.showRightUi,
       disableMouseOrbit: config.disableMouseOrbit,
       renderPerformanceMode: config.renderPerformanceMode,
+      renderPerformanceProfile: config.renderPerformanceProfile,
       audio: config.audio,
       videoCapture: config.videoCapture,
       videoCanvasLayout: config.videoCanvasLayout,
@@ -1231,7 +1233,7 @@ async function main() {
     }
 
     progress('app-start', `${config.mode}, races=${config.multipleRaceCount}, marbles=${config.cupSize}`);
-    const started = await page.evaluate(({ mode, multipleRaceCount, cupSize, trackLength, targetSeconds, lengthMode, smokeSeconds, maxRaceSeconds, cupName, ttsVoice, obstaclePreset, obstacleDistribution, obstacleTypes, showLeftUi, showRightUi, disableMouseOrbit, renderPerformanceMode }) => {
+    const started = await page.evaluate(({ mode, multipleRaceCount, cupSize, trackLength, targetSeconds, lengthMode, smokeSeconds, maxRaceSeconds, cupName, ttsVoice, obstaclePreset, obstacleDistribution, obstacleTypes, showLeftUi, showRightUi, disableMouseOrbit, renderPerformanceMode, renderPerformanceProfile }) => {
       const app = window.__MARBLE_RACE_APP__;
       if (!app) return { ok: false, reason: 'app-missing' };
       app.__playwrightRenderTrackLength = trackLength;
@@ -1294,7 +1296,8 @@ async function main() {
       if (showRightUi && app.rightUICollapsed) app.toggleRightUI?.();
       if (!showRightUi && !app.rightUICollapsed) app.toggleRightUI?.();
       if (renderPerformanceMode) {
-        app.setUIThrottleProfile?.('smooth1080p', {
+        const perfProfile = renderPerformanceProfile || 'turbo60';
+        app.setUIThrottleProfile?.(perfProfile, {
           mode: 'playwright-render-performance',
           renderPerformanceMode: true,
           renderNameLabelUpdateMs: 0,
@@ -1633,6 +1636,7 @@ async function main() {
       showRightUi: config.showRightUi,
       disableMouseOrbit: config.disableMouseOrbit,
       renderPerformanceMode: config.renderPerformanceMode,
+      renderPerformanceProfile: config.renderPerformanceProfile,
     });
     if (!started.ok) fail(`Could not start Playwright auto cup: ${started.reason || 'unknown'}`);
     log('Auto cup started:', JSON.stringify(started));

@@ -677,6 +677,39 @@ const UI_THROTTLE_PROFILES = {
     nameLabelRankUpdateMs: 450,
     nameLabelScaleTargetUpdateMs: 180,
   },
+  turbo60: {
+    key: 'turbo60',
+    label: 'Turbo 60fps render',
+    // Geometry detail cuts
+    antialias: false,
+    physicsSolverIterations: 6,
+    runningMaxSubSteps: 1,
+    physicalRailBodyBudget: 330,
+    marbleSegments: 16,
+    marbleRings: 10,
+    obstacleCylinderSegments: 12,
+    obstacleSphereSegments: 8,
+    trailPoints: 5,
+    trailSampleEvery: 0.13,
+    trailStartTrackDistance: 0.8,
+    railTubeSegmentMultiplier: 1.2,
+    railTubeRadialSegments: 6,
+    lowerRailTubeRadialSegments: 4,
+    decorationStepMeters: 40,
+    disableDecorativePointLights: true,
+    // Spectacle budget
+    maxSpectacleEffects: 4,
+    maxSpectacleEffectMeshes: 20,
+    maxConfettiPieces: 95,
+    spectacleSpawnCooldownMs: 100,
+    // UI throttle
+    uiUpdateMs: 1000,
+    debugUpdateMs: 4000,
+    leaderboardUpdateMs: 2000,
+    rankingCacheMs: 1000,
+    nameLabelRankUpdateMs: 500,
+    nameLabelScaleTargetUpdateMs: 200,
+  },
 };
 
 const PINBALL_PHYSICS = {
@@ -3664,9 +3697,9 @@ class MarbleRace {
       const curve = new THREE.CatmullRomCurve3(curvePoints, false, 'centripetal', 0.12);
       const tube = new THREE.Mesh(new THREE.TubeGeometry(
         curve,
-        Math.max(48, Math.floor(renderPoints.length * PERFORMANCE_TUNING.railTubeSegmentMultiplier)),
+        Math.max(48, Math.floor(renderPoints.length * (this.performanceProfile?.railTubeSegmentMultiplier ?? PERFORMANCE_TUNING.railTubeSegmentMultiplier))),
         railRadius,
-        PERFORMANCE_TUNING.railTubeRadialSegments,
+        this.performanceProfile?.railTubeRadialSegments ?? PERFORMANCE_TUNING.railTubeRadialSegments,
         false
       ), material);
       tube.castShadow = PERFORMANCE_TUNING.shadows;
@@ -3685,9 +3718,9 @@ class MarbleRace {
       const lowerCurve = new THREE.CatmullRomCurve3(curvePoints.map((p) => p.clone().add(new THREE.Vector3(0, -0.78, 0))), false, 'centripetal', 0.12);
       const lowerTube = new THREE.Mesh(new THREE.TubeGeometry(
         lowerCurve,
-        Math.max(48, Math.floor(renderPoints.length * PERFORMANCE_TUNING.railTubeSegmentMultiplier)),
+        Math.max(48, Math.floor(renderPoints.length * (this.performanceProfile?.railTubeSegmentMultiplier ?? PERFORMANCE_TUNING.railTubeSegmentMultiplier))),
         0.1,
-        PERFORMANCE_TUNING.lowerRailTubeRadialSegments,
+        this.performanceProfile?.lowerRailTubeRadialSegments ?? PERFORMANCE_TUNING.lowerRailTubeRadialSegments,
         false
       ), material);
       lowerTube.castShadow = PERFORMANCE_TUNING.shadows;
@@ -3709,7 +3742,7 @@ class MarbleRace {
   }
 
   getSmoothedRailPoints(points, width) {
-    const sampleStep = PERFORMANCE_TUNING.railTubeSampleStep;
+    const sampleStep = this.performanceProfile?.railTubeSampleStep ?? PERFORMANCE_TUNING.railTubeSampleStep;
     const smoothed = [];
     for (let d = 0; d <= this.trackLength; d += sampleStep) {
       const base = this.getTrackPointAt(d);
@@ -6299,7 +6332,7 @@ class MarbleRace {
       const stripe = new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.22, 0.18), textMat.clone());
       stripe.position.set(0, -0.68, 0.1);
       sign.add(stripe);
-      if (!PERFORMANCE_TUNING.disableDecorativePointLights) {
+      if (!(this.performanceProfile?.disableDecorativePointLights ?? PERFORMANCE_TUNING.disableDecorativePointLights)) {
         const light = new THREE.PointLight(index === 2 ? 0xffd166 : 0x7cf7d4, 0.65, 18);
         light.position.set(pos.x, pos.y + 2.4, pos.z);
         this.trackGroup.add(light);
@@ -6309,7 +6342,7 @@ class MarbleRace {
   }
 
   createMarbleTrail(color, radius) {
-    const points = Array.from({ length: PERFORMANCE_TUNING.trailPoints }, () => new THREE.Vector3(0, -1000, 0));
+    const points = Array.from({ length: this.performanceProfile?.trailPoints ?? PERFORMANCE_TUNING.trailPoints }, () => new THREE.Vector3(0, -1000, 0));
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
     const material = new THREE.LineBasicMaterial({
       color,
@@ -6325,7 +6358,7 @@ class MarbleRace {
       line,
       points,
       cursor: 0,
-      sampleEvery: PERFORMANCE_TUNING.trailSampleEvery,
+      sampleEvery: this.performanceProfile?.trailSampleEvery ?? PERFORMANCE_TUNING.trailSampleEvery,
       lastSample: -Infinity,
       radius,
       started: false,
@@ -6532,10 +6565,10 @@ class MarbleRace {
       lastSpawnAtByKind: {},
       perKindWeights,
       perKindMinCooldownMs,
-      maxEffects: PERFORMANCE_TUNING.maxSpectacleEffects,
-      maxMeshes: PERFORMANCE_TUNING.maxSpectacleEffectMeshes,
-      maxConfetti: PERFORMANCE_TUNING.maxConfettiPieces,
-      globalCooldownMs: PERFORMANCE_TUNING.spectacleSpawnCooldownMs,
+      maxEffects: this.performanceProfile?.maxSpectacleEffects ?? PERFORMANCE_TUNING.maxSpectacleEffects,
+      maxMeshes: this.performanceProfile?.maxSpectacleEffectMeshes ?? PERFORMANCE_TUNING.maxSpectacleEffectMeshes,
+      maxConfetti: this.performanceProfile?.maxConfettiPieces ?? PERFORMANCE_TUNING.maxConfettiPieces,
+      globalCooldownMs: this.performanceProfile?.spectacleSpawnCooldownMs ?? PERFORMANCE_TUNING.spectacleSpawnCooldownMs,
       lastGlobalSpawnAt: -Infinity,
     };
   }
@@ -7941,7 +7974,7 @@ class MarbleRace {
     const colors = [0xffd166, 0xff77b7, 0x7cf7d4, 0xffffff, 0x8cff66, 0x66a6ff];
     if (!this.effectBudget) this.effectBudget = this.createEffectBudget();
     if (!this.effectBudgetCounters) this.resetEffectBudgetWindow({ resetCounters: true });
-    const maxConfetti = this.effectBudget.maxConfetti ?? PERFORMANCE_TUNING.maxConfettiPieces;
+    const maxConfetti = this.effectBudget.maxConfetti ?? this.performanceProfile?.maxConfettiPieces ?? PERFORMANCE_TUNING.maxConfettiPieces;
     const availableSlots = Math.max(0, maxConfetti - (this.confettiPieces?.length || 0));
     const requestedCount = Math.max(0, Math.floor(count || 0));
     const admittedCount = force ? requestedCount : Math.min(requestedCount, availableSlots);
@@ -8437,7 +8470,7 @@ class MarbleRace {
       emissive: color,
       emissiveIntensity: materialStyle.emissiveIntensity,
     });
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, PERFORMANCE_TUNING.marbleSegments, PERFORMANCE_TUNING.marbleRings), material);
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, this.performanceProfile?.marbleSegments ?? PERFORMANCE_TUNING.marbleSegments, this.performanceProfile?.marbleRings ?? PERFORMANCE_TUNING.marbleRings), material);
     mesh.castShadow = PERFORMANCE_TUNING.shadows;
     mesh.receiveShadow = PERFORMANCE_TUNING.shadows;
     return mesh;
@@ -9690,7 +9723,7 @@ class MarbleRace {
     if (this.state === 'running') {
       this.elapsed += delta;
       this.applyMarbleDrive();
-      this.world.step(1 / 60, delta, PERFORMANCE_TUNING.runningMaxSubSteps);
+      this.world.step(1 / 60, delta, this.performanceProfile?.runningMaxSubSteps ?? PERFORMANCE_TUNING.runningMaxSubSteps);
       this.syncMarbles();
       this.recordRaceHistorySample();
       this.updatePreFinishSlowMotionTrigger();
@@ -9771,10 +9804,17 @@ class MarbleRace {
       ...(this.performanceProfile || PERFORMANCE_TUNING),
       ...profile,
       ...overrides,
-      mode: overrides.mode || (key === 'smooth1080p' ? 'playwright-render-performance' : (this.performanceProfile?.mode || PERFORMANCE_TUNING.label)),
+      mode: overrides.mode || ((key === 'smooth1080p' || key === 'turbo60') ? 'playwright-render-performance' : (this.performanceProfile?.mode || PERFORMANCE_TUNING.label)),
       uiThrottleProfile: key,
     };
     this.uiThrottleCounters.profileKey = key;
+    // Apply physics settings that were set at world creation
+    if (this.world?.solver) {
+      const iterations = this.performanceProfile.physicsSolverIterations ?? PERFORMANCE_TUNING.physicsSolverIterations;
+      if (this.world.solver.iterations !== iterations) {
+        this.world.solver.iterations = iterations;
+      }
+    }
     return this.performanceProfile;
   }
 
