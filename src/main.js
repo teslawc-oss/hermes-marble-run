@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import obstacleCatalogData from './obstacle-catalog.json';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -440,37 +441,12 @@ const OBSTACLE_PLACEMENT = {
   finishPaddingMeters: 16,
   label: 'obstacle placements are sorted and relaxed along the track with a minimum distance gap so generated obstacles do not overlap or cluster on top of each other',
 };
-const OBSTACLE_CATEGORIES = {
-  normal: {
-    label: '普通障礙物',
-    description: '物理碰撞、彈射、方向影響等一般障礙。',
-  },
-  buff: {
-    label: '增益類',
-    description: '預留給之後加速、保護、分數或能力提升效果。',
-  },
-  debuff: {
-    label: '減益類',
-    description: '預留給之後減速、干擾、失控或懲罰效果。',
-  },
-};
-
-const PINBALL_OBSTACLE_TYPES = [
-  'popBumper',
-  'pinBumper',
-  'gongBumper',
-  'slingshot',
-  'spinnerGate',
-  'dropTarget',
-];
-const PINBALL_OBSTACLE_TYPE_METADATA = {
-  popBumper: { label: 'Pop Bumper', category: 'normal' },
-  pinBumper: { label: 'Pin Bumper', category: 'normal' },
-  gongBumper: { label: 'Gong Bumper', category: 'normal' },
-  slingshot: { label: 'Slingshot', category: 'normal' },
-  spinnerGate: { label: 'Spinner Gate', category: 'normal' },
-  dropTarget: { label: 'Drop Target', category: 'normal' },
-};
+const OBSTACLE_CATEGORIES = obstacleCatalogData.categories;
+const PINBALL_OBSTACLE_TYPE_ENTRIES = obstacleCatalogData.types;
+const PINBALL_OBSTACLE_TYPES = PINBALL_OBSTACLE_TYPE_ENTRIES.map((type) => type.value);
+const PINBALL_OBSTACLE_TYPE_METADATA = Object.fromEntries(
+  PINBALL_OBSTACLE_TYPE_ENTRIES.map(({ value, ...metadata }) => [value, metadata]),
+);
 const PINBALL_OBSTACLE_CATALOG = Object.fromEntries(
   Object.entries(OBSTACLE_CATEGORIES).map(([category, config]) => [
     category,
@@ -671,6 +647,25 @@ const PERFORMANCE_TUNING = {
   renderSkipOrbitControlsUpdate: false,
   renderSkipSpectacleEffects: false,
   nameLabelScaleSmoothing: 0.18,
+};
+
+const UI_THROTTLE_PROFILES = {
+  live: {
+    key: 'live',
+    label: 'Live browser UI',
+    uiUpdateMs: PERFORMANCE_TUNING.uiUpdateMs,
+    debugUpdateMs: PERFORMANCE_TUNING.debugUpdateMs,
+    leaderboardUpdateMs: PERFORMANCE_TUNING.leaderboardUpdateMs,
+    rankingCacheMs: PERFORMANCE_TUNING.rankingCacheMs,
+  },
+  smooth1080p: {
+    key: 'smooth1080p',
+    label: 'Smooth 1080p render UI',
+    uiUpdateMs: 1000,
+    debugUpdateMs: 2600,
+    leaderboardUpdateMs: 1800,
+    rankingCacheMs: 700,
+  },
 };
 
 const PINBALL_PHYSICS = {
@@ -915,6 +910,18 @@ class MarbleRace {
     this.lastDebugUpdate = 0;
     this.lastRecordingStatusUpdate = 0;
     this.lastUIState = '';
+    this.uiWriteCache = new Map();
+    this.lastLeaderboardSignature = '';
+    this.uiThrottleCounters = {
+      textWrites: 0,
+      skippedTextWrites: 0,
+      leaderboardRenders: 0,
+      leaderboardSkippedBySignature: 0,
+      leaderboardSignature: '',
+      debugPayloads: 0,
+      debugConsoleWrites: 0,
+      profileKey: 'live',
+    };
     this.cachedRanking = null;
     this.cachedRankingAt = 0;
     this.cachedLeaderId = null;
@@ -928,6 +935,7 @@ class MarbleRace {
       debugUpdateMs: PERFORMANCE_TUNING.debugUpdateMs,
       leaderboardUpdateMs: PERFORMANCE_TUNING.leaderboardUpdateMs,
       rankingCacheMs: PERFORMANCE_TUNING.rankingCacheMs,
+      uiThrottleProfile: 'live',
     };
     this.lastFps = 0;
     this.fpsFrames = 0;
@@ -1264,6 +1272,7 @@ class MarbleRace {
     this.applyRightUIState();
     this.setTtsPitch(this.ui.ttsPitchSlider?.value || this.ttsPitch || 1, { resetQueue: false, updateStatus: false });
     this.initTtsVoiceSelector();
+    this.buildObstacleTypeToggles();
     this.initThree();
     this.initPhysics();
     this.bindEvents();
@@ -2067,6 +2076,26 @@ class MarbleRace {
     if (this.ui.obstacleDistribution) this.ui.obstacleDistribution.value = this.obstacleDistributionMode;
     if (regenerateTrack) this.newRace({ regenerateTrack: true });
     else this.updateUI();
+  }
+
+  buildObstacleTypeToggles() {
+    const container = document.querySelector('#obstacle-type-toggles');
+    if (!container) return;
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+    container.innerHTML = Object.entries(PINBALL_OBSTACLE_CATALOG).map(([categoryKey, category]) => {
+      const types = category.types || [];
+      const body = types.length
+        ? types.map((type) => {
+          const metadata = PINBALL_OBSTACLE_TYPE_METADATA[type] || { label: type, category: categoryKey };
+          return `<label><span>${escapeHtml(metadata.label)}</span><input type="checkbox" data-obstacle-type="${escapeHtml(type)}" data-obstacle-category="${escapeHtml(categoryKey)}" checked /></label>`;
+        }).join('')
+        : `<small>暫未有現有障礙物；預留給之後${escapeHtml(category.description || '新效果')}。</small>`;
+      return `<fieldset class="obstacle-category" data-obstacle-category="${escapeHtml(categoryKey)}"><legend>${escapeHtml(category.label)}</legend>${body}</fieldset>`;
+    }).join('');
+    this.ui.obstacleTypeToggles = Array.from(document.querySelectorAll('[data-obstacle-type]'));
+    this.ui.obstacleTypeToggles.forEach((toggle) => {
+      toggle.addEventListener('change', () => this.updateObstacleTypeToggles({ regenerateTrack: true }));
+    });
   }
 
   updateObstacleTypeToggles({ regenerateTrack = false } = {}) {
@@ -6161,26 +6190,16 @@ class MarbleRace {
   }
 
   createDecorations() {
-    const postMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.7 });
-    const lampMat = new THREE.MeshStandardMaterial({ color: 0xfff1a8, emissive: 0xffbb33, emissiveIntensity: 0.7 });
-    const count = Math.ceil(this.trackLength / PERFORMANCE_TUNING.decorationStepMeters);
-    for (let i = 0; i < count; i += 1) {
-      const frame = this.getTrackFrameAt(6 + i * (this.trackLength / count));
-      const side = i % 2 === 0 ? -1 : 1;
-      const pos = new THREE.Vector3(frame.p.x + frame.right.x * side * (this.trackWidth / 2 + 4), frame.p.y, frame.p.z + frame.right.z * side * (this.trackWidth / 2 + 4));
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 4.4, 10), postMat);
-      post.position.set(pos.x, pos.y + 2.1, pos.z);
-      post.castShadow = PERFORMANCE_TUNING.shadows;
-      this.trackGroup.add(post);
-      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), lampMat);
-      lamp.position.set(pos.x, pos.y + 4.45, pos.z);
-      this.trackGroup.add(lamp);
-      if (!PERFORMANCE_TUNING.disableDecorativePointLights) {
-        const light = new THREE.PointLight(0xffd38a, 0.5, 16);
-        light.position.copy(lamp.position);
-        this.trackGroup.add(light);
-      }
-    }
+    // Trackside lamp posts were visually noisy around the course and added extra
+    // geometry to render. Keep this hook as a no-op so track rebuilds still have
+    // a stable extension point for future non-lamp decorations.
+    this.decorationSummary = {
+      lampPosts: 0,
+      lampGlobes: 0,
+      decorativePointLights: 0,
+      removed: true,
+      reason: 'trackside-lamp-posts-disabled',
+    };
   }
 
   createBroadcastMarkerTexture(label) {
@@ -9494,6 +9513,47 @@ class MarbleRace {
     this.renderViewerCanvasOverlay();
   }
 
+  setCachedText(node, value, cacheKey = null) {
+    if (!node) return false;
+    const text = String(value ?? '');
+    const key = cacheKey || node.id || node.dataset?.uiCacheKey || null;
+    if (key && this.uiWriteCache?.get(key) === text) {
+      this.uiThrottleCounters.skippedTextWrites += 1;
+      return false;
+    }
+    if (!key && node.textContent === text) {
+      this.uiThrottleCounters.skippedTextWrites += 1;
+      return false;
+    }
+    node.textContent = text;
+    if (key) this.uiWriteCache?.set(key, text);
+    this.uiThrottleCounters.textWrites += 1;
+    return true;
+  }
+
+  setUIThrottleProfile(profileKey = 'live', overrides = {}) {
+    const key = UI_THROTTLE_PROFILES[profileKey] ? profileKey : 'live';
+    const profile = UI_THROTTLE_PROFILES[key];
+    this.performanceProfile = {
+      ...(this.performanceProfile || PERFORMANCE_TUNING),
+      ...profile,
+      ...overrides,
+      mode: overrides.mode || (key === 'smooth1080p' ? 'playwright-render-performance' : (this.performanceProfile?.mode || PERFORMANCE_TUNING.label)),
+      uiThrottleProfile: key,
+    };
+    this.uiThrottleCounters.profileKey = key;
+    return this.performanceProfile;
+  }
+
+  buildLeaderboardSignature(ranking) {
+    return ranking.slice(0, 5).map((data, index) => {
+      const progressBucket = Math.round((data.progress || 0) * 100);
+      const finishBucket = data.finished ? Math.round((data.finishTime || 0) * 10) : '';
+      const penalty = data.timePenalty || 0;
+      return `${index}:${data.id}:${progressBucket}:${finishBucket}:${penalty}:${data.defeated ? 1 : 0}`;
+    }).join('|');
+  }
+
   getLeaderId() {
     if (this.cachedLeaderId !== null && performance.now() - (this.cachedRankingAt || 0) < (this.performanceProfile?.rankingCacheMs || 80)) return this.cachedLeaderId;
     const leader = this.getRanking()[0];
@@ -10692,7 +10752,15 @@ class MarbleRace {
     if (!force && now - this.lastLeaderboardUpdate < (this.performanceProfile?.leaderboardUpdateMs || 300)) return;
     this.lastLeaderboardUpdate = now;
     const ranking = this.getRanking({ force: true });
-    this.ui.leaderboard.innerHTML = '';
+    const signature = this.buildLeaderboardSignature(ranking);
+    if (!force && signature === this.lastLeaderboardSignature) {
+      this.uiThrottleCounters.leaderboardSkippedBySignature += 1;
+      return;
+    }
+    this.lastLeaderboardSignature = signature;
+    this.uiThrottleCounters.leaderboardSignature = signature;
+    this.uiThrottleCounters.leaderboardRenders += 1;
+    this.ui.leaderboard.replaceChildren();
     const fragment = document.createDocumentFragment();
     ranking.slice(0, 5).forEach((data, index) => {
       const li = document.createElement('li');
@@ -10725,14 +10793,15 @@ class MarbleRace {
   updateUI() {
     if (!this.mediaRecorder && this.recordingCategory) this.recordingCategory = null;
     this.updateRecordingFpsVisibility();
-    if (this.ui.record && this.mediaRecorder?.state !== 'recording') this.ui.record.textContent = 'Single';
-    if (this.ui.record && this.singleRecording?.active) this.ui.record.textContent = 'Stop Single';
-    if (this.ui.continuousRecord && !this.continuousRecording?.active) this.ui.continuousRecord.textContent = 'Multiple';
+    if (this.ui.record && this.mediaRecorder?.state !== 'recording') this.setCachedText(this.ui.record, 'Single', 'record-button');
+    if (this.ui.record && this.singleRecording?.active) this.setCachedText(this.ui.record, 'Stop Single', 'record-button');
+    if (this.ui.continuousRecord && !this.continuousRecording?.active) this.setCachedText(this.ui.continuousRecord, 'Multiple', 'continuous-record-button');
     if (this.ui.multipleRaceCount) this.ui.multipleRaceCount.disabled = Boolean(this.continuousRecording?.active);
-    if (this.ui.autoCupRecord && !this.autoCupRecording?.active) this.ui.autoCupRecord.textContent = 'Cup Mode';
+    if (this.ui.autoCupRecord && !this.autoCupRecording?.active) this.setCachedText(this.ui.autoCupRecord, 'Cup Mode', 'auto-cup-record-button');
     const labels = { idle: 'Idle', ready: this.countdownActive ? 'Countdown' : 'Waiting for Gate', running: 'Racing', paused: 'Paused', finished: 'Finished' };
-    this.ui.state.textContent = labels[this.state] || this.state;
-    this.ui.elapsed.textContent = `${this.elapsed.toFixed(1)}s`;
+    this.setCachedText(this.ui.state, labels[this.state] || this.state, 'race-state');
+    this.setCachedText(this.ui.elapsed, `${this.elapsed.toFixed(1)}s`, 'elapsed');
+    this.uiThrottleCounters.debugPayloads += 1;
     const debug = {
       marbleCount: this.marbleData.length,
       trackLength: this.trackLength,
@@ -10912,18 +10981,24 @@ class MarbleRace {
       catchupAssistEnabled: this.catchupAssistEnabled,
       catchupMaxSpeed: this.catchupAssistEnabled ? this.speedPreset.maxSpeed * (1 + CATCHUP_ASSIST.maxBonus) : this.speedPreset.maxSpeed,
       catchupAssist: CATCHUP_ASSIST,
+      decorationSummary: this.decorationSummary || { lampPosts: 0, lampGlobes: 0, decorativePointLights: 0, removed: true },
       performanceProfile: this.performanceProfile,
+      uiThrottleProfiles: UI_THROTTLE_PROFILES,
+      uiThrottleCounters: { ...this.uiThrottleCounters },
       performanceOptimizations: [
         'fps-balanced-renderer-pixel-ratio',
         'shadows-disabled-for-race-fps',
         'lower-rail-tube-segments',
         'lower-physical-rail-body-budget',
-        'fewer-decorative-point-lights',
+        'decorative-trackside-lamp-posts-removed',
         'reduced-trail-updates',
         'reduced-physics-substeps',
         'throttled-ui-debug-updates',
         'cached-ranking-sorts',
         'fragmented-leaderboard-render',
+        'dom-text-write-cache',
+        'leaderboard-signature-cache',
+        'smooth1080p-render-ui-throttle-profile',
       ],
       measuredFps: this.lastFps,
       motionModel: this.slopeDrive?.model,
@@ -11510,7 +11585,9 @@ class MarbleRace {
       curveStyleKey: debug.curveStyleKey,
       trackDebugCodeLength: debug.trackDebugCode?.length || 0,
     };
-    this.ui.debugConsole.textContent = JSON.stringify(compact, null, 2);
+    if (this.setCachedText(this.ui.debugConsole, JSON.stringify(compact, null, 2), 'debug-console')) {
+      this.uiThrottleCounters.debugConsoleWrites += 1;
+    }
     if (this.ui.debugCopyStatus && this.ui.debugCopyStatus.textContent !== 'Copied') {
       this.ui.debugCopyStatus.textContent = 'Ready';
     }
