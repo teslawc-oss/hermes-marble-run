@@ -641,6 +641,9 @@ const PERFORMANCE_TUNING = {
   obstacleCylinderSegments: 18,
   obstacleSphereSegments: 12,
   maxSpectacleEffects: 7,
+  maxSpectacleEffectMeshes: 34,
+  maxConfettiPieces: 170,
+  spectacleSpawnCooldownMs: 65,
   decorationStepMeters: 26,
   disableDecorativePointLights: true,
   renderNameLabelUpdateMs: 0,
@@ -1186,6 +1189,20 @@ class MarbleRace {
     this.replayOriginalSnapshots = null;
     this.spectacleEffects = [];
     this.confettiPieces = [];
+    this.effectBudget = this.createEffectBudget();
+    this.effectBudgetCounters = {
+      admitted: 0,
+      denied: 0,
+      deniedByReason: {},
+      admittedByKind: {},
+      confettiAdmitted: 0,
+      confettiDenied: 0,
+      removedOldest: 0,
+      peakEffects: 0,
+      peakMeshes: 0,
+      peakConfetti: 0,
+      lastDeniedReason: null,
+    };
     this.finishSlowMotion = {
       active: false,
       triggered: false,
@@ -2261,6 +2278,7 @@ class MarbleRace {
     this.setBgmMode('intro');
     this.hideReplayHighlightOverlay();
     this.clearSpectacleEffects({ clearTrails: false });
+    this.resetEffectBudgetWindow({ resetCounters: true });
     this.showcaseStats = null;
     this.resetPodiumCeremony();
     this.ui.pause.textContent = 'Pause';
@@ -6495,6 +6513,7 @@ class MarbleRace {
     this.spectacleEffects = [];
     this.confettiPieces?.forEach((piece) => this.scene?.remove(piece.mesh));
     this.confettiPieces = [];
+    this.resetEffectBudgetWindow({ resetCounters: false });
     if (clearTrails) {
       this.marbleData?.forEach((data) => {
         if (data.trail?.line) this.scene?.remove(data.trail.line);
@@ -6503,8 +6522,128 @@ class MarbleRace {
     }
   }
 
-  spawnImpactEffect(position, color = 0x7cf7d4, kind = 'ring') {
-    if (this.spectacleEffects.length >= PERFORMANCE_TUNING.maxSpectacleEffects) return;
+  createEffectBudget() {
+    const perKindWeights = { ring: 4, spark: 6, burst: 9, gong: 12, confetti: 1 };
+    const perKindMinCooldownMs = { ring: 45, spark: 60, burst: 85, gong: 160 };
+    return {
+      frameStartedAt: 0,
+      frameCost: 0,
+      frameCostLimit: 18,
+      lastSpawnAtByKind: {},
+      perKindWeights,
+      perKindMinCooldownMs,
+      maxEffects: PERFORMANCE_TUNING.maxSpectacleEffects,
+      maxMeshes: PERFORMANCE_TUNING.maxSpectacleEffectMeshes,
+      maxConfetti: PERFORMANCE_TUNING.maxConfettiPieces,
+      globalCooldownMs: PERFORMANCE_TUNING.spectacleSpawnCooldownMs,
+      lastGlobalSpawnAt: -Infinity,
+    };
+  }
+
+  resetEffectBudgetWindow({ resetCounters = false } = {}) {
+    if (!this.effectBudget) this.effectBudget = this.createEffectBudget();
+    this.effectBudget.frameStartedAt = performance.now();
+    this.effectBudget.frameCost = 0;
+    this.effectBudget.lastSpawnAtByKind = {};
+    this.effectBudget.lastGlobalSpawnAt = -Infinity;
+    if (resetCounters || !this.effectBudgetCounters) {
+      this.effectBudgetCounters = {
+        admitted: 0,
+        denied: 0,
+        deniedByReason: {},
+        admittedByKind: {},
+        confettiAdmitted: 0,
+        confettiDenied: 0,
+        removedOldest: 0,
+        peakEffects: this.spectacleEffects?.length || 0,
+        peakMeshes: this.getSpectacleEffectMeshCount(),
+        peakConfetti: this.confettiPieces?.length || 0,
+        lastDeniedReason: null,
+      };
+    }
+  }
+
+  getSpectacleEffectMeshCount() {
+    return (this.spectacleEffects || []).reduce((sum, effect) => sum + (effect.meshCount || effect.meshes?.length || 0), 0);
+  }
+
+  noteEffectBudgetDenial(reason, kind = 'unknown') {
+    if (!this.effectBudgetCounters) this.resetEffectBudgetWindow({ resetCounters: true });
+    this.effectBudgetCounters.denied += 1;
+    this.effectBudgetCounters.lastDeniedReason = `${kind}:${reason}`;
+    this.effectBudgetCounters.deniedByReason[reason] = (this.effectBudgetCounters.deniedByReason[reason] || 0) + 1;
+  }
+
+  trimSpectacleEffectsToBudget(extraMeshesNeeded = 0) {
+    const budget = this.effectBudget || this.createEffectBudget();
+    let removed = 0;
+    while (
+      this.spectacleEffects.length > 0
+      && (
+        this.spectacleEffects.length >= budget.maxEffects
+        || this.getSpectacleEffectMeshCount() + extraMeshesNeeded > budget.maxMeshes
+      )
+    ) {
+      const effect = this.spectacleEffects.shift();
+      effect?.meshes?.forEach((mesh) => this.scene?.remove(mesh));
+      removed += 1;
+    }
+    if (removed && this.effectBudgetCounters) this.effectBudgetCounters.removedOldest += removed;
+    return removed;
+  }
+
+  canAdmitSpectacleEffect(kind = 'ring', meshCount = 1, { force = false } = {}) {
+    if (force) return true;
+    if (!this.effectBudget) this.effectBudget = this.createEffectBudget();
+    if (!this.effectBudgetCounters) this.resetEffectBudgetWindow({ resetCounters: true });
+    const budget = this.effectBudget;
+    const now = performance.now();
+    if (now - budget.frameStartedAt > 80) {
+      budget.frameStartedAt = now;
+      budget.frameCost = 0;
+    }
+    const weight = budget.perKindWeights[kind] ?? 5;
+    if (budget.frameCost + weight > budget.frameCostLimit) {
+      this.noteEffectBudgetDenial('frame-cost', kind);
+      return false;
+    }
+    const kindCooldown = budget.perKindMinCooldownMs[kind] ?? 0;
+    const lastKindSpawnAt = budget.lastSpawnAtByKind[kind] ?? -Infinity;
+    if (kindCooldown > 0 && now - lastKindSpawnAt < kindCooldown) {
+      this.noteEffectBudgetDenial('kind-cooldown', kind);
+      return false;
+    }
+    if (budget.globalCooldownMs > 0 && kind !== 'gong' && now - budget.lastGlobalSpawnAt < budget.globalCooldownMs) {
+      this.noteEffectBudgetDenial('global-cooldown', kind);
+      return false;
+    }
+    this.trimSpectacleEffectsToBudget(meshCount);
+    if (this.spectacleEffects.length >= budget.maxEffects) {
+      this.noteEffectBudgetDenial('effect-count', kind);
+      return false;
+    }
+    if (this.getSpectacleEffectMeshCount() + meshCount > budget.maxMeshes) {
+      this.noteEffectBudgetDenial('mesh-count', kind);
+      return false;
+    }
+    budget.frameCost += weight;
+    budget.lastSpawnAtByKind[kind] = now;
+    budget.lastGlobalSpawnAt = now;
+    this.effectBudgetCounters.admitted += 1;
+    this.effectBudgetCounters.admittedByKind[kind] = (this.effectBudgetCounters.admittedByKind[kind] || 0) + 1;
+    return true;
+  }
+
+  updateEffectBudgetPeaks() {
+    if (!this.effectBudgetCounters) return;
+    this.effectBudgetCounters.peakEffects = Math.max(this.effectBudgetCounters.peakEffects || 0, this.spectacleEffects?.length || 0);
+    this.effectBudgetCounters.peakMeshes = Math.max(this.effectBudgetCounters.peakMeshes || 0, this.getSpectacleEffectMeshCount());
+    this.effectBudgetCounters.peakConfetti = Math.max(this.effectBudgetCounters.peakConfetti || 0, this.confettiPieces?.length || 0);
+  }
+
+  spawnImpactEffect(position, color = 0x7cf7d4, kind = 'ring', options = {}) {
+    const meshCount = kind === 'burst' ? 8 : (kind === 'spark' ? 5 : 1);
+    if (!this.canAdmitSpectacleEffect(kind, meshCount, options)) return false;
     const meshes = [];
     const base = new THREE.Vector3(position.x, position.y + 0.35, position.z);
     const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.72, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
@@ -6542,7 +6681,10 @@ class MarbleRace {
       life: kind === 'ring' ? 0.75 : (kind === 'gong' ? 1.1 : 0.9),
       style: kind === 'gong' ? 'single-expanding-ring-shockwave' : kind,
       meshCount: meshes.length,
+      admittedAt: performance.now(),
     });
+    this.updateEffectBudgetPeaks();
+    return true;
   }
 
   updateSpectacleEffects(delta) {
@@ -7795,8 +7937,21 @@ class MarbleRace {
     }
   }
 
-  spawnFinishConfetti(origin, count = 42, { cannon = false } = {}) {
+  spawnFinishConfetti(origin, count = 42, { cannon = false, force = false } = {}) {
     const colors = [0xffd166, 0xff77b7, 0x7cf7d4, 0xffffff, 0x8cff66, 0x66a6ff];
+    if (!this.effectBudget) this.effectBudget = this.createEffectBudget();
+    if (!this.effectBudgetCounters) this.resetEffectBudgetWindow({ resetCounters: true });
+    const maxConfetti = this.effectBudget.maxConfetti ?? PERFORMANCE_TUNING.maxConfettiPieces;
+    const availableSlots = Math.max(0, maxConfetti - (this.confettiPieces?.length || 0));
+    const requestedCount = Math.max(0, Math.floor(count || 0));
+    const admittedCount = force ? requestedCount : Math.min(requestedCount, availableSlots);
+    if (admittedCount <= 0) {
+      this.effectBudgetCounters.confettiDenied += requestedCount;
+      this.noteEffectBudgetDenial('confetti-count', 'confetti');
+      return 0;
+    }
+    if (admittedCount < requestedCount) this.effectBudgetCounters.confettiDenied += requestedCount - admittedCount;
+    this.effectBudgetCounters.confettiAdmitted += admittedCount;
     const finishFrame = this.getTrackFrameAt?.(this.trackLength);
     const cannonOffsets = cannon && finishFrame
       ? [
@@ -7805,7 +7960,7 @@ class MarbleRace {
         finishFrame.tangent.clone().multiplyScalar(-1.3).add(new THREE.Vector3(0, 1.1, 0)),
       ]
       : [new THREE.Vector3()];
-    for (let i = 0; i < count; i += 1) {
+    for (let i = 0; i < admittedCount; i += 1) {
       const color = colors[i % colors.length];
       const shape = i % 5 === 0 ? new THREE.PlaneGeometry(0.16, 0.28) : new THREE.BoxGeometry(0.12, 0.035, 0.24);
       const mesh = new THREE.Mesh(shape, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.94, side: THREE.DoubleSide }));
@@ -7818,6 +7973,8 @@ class MarbleRace {
       this.scene.add(mesh);
       this.confettiPieces.push({ mesh, age: 0, life: cannon ? 6.2 : 4.2 });
     }
+    this.updateEffectBudgetPeaks();
+    return admittedCount;
   }
 
   updateConfetti(delta) {
@@ -11297,6 +11454,9 @@ class MarbleRace {
       broadcastEvents: this.broadcastEvents,
       activeBroadcastCaption: this.activeCaption,
       spectacleEffectCount: this.spectacleEffects.length,
+      spectacleEffectMeshCount: this.getSpectacleEffectMeshCount(),
+      spectacleEffectBudget: this.effectBudget,
+      spectacleEffectBudgetCounters: this.effectBudgetCounters,
       marbleTrailCount: this.marbleData.filter((data) => Boolean(data.trail?.line)).length,
       confettiCount: this.confettiPieces.length,
       finishSlowMotion: {
