@@ -2825,70 +2825,7 @@ class MarbleRace {
     ctx.moveTo(184, 312);
     ctx.lineTo(328, 312);
     ctx.stroke();
-
-    ctx.font = '900 44px Inter, Arial, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.strokeStyle = '#050816';
-    ctx.lineWidth = 10;
-    ctx.strokeText('PRIZE', 256, 438);
-    ctx.fillStyle = '#ffe259';
-    ctx.fillText('PRIZE', 256, 438);
     return this.finishTexture(canvas, 1, 1);
-  }
-
-  createDropTargetBankSignTexture(remainingText = 'W I N') {
-    const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 192;
-    const ctx = canvas.getContext('2d');
-    this.drawDropTargetBankSign(ctx, remainingText);
-    const texture = this.finishTexture(canvas, 1, 1);
-    texture.userData = { canvas, ctx, remainingText };
-    return texture;
-  }
-
-  drawDropTargetBankSign(ctx, remainingText = 'W I N') {
-    ctx.clearRect(0, 0, 512, 192);
-    ctx.fillStyle = 'rgba(5, 8, 22, 0.92)';
-    ctx.beginPath();
-    ctx.roundRect(18, 18, 476, 156, 28);
-    ctx.fill();
-    ctx.strokeStyle = '#ffe259';
-    ctx.lineWidth = 12;
-    ctx.stroke();
-    ctx.font = '1000 44px Inter, Arial Black, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.strokeStyle = '#050816';
-    ctx.lineWidth = 10;
-    ctx.strokeText('PRIZE', 256, 58);
-    ctx.fillStyle = '#ffe259';
-    ctx.fillText('PRIZE', 256, 58);
-    ctx.font = '1000 62px Impact, Arial Black, sans-serif';
-    ctx.strokeStyle = '#050816';
-    ctx.lineWidth = 14;
-    ctx.strokeText(remainingText, 256, 126);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(remainingText, 256, 126);
-  }
-
-  getDropTargetBankSignText(obstacle) {
-    const remaining = ['W', 'I', 'N'].filter((label) =>
-      !(obstacle.targets || []).some((target) => target.label === label && target.dropped)
-    );
-    return remaining.length ? remaining.join(' ') : 'CLEAR';
-  }
-
-  updateDropTargetBankSignText(obstacle) {
-    if (!obstacle?.bankSign?.material?.map?.userData) return;
-    const remainingText = this.getDropTargetBankSignText(obstacle);
-    const texture = obstacle.bankSign.material.map;
-    if (texture.userData.remainingText === remainingText) return;
-    this.drawDropTargetBankSign(texture.userData.ctx, remainingText);
-    texture.userData.remainingText = remainingText;
-    texture.needsUpdate = true;
-    obstacle.bankSignText = `PRIZE / ${remainingText}`;
   }
 
   createSpinnerGateTexture() {
@@ -5696,17 +5633,6 @@ class MarbleRace {
     rubber.castShadow = PERFORMANCE_TUNING.shadows;
     group.add(rubber);
 
-    const signTexture = this.createDropTargetBankSignTexture('W I N');
-    const bankSign = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: signTexture,
-      transparent: true,
-      depthTest: false,
-      depthWrite: false,
-    }));
-    bankSign.position.set(0, signY, signZ);
-    bankSign.scale.set(signScaleX, signScaleY, 1);
-    bankSign.renderOrder = 45;
-    group.add(bankSign);
     const obstacle = {
       type: 'dropTarget',
       trackSurface: trackSurface.clone(),
@@ -5726,7 +5652,6 @@ class MarbleRace {
       targets,
       bodies,
       rubber,
-      bankSign,
       dropTargetScale,
       dropTargetDimensions: {
         targetWidth,
@@ -5738,11 +5663,8 @@ class MarbleRace {
         targetDropDistance,
         targetDropStep,
         rubberWidth,
-        signScaleX,
-        signScaleY,
       },
       trackSlopePitch: pitch,
-      trackYaw: yaw,
       dropped: false,
       droppedCount: 0,
       bankCleared: false,
@@ -5753,7 +5675,6 @@ class MarbleRace {
       lastBankClearAt: null,
       visualStyle: 'three-bank-resetting-drop-target-with-clear-bonus',
       textureStyle: 'decorative-drop-target-faces-dynamic-bank-sign-removes-hit-letters',
-      bankSignText: 'PRIZE / W I N',
     };
     this.pinballObstacles.push(obstacle);
     return obstacle;
@@ -5798,9 +5719,6 @@ class MarbleRace {
           obstacle.malletSwing = 0;
           if (obstacle.glow?.material) obstacle.glow.material.opacity = 0.28;
         }
-      }
-      if (obstacle.bankSign?.material) {
-        obstacle.bankSign.material.opacity = obstacle.bankCleared ? 0.58 : 0.96;
       }
       if (obstacle.pulse) {
         obstacle.pulse = Math.max(0, obstacle.pulse - delta * 5.5);
@@ -6028,8 +5946,6 @@ class MarbleRace {
       }
     });
 
-    this.updateDropTargetBankSignText(obstacle);
-
     if (obstacle.bankCleared && obstacle.resetAt != null && this.elapsed >= obstacle.resetAt) {
       this.resetDropTargetBank(obstacle);
     }
@@ -6052,7 +5968,6 @@ class MarbleRace {
     obstacle.lastTargetIndex = null;
     obstacle.lastTargetLabel = null;
     obstacle.cooldown?.clear?.();
-    this.updateDropTargetBankSignText(obstacle);
   }
 
   findDropTargetPanelForMarble(obstacle, data) {
@@ -6086,7 +6001,7 @@ class MarbleRace {
     const name = data?.name || 'A racer';
     const duration = Math.round(DROP_TARGET_FINAL_BOOST.durationSeconds || 5);
     const multiplier = DROP_TARGET_FINAL_BOOST.speedMultiplier || 2;
-    const targetText = obstacle?.bankSignText || 'PRIZE / CLEAR';
+    const targetText = 'CLEAR';
     const templates = Array.isArray(DROP_TARGET_FINAL_BOOST.commentaryLines)
       ? DROP_TARGET_FINAL_BOOST.commentaryLines
       : [];
