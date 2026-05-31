@@ -25,6 +25,7 @@ const estimateNonRaceSeconds = (mode, raceCount) => {
   return 7;
 };
 
+const rawVideoCapture = String(args.get('video-capture') || process.env.MARBLE_RENDER_VIDEO_CAPTURE || '').toLowerCase();
 const config = {
   url: args.get('url') || process.env.MARBLE_RENDER_URL || 'http://127.0.0.1:4173',
   port: Number(args.get('port') || process.env.MARBLE_RENDER_PORT || 4173),
@@ -43,14 +44,19 @@ const config = {
   smokeSeconds: Number(args.get('smoke-seconds') || process.env.MARBLE_RENDER_SMOKE_SECONDS || 0),
   maxRaceSeconds: Number(args.get('max-race-seconds') || process.env.MARBLE_RENDER_MAX_RACE_SECONDS || 0),
   keepWebm: args.get('keep-webm') === 'true' || process.env.MARBLE_RENDER_KEEP_WEBM === 'true',
+  debugLogs: args.get('debug-logs') === 'true' || args.get('verbose') === 'true' || process.env.MARBLE_RENDER_DEBUG_LOGS === 'true' || process.env.MARBLE_RENDER_VERBOSE === 'true',
   headful: args.get('headful') === 'true' || process.env.MARBLE_RENDER_HEADFUL === 'true',
+  browserWindowPosition: args.get('browser-window-position') || process.env.MARBLE_RENDER_BROWSER_WINDOW_POSITION || '',
   noBuild: args.get('no-build') === 'true' || process.env.MARBLE_RENDER_NO_BUILD === 'true',
   noServer: args.get('no-server') === 'true' || process.env.MARBLE_RENDER_NO_SERVER === 'true',
   showLeftUi: args.get('show-left-ui') === 'true' || process.env.MARBLE_RENDER_SHOW_LEFT_UI === 'true',
   showRightUi: args.get('show-right-ui') !== 'false' && process.env.MARBLE_RENDER_SHOW_RIGHT_UI !== 'false',
   disableMouseOrbit: args.get('disable-mouse-orbit') !== 'false' && process.env.MARBLE_RENDER_DISABLE_MOUSE_ORBIT !== 'false',
   audio: args.get('audio') !== 'false' && process.env.MARBLE_RENDER_AUDIO !== 'false',
-  videoCapture: ['playwright', 'canvas'].includes(args.get('video-capture') || process.env.MARBLE_RENDER_VIDEO_CAPTURE) ? (args.get('video-capture') || process.env.MARBLE_RENDER_VIDEO_CAPTURE) : 'canvas',
+  videoCapture: ['playwright', 'canvas', 'none', 'off', 'false'].includes(rawVideoCapture)
+    ? ({ off: 'none', false: 'none' }[rawVideoCapture] || rawVideoCapture)
+    : 'canvas',
+  canvasTransport: String(args.get('canvas-transport') || process.env.MARBLE_RENDER_CANVAS_TRANSPORT || 'chunk').toLowerCase(),
   videoCanvasLayout: ['horizontal', 'vertical'].includes(String(args.get('video-canvas') || args.get('video-canvas-layout') || process.env.MARBLE_RENDER_VIDEO_CANVAS || 'horizontal').toLowerCase())
     ? String(args.get('video-canvas') || args.get('video-canvas-layout') || process.env.MARBLE_RENDER_VIDEO_CANVAS || 'horizontal').toLowerCase()
     : 'horizontal',
@@ -76,7 +82,7 @@ const config = {
   youtubeTitleHistoryLimit: Number(args.get('youtube-title-history-limit') || process.env.MARBLE_RENDER_YOUTUBE_TITLE_HISTORY_LIMIT || 10),
   renderPerformanceMode: args.get('render-performance-mode') !== 'false' && process.env.MARBLE_RENDER_PERFORMANCE_MODE !== 'false',
   renderPerformanceProfile: args.get('render-performance-profile') || process.env.MARBLE_RENDER_PERFORMANCE_PROFILE || 'turbo60',
-  audioOutput: path.resolve(args.get('audio-output') || process.env.MARBLE_RENDER_AUDIO_OUTPUT || path.join(recordingsDir, `auto-cup-${defaultStamp}.wav`)),
+  audioOutput: args.get('audio-output') || process.env.MARBLE_RENDER_AUDIO_OUTPUT || '',
   mode: ['cup', 'continuous', 'single'].includes(args.get('mode') || process.env.MARBLE_RENDER_MODE) ? (args.get('mode') || process.env.MARBLE_RENDER_MODE) : 'continuous',
   multipleRaceCount: Number(args.get('multiple-race-count') || process.env.MARBLE_RENDER_MULTIPLE_RACE_COUNT || 5),
   cupName: args.get('cup-name') || process.env.MARBLE_RENDER_CUP_NAME || 'Speed X Cup',
@@ -118,6 +124,20 @@ if (config.uploadYoutube) config.youtubeMetadata = true;
 
 config.ttsVoice = String(config.ttsVoice || 'Alex').replace(/[^\w .'-]/g, '').trim().slice(0, 48) || 'Alex';
 config.obstacleDistribution = ['random', 'zoned'].includes(config.obstacleDistribution) ? config.obstacleDistribution : 'random';
+let audioOutputPath = config.audioOutput ? path.resolve(config.audioOutput) : '';
+const explicitAudioOutputPath = audioOutputPath;
+
+function defaultAudioOutputForRenderOutput(outputPath) {
+  const parsed = path.parse(path.resolve(outputPath || path.join(recordingsDir, `auto-cup-${defaultStamp}.webm`)));
+  return path.join(parsed.dir, `${parsed.name}.wav`);
+}
+
+function resolveAudioOutputPath({ syncToOutput = false } = {}) {
+  if (!explicitAudioOutputPath && (syncToOutput || !audioOutputPath)) audioOutputPath = defaultAudioOutputForRenderOutput(config.output);
+  audioOutputPath = path.resolve(audioOutputPath || defaultAudioOutputForRenderOutput(config.output));
+  mkdirSync(path.dirname(audioOutputPath), { recursive: true });
+  return audioOutputPath;
+}
 
 const renderStartedAt = Date.now();
 let currentStageLabel = 'init';
@@ -133,11 +153,12 @@ const formatLogPart = (part) => {
     return String(part);
   }
 };
-const writeRenderLogLine = (line) => {
-  if (!renderLogStream) return;
+const writeRenderLogLine = (line, { force = false } = {}) => {
+  if (!renderLogStream || (!force && !config.debugLogs)) return;
   renderLogStream.write(`${line}\n`);
 };
 const log = (...parts) => {
+  if (!config.debugLogs) return;
   const line = [`[render:auto-cup +${elapsedLabel()}]`, ...parts.map(formatLogPart)].join(' ');
   console.log(line);
   writeRenderLogLine(line);
@@ -145,20 +166,20 @@ const log = (...parts) => {
 const warn = (...parts) => {
   const line = [`[render:auto-cup +${elapsedLabel()}] WARN`, ...parts.map(formatLogPart)].join(' ');
   console.warn(line);
-  writeRenderLogLine(line);
+  writeRenderLogLine(line, { force: true });
 };
 const progress = (stage, detail = '') => {
   currentStageLabel = stage;
-  log(`[progress] ${stage}${detail ? `: ${detail}` : ''}`);
+  if (config.debugLogs) log(`[progress] ${stage}${detail ? `: ${detail}` : ''}`);
 };
 const fail = (message, error = null) => {
   const line = `[render:auto-cup +${elapsedLabel()}] ERROR (${currentStageLabel}): ${message}`;
   console.error(line);
-  writeRenderLogLine(line);
+  writeRenderLogLine(line, { force: true });
   if (error) {
     const errorText = formatLogPart(error);
     console.error(error);
-    writeRenderLogLine(errorText);
+    writeRenderLogLine(errorText, { force: true });
   }
   process.exit(1);
 };
@@ -209,12 +230,58 @@ const sanitizeSingleLine = (value, fallback = '') => String(value || fallback)
   .replace(/\s+/g, ' ')
   .trim();
 const sanitizeHashtags = (hashtags) => Array.isArray(hashtags)
-  ? hashtags.map((tag) => sanitizeSingleLine(tag)).filter((tag) => /^#[\w-]+$/i.test(tag))
+  ? hashtags.map((tag) => sanitizeSingleLine(tag).toLowerCase()).filter((tag) => /^#[\w-]+$/i.test(tag))
   : [];
+const SHORTS_TITLE_HASHTAGS = ['#shorts', '#marblerace', '#marblerush', '#games', '#fun'];
+const appendTitleHashtags = (title, hashtags = []) => {
+  const cleanTitle = sanitizeSingleLine(title, 'Epic Marble Race').replace(/\s+#\w[\w-]*$/gi, '').trim();
+  const cleanHashtags = sanitizeHashtags(hashtags);
+  if (!cleanHashtags.length) return cleanTitle.slice(0, 100);
+  const suffix = ` ${cleanHashtags.join(' ')}`;
+  const maxBaseLength = Math.max(1, 100 - suffix.length);
+  let base = cleanTitle.length > maxBaseLength ? cleanTitle.slice(0, maxBaseLength) : cleanTitle;
+  base = base
+    .replace(/\s+—\s+[^—]*$/g, '')
+    .replace(/[\s—:-]+$/g, '')
+    .trim();
+  if (!base || base.length < 20) {
+    base = cleanTitle.slice(0, maxBaseLength).replace(/[\s—:-]+$/g, '').trim() || 'Epic Marble Race';
+  }
+  return `${base}${suffix}`.slice(0, 100);
+};
 const run = (command, args, options = {}) => {
   log(`$ ${command} ${args.join(' ')}`);
   const result = spawnSync(command, args, { cwd: rootDir, stdio: 'inherit', ...options });
-  if (result.status !== 0) fail(`${command} exited with ${result.status}`);
+  if (result.status !== 0) fail(`${command} failed with exit code ${result.status ?? result.signal}`);
+};
+const withTimeout = async (label, promiseFactory, timeoutMs = 5000) => {
+  let timer = null;
+  let timedOut = false;
+  try {
+    const timeoutPromise = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        resolve({ __timeout: true });
+      }, timeoutMs);
+    });
+    const result = await Promise.race([
+      Promise.resolve().then(promiseFactory),
+      timeoutPromise,
+    ]);
+    if (result?.__timeout) {
+      warn(`${label} timed out after ${timeoutMs}ms; continuing render finalization`);
+      return { timedOut: true };
+    }
+    return { timedOut: false, result };
+  } catch (error) {
+    warn(`${label} failed; continuing render finalization`, error?.message || error);
+    return { timedOut: false, error };
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (timedOut) {
+      // Keep the timed-out Playwright/server cleanup from blocking ffmpeg muxing.
+    }
+  }
 };
 const ffprobeJson = (file) => JSON.parse(execFileSync('ffprobe', [
   '-v', 'error',
@@ -379,7 +446,10 @@ function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput
   const baseTitle = config.thumbnailTitle || thumbnailAudit?.rawTitle || renderSummary.thumbnailTitle || renderSummary.title || renderSummary.cupName || config.cupName || template.defaults.fallbackTitle;
   const recentTitles = readYoutubeTitleHistory(config.youtubeTitleHistory, config.youtubeTitleHistoryLimit);
   const titleResult = makeClickbaitVideoTitle(baseTitle, { fallbackTitle: template.defaults.fallbackTitle, recentTitles, historyLimit: config.youtubeTitleHistoryLimit });
-  const title = titleResult.title;
+  const titleHashtags = config.youtubeKind === 'shorts' ? SHORTS_TITLE_HASHTAGS : [];
+  const title = config.youtubeKind === 'shorts'
+    ? appendTitleHashtags(titleResult.title, titleHashtags)
+    : titleResult.title;
   const titleType = titleResult.titleType || classifyYoutubeTitleType(title);
   const descriptionBody = template.descriptionTemplate
     .replace(/\{raceCount\}/g, String(raceCount))
@@ -545,6 +615,7 @@ const audioCaptureBridge = `(() => {
 async function main() {
   mkdirSync(recordingsDir, { recursive: true });
   mkdirSync(path.dirname(config.output), { recursive: true });
+  resolveAudioOutputPath();
   renderLogPath = path.resolve(`${config.output.replace(/\.[^.]+$/, '')}.render.log`);
   renderLogStream = createWriteStream(renderLogPath, { flags: 'a' });
   progress('startup', `output=${config.output}`);
@@ -566,8 +637,8 @@ async function main() {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, BROWSER: 'none' },
     });
-    server.stdout.on('data', (chunk) => process.stdout.write(`[vite-preview] ${chunk}`));
-    server.stderr.on('data', (chunk) => process.stderr.write(`[vite-preview] ${chunk}`));
+    server.stdout.on('data', (chunk) => { if (config.debugLogs) process.stdout.write(`[vite-preview] ${chunk}`); });
+    server.stderr.on('data', (chunk) => { if (config.debugLogs) process.stderr.write(`[vite-preview] ${chunk}`); });
     server.on('exit', (code) => {
       if (code !== null && code !== 0) console.error(`[vite-preview] exited with ${code}`);
     });
@@ -579,10 +650,46 @@ async function main() {
   rmSync(videoDir, { recursive: true, force: true });
   mkdirSync(videoDir, { recursive: true });
 
+  const requestedCanvasTransport = ['buffered', 'browser-buffered-final-export', 'auto-buffered'].includes(config.canvasTransport)
+    ? 'buffered'
+    : 'chunk';
+  const useBufferedCanvasCapture = config.videoCapture === 'canvas' && requestedCanvasTransport === 'buffered';
+  log('Canvas capture transport:', JSON.stringify({
+    videoCapture: config.videoCapture,
+    transport: useBufferedCanvasCapture ? 'browser-buffered-final-export' : 'chunk-stream-binding',
+    requestedCanvasTransport: config.canvasTransport,
+    videoCanvasLayout: config.videoCanvasLayout,
+    targetSeconds: config.targetSeconds,
+  }));
+
   let canvasChunkStream = null;
   let canvasChunkOutput = null;
   let canvasChunkWriteChain = Promise.resolve();
-  const canvasChunkStats = { chunks: 0, bytes: 0, lastLogAt: Date.now() };
+  const canvasChunkStats = {
+    chunks: 0,
+    bytes: 0,
+    lastLogAt: Date.now(),
+    lastChunkAt: null,
+    maxChunkBytes: 0,
+    browserPrepMsTotal: 0,
+    browserPrepMsMax: 0,
+    arrayBufferMsTotal: 0,
+    arrayBufferMsMax: 0,
+    byteArrayMsTotal: 0,
+    byteArrayMsMax: 0,
+    bindingRoundTripMsTotal: 0,
+    bindingRoundTripMsMax: 0,
+    nodeBindingMsTotal: 0,
+    nodeBindingMsMax: 0,
+    nodeBufferMsTotal: 0,
+    nodeBufferMsMax: 0,
+    nodeWriteMsTotal: 0,
+    nodeWriteMsMax: 0,
+    chunkIntervalMsTotal: 0,
+    chunkIntervalMsMax: 0,
+    chunkIntervalSamples: 0,
+    pendingWritesMax: 0,
+  };
   let canvasCaptureStopRequestedAt = null;
   let canvasCaptureStopRequestedChunk = null;
 
@@ -621,6 +728,21 @@ async function main() {
         browserFps: Number(app.lastFps || 0),
         fpsHudText: app.ui?.fps?.textContent || null,
         simulationLag: app.performanceProfile?.simulationLag ?? app.simulationLag ?? null,
+        frameProfiler: app.frameProfiler?.lastSummary || null,
+        runtimeStats: {
+          marbleCount: app.marbleData?.length || 0,
+          worldBodies: app.world?.bodies?.length || 0,
+          obstacleCounts: app.obstacleTypeCounts || null,
+          trackStats: app.trackStats || null,
+          rendererInfo: app.renderer?.info ? {
+            calls: app.renderer.info.render?.calls ?? null,
+            triangles: app.renderer.info.render?.triangles ?? null,
+            points: app.renderer.info.render?.points ?? null,
+            lines: app.renderer.info.render?.lines ?? null,
+            geometries: app.renderer.info.memory?.geometries ?? null,
+            textures: app.renderer.info.memory?.textures ?? null,
+          } : null,
+        },
         podium: podium ? {
           active: Boolean(podium.active),
           elapsedSeconds: Number(podium.elapsedSeconds || 0),
@@ -647,6 +769,9 @@ async function main() {
           elapsedSeconds: capture.elapsedSeconds,
           targetSeconds: capture.targetSeconds ?? null,
           chunkCount: capture.chunkCount ?? null,
+          pendingWrites: capture.pendingWrites ?? null,
+          pendingWritesMax: capture.pendingWritesMax ?? null,
+          lastChunkTiming: capture.lastChunkTiming || null,
           trackSettings: capture.trackSettings,
         } : null,
       };
@@ -684,6 +809,8 @@ async function main() {
       browserFps: Number(snapshot.browserFps?.toFixed?.(1) ?? snapshot.browserFps),
       fpsHudText: snapshot.fpsHudText,
       simulationLag: snapshot.simulationLag,
+      frameProfiler: snapshot.frameProfiler || null,
+      runtimeStats: snapshot.runtimeStats || null,
       podium: snapshot.podium || null,
       commentary: snapshot.commentary || null,
       capture: snapshot.capture ? {
@@ -732,7 +859,8 @@ async function main() {
 
   const getFinalRaceCompletionCaptureTargetSeconds = (state = {}) => {
     const actualElapsed = getActualCanvasCaptureElapsedSeconds(state);
-    return Math.max(1, Math.ceil(actualElapsed + finalRaceCompletionBufferSeconds));
+    const configuredTargetSeconds = Math.max(1, Number(config.targetSeconds || 0));
+    return Math.max(1, Math.min(configuredTargetSeconds, Math.ceil(actualElapsed + finalRaceCompletionBufferSeconds)));
   };
 
   const armBrowserCanvasStopTimer = async (page, delaySeconds = 0, reason = 'final-race-finished-plus-buffer') => {
@@ -771,7 +899,9 @@ async function main() {
       const requestedAt = performance.now();
       capture.stopReason = stopReason;
       capture.stopRequestedAt = capture.stopRequestedAt || requestedAt;
-      capture.dropChunks = true;
+      // Keep accepting chunks until recorder.stop() has delivered the final
+      // dataavailable payload; dropping chunks at stop-request time can truncate
+      // the WebM and prevent dashboard MP4/thumbnail postprocess from running.
       const stopResult = typeof capture.requestStop === 'function'
         ? capture.requestStop(stopReason)
         : (() => {
@@ -920,6 +1050,7 @@ async function main() {
     progress('browser-open', config.url);
     log(`Opening ${config.url}`);
     log('Render settings:', JSON.stringify({
+      debugLogs: config.debugLogs,
       viewport: `${config.width}x${config.height}`,
       capture: `${config.captureWidth}x${config.captureHeight}`,
       captureScale: config.captureScale,
@@ -954,9 +1085,25 @@ async function main() {
       '--enable-gpu-rasterization',
       '--enable-zero-copy',
       '--ignore-gpu-blocklist',
+      '--mute-audio',
+      '--disable-notifications',
+      '--disable-popup-blocking',
     ];
-    if (config.headful) chromeArgs.push('--disable-frame-rate-limit');
+    if (config.headful) {
+      chromeArgs.push('--disable-frame-rate-limit');
+      chromeArgs.push(`--window-size=${config.captureWidth},${config.captureHeight}`);
+      if (config.browserWindowPosition) chromeArgs.push(`--window-position=${config.browserWindowPosition}`);
+    }
     if (process.platform === 'darwin') chromeArgs.push('--use-angle=metal');
+    log('Browser launch settings:', JSON.stringify({
+      headful: config.headful,
+      headless: !config.headful,
+      audio: config.audio,
+      muted: true,
+      videoCapture: config.videoCapture,
+      browserWindowPosition: config.browserWindowPosition || null,
+      args: chromeArgs,
+    }));
     browser = await chromium.launch({ headless: !config.headful, args: chromeArgs });
     const context = await browser.newContext({
       viewport: { width: config.captureWidth, height: config.captureHeight },
@@ -994,12 +1141,18 @@ async function main() {
     });
     if (config.videoCapture === 'canvas') {
       canvasChunkOutput = path.join(videoDir, `canvas-capture-${defaultStamp}.webm`);
-      canvasChunkStream = createWriteStream(canvasChunkOutput);
+      if (!useBufferedCanvasCapture) canvasChunkStream = createWriteStream(canvasChunkOutput);
       await page.exposeBinding('marbleRenderWriteCanvasChunk', async (_source, payload = {}) => {
+        const nodeBindingStartedAt = Date.now();
+        const nodeBufferStartedAt = Date.now();
         const bytes = Array.isArray(payload.bytes) ? Buffer.from(payload.bytes) : Buffer.alloc(0);
-        if (!bytes.length) return { ok: false, reason: 'empty-chunk', index: payload.index ?? null };
+        const nodeBufferMs = Date.now() - nodeBufferStartedAt;
+        canvasChunkStats.nodeBufferMsTotal += nodeBufferMs;
+        canvasChunkStats.nodeBufferMsMax = Math.max(canvasChunkStats.nodeBufferMsMax, nodeBufferMs);
+        if (!bytes.length) return { ok: false, reason: 'empty-chunk', index: payload.index ?? null, nodeBufferMs };
         const index = Number(payload.index ?? 0);
-        if (canvasCaptureStopRequestedAt !== null) {
+        const browserTiming = payload.timing && typeof payload.timing === 'object' ? payload.timing : {};
+        if (canvasCaptureStopRequestedAt !== null && !payload.final) {
           const droppedAfterStop = {
             ok: false,
             reason: 'canvas-stop-requested-drop-late-chunk',
@@ -1016,14 +1169,62 @@ async function main() {
         }
         canvasChunkStats.chunks += 1;
         canvasChunkStats.bytes += bytes.length;
+        canvasChunkStats.maxChunkBytes = Math.max(canvasChunkStats.maxChunkBytes, bytes.length);
+        const addBrowserTiming = (field, totalField, maxField) => {
+          const value = Number(browserTiming[field]);
+          if (!Number.isFinite(value) || value < 0) return;
+          canvasChunkStats[totalField] += value;
+          canvasChunkStats[maxField] = Math.max(canvasChunkStats[maxField], value);
+        };
+        addBrowserTiming('browserPrepMs', 'browserPrepMsTotal', 'browserPrepMsMax');
+        addBrowserTiming('arrayBufferMs', 'arrayBufferMsTotal', 'arrayBufferMsMax');
+        addBrowserTiming('byteArrayMs', 'byteArrayMsTotal', 'byteArrayMsMax');
+        addBrowserTiming('bindingRoundTripMs', 'bindingRoundTripMsTotal', 'bindingRoundTripMsMax');
         const now = Date.now();
+        if (canvasChunkStats.lastChunkAt != null) {
+          const intervalMs = now - canvasChunkStats.lastChunkAt;
+          canvasChunkStats.chunkIntervalMsTotal += intervalMs;
+          canvasChunkStats.chunkIntervalMsMax = Math.max(canvasChunkStats.chunkIntervalMsMax, intervalMs);
+          canvasChunkStats.chunkIntervalSamples += 1;
+        }
+        canvasChunkStats.lastChunkAt = now;
+        const chunkSummary = () => {
+          const count = Math.max(1, canvasChunkStats.chunks);
+          const intervalCount = Math.max(1, canvasChunkStats.chunkIntervalSamples);
+          return {
+            chunks: canvasChunkStats.chunks,
+            mb: Number((canvasChunkStats.bytes / 1048576).toFixed(1)),
+            avgChunkMB: Number((canvasChunkStats.bytes / count / 1048576).toFixed(3)),
+            maxChunkMB: Number((canvasChunkStats.maxChunkBytes / 1048576).toFixed(3)),
+            avgChunkIntervalMs: Number((canvasChunkStats.chunkIntervalMsTotal / intervalCount).toFixed(1)),
+            maxChunkIntervalMs: canvasChunkStats.chunkIntervalMsMax,
+            avgBrowserPrepMs: Number((canvasChunkStats.browserPrepMsTotal / count).toFixed(1)),
+            maxBrowserPrepMs: Number(canvasChunkStats.browserPrepMsMax.toFixed?.(1) ?? canvasChunkStats.browserPrepMsMax),
+            avgArrayBufferMs: Number((canvasChunkStats.arrayBufferMsTotal / count).toFixed(1)),
+            maxArrayBufferMs: Number(canvasChunkStats.arrayBufferMsMax.toFixed?.(1) ?? canvasChunkStats.arrayBufferMsMax),
+            avgByteArrayMs: Number((canvasChunkStats.byteArrayMsTotal / count).toFixed(1)),
+            maxByteArrayMs: Number(canvasChunkStats.byteArrayMsMax.toFixed?.(1) ?? canvasChunkStats.byteArrayMsMax),
+            avgBindingRoundTripMs: Number((canvasChunkStats.bindingRoundTripMsTotal / count).toFixed(1)),
+            maxBindingRoundTripMs: Number(canvasChunkStats.bindingRoundTripMsMax.toFixed?.(1) ?? canvasChunkStats.bindingRoundTripMsMax),
+            avgNodeBindingMs: Number((canvasChunkStats.nodeBindingMsTotal / count).toFixed(1)),
+            maxNodeBindingMs: canvasChunkStats.nodeBindingMsMax,
+            avgNodeBufferMs: Number((canvasChunkStats.nodeBufferMsTotal / count).toFixed(1)),
+            maxNodeBufferMs: canvasChunkStats.nodeBufferMsMax,
+            avgNodeWriteMs: Number((canvasChunkStats.nodeWriteMsTotal / count).toFixed(1)),
+            maxNodeWriteMs: canvasChunkStats.nodeWriteMsMax,
+            pendingWritesMax: canvasChunkStats.pendingWritesMax,
+            lastBrowserFps: browserTiming.browserFps ?? null,
+            webm: canvasChunkOutput,
+          };
+        };
         if (now - canvasChunkStats.lastLogAt >= 30000) {
           canvasChunkStats.lastLogAt = now;
-          log('[progress] canvas-recording', JSON.stringify({ chunks: canvasChunkStats.chunks, mb: Number((canvasChunkStats.bytes / 1048576).toFixed(1)), webm: canvasChunkOutput }));
+          log('[progress] canvas-recording', JSON.stringify(chunkSummary()));
         }
         if (!canvasChunkStream?.writable || canvasChunkStream.destroyed || canvasChunkStream.closed) {
           return { ok: false, reason: 'stream-closed', index, bytes: bytes.length };
         }
+        const writeStartedAt = Date.now();
         canvasChunkWriteChain = canvasChunkWriteChain.then(() => new Promise((resolve, reject) => {
           if (!canvasChunkStream?.writable || canvasChunkStream.destroyed || canvasChunkStream.closed) {
             resolve();
@@ -1032,16 +1233,24 @@ async function main() {
           canvasChunkStream.write(bytes, (error) => (error ? reject(error) : resolve()));
         }));
         await canvasChunkWriteChain;
-        return { ok: true, index, bytes: bytes.length };
+        const nodeWriteMs = Date.now() - writeStartedAt;
+        const nodeBindingMs = Date.now() - nodeBindingStartedAt;
+        canvasChunkStats.nodeWriteMsTotal += nodeWriteMs;
+        canvasChunkStats.nodeWriteMsMax = Math.max(canvasChunkStats.nodeWriteMsMax, nodeWriteMs);
+        canvasChunkStats.nodeBindingMsTotal += nodeBindingMs;
+        canvasChunkStats.nodeBindingMsMax = Math.max(canvasChunkStats.nodeBindingMsMax, nodeBindingMs);
+        return { ok: true, index, bytes: bytes.length, nodeBindingMs, nodeBufferMs, nodeWriteMs };
       });
     }
     page.on('console', (message) => {
+      if (!config.debugLogs) return;
       const type = message.type();
       if (['error', 'warning'].includes(type)) console.log(`[browser:${type}] ${message.text()}`);
     });
-    page.on('pageerror', (error) => console.error('[browser:pageerror]', error));
+    page.on('pageerror', (error) => { if (config.debugLogs) console.error('[browser:pageerror]', error); });
     await page.goto(config.url, { waitUntil: 'networkidle', timeout: 60000 });
     await page.waitForFunction(() => Boolean(window.__MARBLE_RACE_APP__), null, { timeout: 60000 });
+    await page.evaluate((debugLogs) => { window.__MARBLE_RENDER_DEBUG_LOGS = Boolean(debugLogs); }, config.debugLogs);
     let audioCaptureInfo = null;
     if (config.audio) {
       progress('audio-capture-start');
@@ -1055,8 +1264,9 @@ async function main() {
     let canvasCaptureInfo = null;
     if (config.videoCapture === 'canvas') {
       progress('canvas-capture-start', config.videoCanvasLayout);
-      canvasCaptureInfo = await page.evaluate(async ({ fps, width, height, videoCanvasLayout, targetSeconds }) => {
+      canvasCaptureInfo = await page.evaluate(async ({ fps, width, height, videoCanvasLayout, targetSeconds, useBufferedFinalExport }) => {
         window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS = Math.max(1, Number(targetSeconds || 0) || 1);
+        window.__MARBLE_RENDER_CANVAS_BUFFERED_EXPORT = Boolean(useBufferedFinalExport);
         const app = window.__MARBLE_RACE_APP__;
         const requestedLayout = ['horizontal', 'vertical'].includes(String(videoCanvasLayout || '').toLowerCase()) ? String(videoCanvasLayout).toLowerCase() : 'horizontal';
         const canvas = app?.setVideoCanvasLayout?.(requestedLayout) && app?.getVideoCaptureCanvas?.() || app?.getVideoCaptureCanvas?.() || app?.renderer?.domElement || document.querySelector('canvas');
@@ -1070,10 +1280,12 @@ async function main() {
         ];
         const mimeType = mimeTypes.find((type) => MediaRecorder.isTypeSupported(type)) || '';
         const stream = canvas.captureStream(Math.max(1, Math.round(Number(fps) || 60)));
+        const bufferedFinalExport = Boolean(window.__MARBLE_RENDER_CANVAS_BUFFERED_EXPORT);
         const videoBitsPerSecond = Math.max(4_000_000, Math.min(16_000_000, Math.round(Number(window.__MARBLE_RENDER_CANVAS_BITRATE || 7_000_000))));
         const recorderOptions = mimeType ? { mimeType, videoBitsPerSecond } : { videoBitsPerSecond };
         const recorder = new MediaRecorder(stream, recorderOptions);
         const captureTargetSeconds = Math.max(1, Number(window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS || 0) || 0);
+        let hardStopTimer = null;
         const chunks = [];
         const pendingWrites = new Set();
         let bytes = 0;
@@ -1087,19 +1299,69 @@ async function main() {
           }
           return pendingWrites.size;
         };
-        const writeChunk = async (blob) => {
+        const writeChunk = async (blob, options = {}) => {
           const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__;
-          if (capture?.dropChunks || capture?.stopRequestedAt != null) return;
+          if (capture?.dropChunks) return;
           if (!blob?.size) return;
           const index = chunkCount;
+          const chunkStartedAt = performance.now();
+          const msSinceLastChunk = capture?.lastChunkEventAt != null ? chunkStartedAt - capture.lastChunkEventAt : null;
+          if (capture) capture.lastChunkEventAt = chunkStartedAt;
+          if (bufferedFinalExport) {
+            chunkCount += 1;
+            bytes += blob.size;
+            chunks.push(blob);
+            if (capture) {
+              capture.lastChunkTiming = {
+                blobBytes: blob.size,
+                msSinceLastChunk: msSinceLastChunk == null ? null : Number(msSinceLastChunk.toFixed(1)),
+                buffered: true,
+                browserFps: Number(app?.lastFps || 0),
+                captureElapsedSeconds: Number(((performance.now() - capture.startedAt) / 1000).toFixed(3)),
+              };
+            }
+            return { ok: true, index, bytes: blob.size, buffered: true };
+          }
           if (typeof window.marbleRenderWriteCanvasChunk === 'function') {
+            const arrayBufferStartedAt = performance.now();
             const arrayBuffer = await blob.arrayBuffer();
-            if (capture?.dropChunks || capture?.stopRequestedAt != null) return;
+            const arrayBufferMs = performance.now() - arrayBufferStartedAt;
+            if (capture?.dropChunks) return;
+            const byteArrayStartedAt = performance.now();
             const byteArray = Array.from(new Uint8Array(arrayBuffer));
-            const writePromise = Promise.resolve(window.marbleRenderWriteCanvasChunk({ index, bytes: byteArray, type: blob.type || recorder.mimeType || mimeType || 'video/webm' }));
+            const byteArrayMs = performance.now() - byteArrayStartedAt;
+            const browserPrepMs = performance.now() - chunkStartedAt;
+            const pendingBefore = pendingWrites.size;
+            if (capture) capture.pendingWritesMax = Math.max(capture.pendingWritesMax || 0, pendingBefore + 1);
+            const timing = {
+              blobBytes: blob.size,
+              msSinceLastChunk: msSinceLastChunk == null ? null : Number(msSinceLastChunk.toFixed(1)),
+              arrayBufferMs: Number(arrayBufferMs.toFixed(1)),
+              byteArrayMs: Number(byteArrayMs.toFixed(1)),
+              browserPrepMs: Number(browserPrepMs.toFixed(1)),
+              pendingBefore,
+              browserFps: Number(app?.lastFps || 0),
+              captureElapsedSeconds: capture ? Number(((performance.now() - capture.startedAt) / 1000).toFixed(3)) : null,
+              final: Boolean(options.final),
+            };
+            const bindingStartedAt = performance.now();
+            const writePromise = Promise.resolve(window.marbleRenderWriteCanvasChunk({ index, bytes: byteArray, type: blob.type || recorder.mimeType || mimeType || 'video/webm', timing }));
             pendingWrites.add(writePromise);
             try {
               const result = await writePromise;
+              const bindingRoundTripMs = performance.now() - bindingStartedAt;
+              const totalWriteMs = performance.now() - chunkStartedAt;
+              if (capture) {
+                capture.lastChunkTiming = {
+                  ...timing,
+                  bindingRoundTripMs: Number(bindingRoundTripMs.toFixed(1)),
+                  totalWriteMs: Number(totalWriteMs.toFixed(1)),
+                  pendingAfter: pendingWrites.size,
+                  nodeBindingMs: result?.nodeBindingMs ?? null,
+                  nodeBufferMs: result?.nodeBufferMs ?? null,
+                  nodeWriteMs: result?.nodeWriteMs ?? null,
+                };
+              }
               if (result?.ok) {
                 chunkCount += 1;
                 bytes += blob.size;
@@ -1116,7 +1378,9 @@ async function main() {
         };
         recorder.addEventListener('dataavailable', (event) => {
           if (event.data?.size) {
-            writeChunk(event.data).catch((error) => {
+            const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__;
+            const final = Boolean(capture?.stopRequestedAt);
+            writeChunk(event.data, { final }).catch((error) => {
               console.error('[render:auto-cup] Canvas chunk write failed', error);
             });
           }
@@ -1143,7 +1407,8 @@ async function main() {
               trackSettings: stream.getVideoTracks()[0]?.getSettings?.() || null,
               bytes,
               chunkCount: chunks.length,
-              chunks,
+              chunks: bufferedFinalExport ? chunks.map((chunk, id) => ({ id, size: chunk.size || 0, type: chunk.type || recorder.mimeType || mimeType || 'video/webm' })) : chunks,
+              bufferedFinalExport,
               targetSeconds: captureTargetSeconds,
               videoBitsPerSecond,
               elapsedSeconds: (performance.now() - window.__MARBLE_RENDER_CANVAS_CAPTURE__.startedAt) / 1000,
@@ -1160,6 +1425,13 @@ async function main() {
           stopRequestedAt: null,
           stopReason: null,
           dropChunks: false,
+          lastChunkEventAt: null,
+          lastChunkTiming: null,
+          pendingWritesMax: 0,
+          bufferedFinalExport,
+          hardStopTargetSeconds: captureTargetSeconds,
+          hardStopArmedAt: performance.now(),
+          hardStopGraceSeconds: 2,
           getInfo: () => ({
             ok: true,
             state: recorder.state,
@@ -1168,8 +1440,14 @@ async function main() {
             chunkCount: chunks.length,
             elapsedSeconds: (performance.now() - window.__MARBLE_RENDER_CANVAS_CAPTURE__.startedAt) / 1000,
             targetSeconds: Number(window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS || captureTargetSeconds || 0) || captureTargetSeconds,
+            bufferedFinalExport,
+            pendingWrites: pendingWrites.size,
+            pendingWritesMax: window.__MARBLE_RENDER_CANVAS_CAPTURE__.pendingWritesMax || 0,
+            lastChunkTiming: window.__MARBLE_RENDER_CANVAS_CAPTURE__.lastChunkTiming || null,
             stopRequestedAt: window.__MARBLE_RENDER_CANVAS_CAPTURE__.stopRequestedAt,
             stopReason: window.__MARBLE_RENDER_CANVAS_CAPTURE__.stopReason || null,
+            hardStopTargetSeconds: window.__MARBLE_RENDER_CANVAS_CAPTURE__.hardStopTargetSeconds ?? captureTargetSeconds,
+            hardStopGraceSeconds: window.__MARBLE_RENDER_CANVAS_CAPTURE__.hardStopGraceSeconds ?? 2,
             videoBitsPerSecond,
             trackSettings: stream.getVideoTracks()[0]?.getSettings?.() || null,
             videoCanvas: app?.getVideoCompositeCanvasInfo?.() || null,
@@ -1178,7 +1456,8 @@ async function main() {
             const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__;
             capture.stopReason = reason || capture.stopReason || 'manual-stop';
             capture.stopRequestedAt = capture.stopRequestedAt || performance.now();
-            capture.dropChunks = true;
+            // Do not drop the recorder's final dataavailable chunk. It is emitted
+            // as part of stop() and is required for a complete seekable WebM.
             let stopCalled = false;
             let stopError = null;
             try {
@@ -1197,6 +1476,10 @@ async function main() {
               }
             } catch (error) {
               stopError = error?.message || String(error);
+            }
+            if (hardStopTimer) {
+              clearTimeout(hardStopTimer);
+              hardStopTimer = null;
             }
             if (!stoppedFallbackTimer) {
               stoppedFallbackTimer = setTimeout(() => {
@@ -1219,15 +1502,26 @@ async function main() {
             capture.stopPromise = (async () => {
               const result = await stopped;
               await waitForPendingWrites(1000);
+              capture.dropChunks = true;
               stream.getTracks().forEach((track) => track.stop());
               return { ...result, requestStop: requested, pendingWrites: pendingWrites.size, stopReason: capture.stopReason, stopRequestedAt: capture.stopRequestedAt };
             })();
             return capture.stopPromise;
           },
         };
+        const hardStopDelayMs = Math.max(1000, ((captureTargetSeconds + 2) * 1000));
+        hardStopTimer = setTimeout(() => {
+          try {
+            const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__;
+            const elapsedSeconds = capture?.getInfo?.()?.elapsedSeconds ?? 0;
+            if (capture && capture.stopRequestedAt == null) {
+              capture.requestStop?.(`hard-target-seconds-${Math.round(captureTargetSeconds)}-elapsed-${Number(elapsedSeconds).toFixed(1)}`);
+            }
+          } catch {}
+        }, hardStopDelayMs);
         recorder.start(2000);
         return window.__MARBLE_RENDER_CANVAS_CAPTURE__.getInfo();
-      }, { fps: config.fps, width: config.captureWidth, height: config.captureHeight, videoCanvasLayout: config.videoCanvasLayout, targetSeconds: config.targetSeconds });
+      }, { fps: config.fps, width: config.captureWidth, height: config.captureHeight, videoCanvasLayout: config.videoCanvasLayout, targetSeconds: config.targetSeconds, useBufferedFinalExport: useBufferedCanvasCapture });
       if (!canvasCaptureInfo?.ok) fail(`Could not start canvas video capture: ${JSON.stringify(canvasCaptureInfo)}`);
       log('Canvas video capture started:', JSON.stringify(canvasCaptureInfo));
     }
@@ -1300,9 +1594,6 @@ async function main() {
         app.setUIThrottleProfile?.(perfProfile, {
           mode: 'playwright-render-performance',
           renderPerformanceMode: true,
-          renderNameLabelUpdateMs: 0,
-          renderSkipOrbitControlsUpdate: false,
-          renderSkipSpectacleEffects: false,
         });
         const profile = app.performanceProfile || {};
         const renderPixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
@@ -1470,7 +1761,7 @@ async function main() {
               };
               if (typeof window.marbleRenderNotifyFinalRaceFinished === 'function') {
                 Promise.resolve(window.marbleRenderNotifyFinalRaceFinished(payload)).catch((error) => {
-                  console.warn('[render:auto-cup] final-race binding notify failed', error?.message || error);
+                  if (window.__MARBLE_RENDER_DEBUG_LOGS) console.warn('[render:auto-cup] final-race binding notify failed', error?.message || error);
                 });
               }
             }
@@ -1967,14 +2258,40 @@ async function main() {
         log('[progress] canvas-stop-request-node-gate', JSON.stringify({ reason: 'finalize-canvas-stop', acceptedChunks: canvasChunkStats.chunks, mb: Number((canvasChunkStats.bytes / 1048576).toFixed(1)), nodeGateActualElapsedSeconds: Number(nodeGateActualElapsedSeconds.toFixed(3)), cutTimeSource: 'actual-capture-elapsed' }));
       }
       const canvasStopRequest = finalRaceStopPromise ? await finalRaceStopPromise : await requestCanvasCaptureStop(page, 'finalize-canvas-stop');
-      const canvasResult = await page.evaluate((reason) => {
+      const canvasResult = await page.evaluate(async (reason) => {
         const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__;
         if (!capture) return { ok: false, reason: 'capture-missing' };
-        return capture.stop(reason);
+        const result = await capture.stop(reason);
+        if (capture.bufferedFinalExport) {
+          const blob = new Blob(capture.chunks || [], { type: result.mimeType || 'video/webm' });
+          const arrayBufferStartedAt = performance.now();
+          const arrayBuffer = await blob.arrayBuffer();
+          const arrayBufferMs = performance.now() - arrayBufferStartedAt;
+          const byteArrayStartedAt = performance.now();
+          const bytes = Array.from(new Uint8Array(arrayBuffer));
+          const byteArrayMs = performance.now() - byteArrayStartedAt;
+          return {
+            ...result,
+            bufferedFinalExport: true,
+            bytes,
+            exportBytes: bytes.length,
+            exportArrayBufferMs: Number(arrayBufferMs.toFixed(1)),
+            exportByteArrayMs: Number(byteArrayMs.toFixed(1)),
+          };
+        }
+        return result;
       }, canvasStopRequest?.stopReason || 'finalize-canvas-stop');
-      if (!canvasResult?.ok || !canvasResult.chunkCount) fail(`Canvas video capture failed: ${JSON.stringify(canvasResult)}`);
-      await waitForCanvasChunkWrites();
-      canvasSourceWebm = canvasChunkOutput || path.join(videoDir, `canvas-capture-${defaultStamp}.webm`);
+      if (!canvasResult?.ok || !canvasResult.chunkCount) fail(`Canvas video capture failed: ${JSON.stringify({ ...canvasResult, bytes: canvasResult?.bytes ? `[${canvasResult.bytes.length} bytes]` : undefined })}`);
+      if (canvasResult.bufferedFinalExport) {
+        const bufferedBytes = Array.isArray(canvasResult.bytes) ? Buffer.from(canvasResult.bytes) : Buffer.alloc(0);
+        if (!bufferedBytes.length) fail(`Canvas buffered export was empty: ${JSON.stringify({ ...canvasResult, bytes: undefined })}`);
+        canvasSourceWebm = canvasChunkOutput || path.join(videoDir, `canvas-capture-${defaultStamp}.webm`);
+        writeFileSync(canvasSourceWebm, bufferedBytes);
+        delete canvasResult.bytes;
+      } else {
+        await waitForCanvasChunkWrites();
+        canvasSourceWebm = canvasChunkOutput || path.join(videoDir, `canvas-capture-${defaultStamp}.webm`);
+      }
       if (!existsSync(canvasSourceWebm) || statSync(canvasSourceWebm).size <= 0) fail(`Canvas stream output was not written: ${canvasSourceWebm}`);
       log('Canvas video captured:', JSON.stringify({ ...canvasResult, webm: canvasSourceWebm, bytes: statSync(canvasSourceWebm).size }));
     }
@@ -1988,17 +2305,19 @@ async function main() {
         return { ok: true, info, wavBase64 };
       });
       if (!audioResult?.ok) fail(`Audio capture failed: ${JSON.stringify(audioResult)}`);
-      writeFileSync(config.audioOutput, Buffer.from(audioResult.wavBase64, 'base64'));
-      log('Audio captured:', JSON.stringify({ ...audioResult.info, wav: config.audioOutput, bytes: statSync(config.audioOutput).size }));
+      const audioOutputPath = resolveAudioOutputPath();
+      writeFileSync(audioOutputPath, Buffer.from(audioResult.wavBase64, 'base64'));
+      log('Audio captured:', JSON.stringify({ ...audioResult.info, wav: audioOutputPath, bytes: statSync(audioOutputPath).size }));
     }
-    await context.close();
-    await browser.close();
+    await withTimeout('context.close', () => context.close(), 5000);
+    await withTimeout('browser.close', () => browser.close(), 5000);
     browser = null;
   } finally {
     if (renderLogPath) log(`Render log saved: ${renderLogPath}`);
     if (renderLogStream) {
-      await new Promise((resolve) => renderLogStream.end(resolve)).catch(() => {});
+      const streamToClose = renderLogStream;
       renderLogStream = null;
+      await withTimeout('renderLogStream.end', () => new Promise((resolve) => streamToClose.end(resolve)), 3000);
     }
     if (progressLogPoller) {
       clearInterval(progressLogPoller);
@@ -2016,11 +2335,27 @@ async function main() {
       clearInterval(eventMarkerPoller);
       eventMarkerPoller = null;
     }
-    if (browser) await browser.close().catch(() => {});
+    if (browser) await withTimeout('browser.close(finally)', () => browser.close(), 5000);
     if (server) server.kill('SIGTERM');
   }
 
   let sourceWebm = null;
+  if (config.videoCapture === 'none') {
+    log('No video capture requested; skipping source WebM probe and ffmpeg mux/encode.');
+    mkdirSync(path.dirname(config.output), { recursive: true });
+    const diagnosticsOutput = path.resolve(`${config.output.replace(/\.[^.]+$/, '')}.no-video-diagnostics.json`);
+    writeFileSync(diagnosticsOutput, JSON.stringify({
+      ok: true,
+      videoCapture: config.videoCapture,
+      output: config.output,
+      renderSummary: renderSummary || null,
+      generatedAt: new Date().toISOString(),
+    }, null, 2));
+    log(`No-video diagnostics written: ${diagnosticsOutput}`);
+    progress('done', diagnosticsOutput);
+    log(`Done: ${diagnosticsOutput}`);
+    return;
+  }
   if (config.videoCapture === 'canvas') {
     sourceWebm = path.join(videoDir, `canvas-capture-${defaultStamp}.webm`);
     if (!existsSync(sourceWebm) || statSync(sourceWebm).size <= 0) fail(`No canvas capture .webm video found: ${sourceWebm}`);
@@ -2054,7 +2389,9 @@ async function main() {
     config.output = finalOutput;
     mkdirSync(path.dirname(config.output), { recursive: true });
   }
-  const hasAudio = config.audio && existsSync(config.audioOutput) && statSync(config.audioOutput).size > 44;
+  const audioOutputPath = resolveAudioOutputPath({ syncToOutput: true });
+  log('Audio output path:', audioOutputPath);
+  const hasAudio = config.audio && existsSync(audioOutputPath) && statSync(audioOutputPath).size > 44;
   const companionWebmOutput = outputExt === '.mp4'
     ? path.resolve(`${config.output.replace(/\.[^.]+$/, '')}.comparison.webm`)
     : null;
@@ -2062,7 +2399,7 @@ async function main() {
     log(`Muxing browser-canvas WebM and captured page/TTS audio ${sourceWebm} -> ${config.output}`);
     const ffmpegArgs = ['-y', '-i', sourceWebm];
     if (hasAudio) {
-      ffmpegArgs.push('-i', config.audioOutput, '-map', '0:v:0', '-map', '1:a:0', '-shortest', '-c:v', 'copy', '-c:a', 'libopus', '-b:a', '160k');
+      ffmpegArgs.push('-i', audioOutputPath, '-map', '0:v:0', '-map', '1:a:0', '-shortest', '-c:v', 'copy', '-c:a', 'libopus', '-b:a', '160k');
     } else {
       ffmpegArgs.push('-map', '0:v:0', '-c:v', 'copy');
     }
@@ -2073,7 +2410,7 @@ async function main() {
     log(`Muxing comparison WebM ${sourceWebm} -> ${companionWebmOutput}`);
     const webmArgs = ['-y', '-i', sourceWebm];
     if (hasAudio) {
-      webmArgs.push('-i', config.audioOutput, '-map', '0:v:0', '-map', '1:a:0', '-shortest', '-c:v', 'copy', '-c:a', 'libopus', '-b:a', '160k');
+      webmArgs.push('-i', audioOutputPath, '-map', '0:v:0', '-map', '1:a:0', '-shortest', '-c:v', 'copy', '-c:a', 'libopus', '-b:a', '160k');
     } else {
       webmArgs.push('-map', '0:v:0', '-c:v', 'copy');
     }
@@ -2090,7 +2427,7 @@ async function main() {
     log(`Converting ${sourceWebm} -> ${config.output}`);
     const ffmpegArgs = ['-y', '-i', sourceWebm];
     if (hasAudio) {
-      ffmpegArgs.push('-i', config.audioOutput, '-map', '0:v:0', '-map', '1:a:0', '-shortest');
+      ffmpegArgs.push('-i', audioOutputPath, '-map', '0:v:0', '-map', '1:a:0', '-shortest');
     }
     ffmpegArgs.push('-vf', `fps=${config.fps},scale=${config.width}:${config.height}:flags=lanczos,format=yuv420p`, '-c:v', 'libx264', '-preset', config.videoPreset, '-crf', String(config.videoCrf));
     if (hasAudio) {
@@ -2123,63 +2460,74 @@ async function main() {
     config.eventMarkersOutput = '';
     log(`Event markers kept in memory only (${eventMarkerDocument.eventCount} events, ${eventMarkerDocument.thumbnailCandidates.length} thumbnail candidates)`);
   }
-  if (config.thumbnail) {
+  if (config.thumbnail || config.youtubeMetadata || config.uploadYoutube) {
     progress('thumbnail-youtube-postprocess');
     const thumbnailOutput = path.resolve(config.thumbnailOutput || `${config.output.replace(/\.[^.]+$/, '')}.thumbnail.jpg`);
     const metadataOutput = path.resolve(`${thumbnailOutput}.metadata.json`);
     const youtubeMetadataOutput = path.resolve(config.youtubeMetadataOutput || `${config.output.replace(/\.[^.]+$/, '')}.youtube.json`);
-    const metadata = {
-      ...(renderSummary || {}),
-      title: config.thumbnailTitle || renderSummary?.cupName || config.cupName || 'Epic Marble Race',
-      thumbnailTitle: config.thumbnailTitle || '',
-      generatedFrom: config.output,
-      renderOutput: config.output,
-      companionWebmOutput,
-      eventMarkersOutput,
-    };
-    mkdirSync(path.dirname(thumbnailOutput), { recursive: true });
-    writeFileSync(metadataOutput, `${JSON.stringify(metadata, null, 2)}\n`);
-    const thumbnailArgs = [
-      'scripts/generate-youtube-thumbnail.js',
-      `--input=${config.output}`,
-      `--output=${thumbnailOutput}`,
-      `--metadata=${metadataOutput}`,
-      `--frame-strategy=${config.thumbnailFrameStrategy}`,
-      `--safe-crop=${config.thumbnailSafeCrop}`,
-      `--max-words=${config.thumbnailMaxWords}`,
-      `--title-history=${config.youtubeTitleHistory}`,
-      `--title-history-limit=${config.youtubeTitleHistoryLimit}`,
-      `--width=${config.videoCanvasLayout === 'vertical' ? 1080 : 1280}`,
-      `--height=${config.videoCanvasLayout === 'vertical' ? 1920 : 720}`,
-    ];
-    if (config.thumbnailTitle) thumbnailArgs.push(`--title=${config.thumbnailTitle}`);
-    run('node', thumbnailArgs);
-    if (!config.keepThumbnailMetadata) {
-      rmSync(metadataOutput, { force: true });
-    }
-    const thumbnailAuditPath = `${thumbnailOutput}.json`;
     let thumbnailAudit = null;
-    if (existsSync(thumbnailAuditPath)) {
-      try {
-        thumbnailAudit = JSON.parse(readFileSync(thumbnailAuditPath, 'utf8'));
-        log(`Thumbnail title: ${thumbnailAudit.rawTitle || thumbnailAudit.title || ''} (${thumbnailAudit.titleSource || 'unknown'})`);
-      } catch (error) {
-        console.warn('[render:auto-cup] Could not read thumbnail audit JSON:', error?.message || error);
+    if (config.thumbnail) {
+      const metadata = {
+        ...(renderSummary || {}),
+        title: config.thumbnailTitle || renderSummary?.cupName || config.cupName || 'Epic Marble Race',
+        thumbnailTitle: config.thumbnailTitle || '',
+        generatedFrom: config.output,
+        renderOutput: config.output,
+        companionWebmOutput,
+        eventMarkersOutput,
+      };
+      mkdirSync(path.dirname(thumbnailOutput), { recursive: true });
+      writeFileSync(metadataOutput, `${JSON.stringify(metadata, null, 2)}\n`);
+      const thumbnailArgs = [
+        'scripts/generate-youtube-thumbnail.js',
+        `--input=${config.output}`,
+        `--output=${thumbnailOutput}`,
+        `--metadata=${metadataOutput}`,
+        `--frame-strategy=${config.thumbnailFrameStrategy}`,
+        `--safe-crop=${config.thumbnailSafeCrop}`,
+        `--max-words=${config.thumbnailMaxWords}`,
+        `--title-history=${config.youtubeTitleHistory}`,
+        `--title-history-limit=${config.youtubeTitleHistoryLimit}`,
+        `--width=${config.videoCanvasLayout === 'vertical' ? 1080 : 1280}`,
+        `--height=${config.videoCanvasLayout === 'vertical' ? 1920 : 720}`,
+      ];
+      if (config.thumbnailTitle) thumbnailArgs.push(`--title=${config.thumbnailTitle}`);
+      run('node', thumbnailArgs);
+      if (!config.keepThumbnailMetadata) {
+        rmSync(metadataOutput, { force: true });
       }
+      const thumbnailAuditPath = `${thumbnailOutput}.json`;
+      if (existsSync(thumbnailAuditPath)) {
+        try {
+          thumbnailAudit = JSON.parse(readFileSync(thumbnailAuditPath, 'utf8'));
+          log(`Thumbnail title: ${thumbnailAudit.rawTitle || thumbnailAudit.title || ''} (${thumbnailAudit.titleSource || 'unknown'})`);
+        } catch (error) {
+          console.warn('[render:auto-cup] Could not read thumbnail audit JSON:', error?.message || error);
+        }
+      }
+      if (!config.keepThumbnailMetadata) {
+        rmSync(thumbnailAuditPath, { force: true });
+      }
+      if (!existsSync(thumbnailOutput) || statSync(thumbnailOutput).size <= 0) fail(`Thumbnail was not created: ${thumbnailOutput}`);
+      log(`Thumbnail: ${thumbnailOutput}`);
     }
-    if (!config.keepThumbnailMetadata) {
-      rmSync(thumbnailAuditPath, { force: true });
-    }
-    if (!existsSync(thumbnailOutput) || statSync(thumbnailOutput).size <= 0) fail(`Thumbnail was not created: ${thumbnailOutput}`);
-    log(`Thumbnail: ${thumbnailOutput}`);
     if (config.youtubeMetadata) {
-      const youtubeMetadata = buildYoutubeVideoMetadata({ config, renderSummary, thumbnailOutput, metadataOutput: config.keepThumbnailMetadata ? metadataOutput : '', companionWebmOutput, eventMarkersOutput: config.keepEventMarkers ? eventMarkersOutput : '', thumbnailAudit });
+      const youtubeMetadata = buildYoutubeVideoMetadata({
+        config,
+        renderSummary,
+        thumbnailOutput: config.thumbnail ? thumbnailOutput : '',
+        metadataOutput: config.thumbnail && config.keepThumbnailMetadata ? metadataOutput : '',
+        companionWebmOutput,
+        eventMarkersOutput: config.keepEventMarkers ? eventMarkersOutput : '',
+        thumbnailAudit,
+      });
       mkdirSync(path.dirname(youtubeMetadataOutput), { recursive: true });
       writeFileSync(youtubeMetadataOutput, `${JSON.stringify(youtubeMetadata, null, 2)}\n`);
       log(`YouTube metadata: ${youtubeMetadataOutput}`);
       log(`YouTube title: ${youtubeMetadata.title}`);
       log(`YouTube title type: ${youtubeMetadata.titleType}; avoided recent types: ${youtubeMetadata.recentTitleTypesAvoided.join(', ') || 'none'}`);
       if (config.uploadYoutube) {
+        if (!config.thumbnail) fail('YouTube upload requested but thumbnail generation is disabled. Enable --thumbnail=true so the upload has a thumbnail file.');
         progress('youtube-upload', `${config.youtubePrivacy} ${youtubeMetadata.title}`);
         const uploadOutput = path.resolve(config.youtubeUploadOutput || `${config.output.replace(/\.[^.]+$/, '')}.youtube-upload.json`);
         const uploadArgs = [
@@ -2211,4 +2559,12 @@ if (process.env.MARBLE_RENDER_TEST_TITLE_HISTORY === 'true') {
   process.exit(0);
 }
 
-main().catch((error) => fail('Unhandled render failure', error));
+main()
+  .then(() => {
+    // Playwright/Chromium can leave internal handles alive after a bounded browser.close()
+    // timeout. At this point the render has logged Done and written all outputs, so exit
+    // explicitly so dashboard child tracking can mark the job completed instead of
+    // showing a stale running process.
+    process.exit(0);
+  })
+  .catch((error) => fail('Unhandled render failure', error));

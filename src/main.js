@@ -153,8 +153,8 @@ const START_GATE_DESIGN = {
   maxGateCount: 12,
   gateWidthRatio: 0.72,
   minStallWidth: 1.28,
-  freezeMarblesUntilGateOpen: false,
-  allowPreGateSlideToGate: true,
+  freezeMarblesUntilGateOpen: true,
+  allowPreGateSlideToGate: false,
   slotFillMode: 'fill-all-lane-slots-before-starting-next-row',
   highCountStaging: {
     enabled: true,
@@ -468,7 +468,9 @@ const BROADCAST_CAMERA = {
   defaultPitchModes: ['leadPack', 'leadBattle', 'unfinishedOrder'],
   outOfBoundsIgnoreAfterSeconds: 1.0,
   outOfBoundsIgnoreLabel: 'auto camera: if a marble is outside the track for more than 1 second, stop targeting it until it respawns/returns',
-  cinematicLeaderFromProgress: 0.6,
+  cinematicLeaderFromProgress: 0.8,
+  finishSlowMotionCameraHoldSeconds: 3.4,
+  finishSlowMotionCameraLabel: 'when finish slow motion triggers near/crossing the line, Default Auto holds the finish-line shot through the slow-mo window so the slow finish camera remains visible before returning to race/podium coverage',
   postFirstFinish: {
     finishHoldSeconds: 4,
     followModeAfterHold: 'cinematicLeader',
@@ -703,12 +705,18 @@ const UI_THROTTLE_PROFILES = {
     maxConfettiPieces: 95,
     spectacleSpawnCooldownMs: 100,
     // UI throttle
-    uiUpdateMs: 1000,
-    debugUpdateMs: 4000,
-    leaderboardUpdateMs: 2000,
-    rankingCacheMs: 1000,
-    nameLabelRankUpdateMs: 500,
-    nameLabelScaleTargetUpdateMs: 200,
+    uiUpdateMs: 1500,
+    debugUpdateMs: 6000,
+    leaderboardUpdateMs: 3000,
+    rankingCacheMs: 1500,
+    nameLabelRankUpdateMs: 1200,
+    nameLabelScaleTargetUpdateMs: 1000,
+    renderNameLabelUpdateMs: 250,
+    nameLabelPositionWriteThresholdSq: 0.01,
+    nameLabelScaleWriteThreshold: 0.08,
+    nameLabelScaleSmoothing: 0,
+    renderSkipOrbitControlsUpdate: true,
+    renderSkipSpectacleEffects: true,
   },
 };
 
@@ -995,6 +1003,21 @@ class MarbleRace {
     this.lastFps = 0;
     this.fpsFrames = 0;
     this.fpsTime = 0;
+    this.frameProfiler = {
+      windowStartedAt: performance.now(),
+      frames: 0,
+      frameMsTotal: 0,
+      frameMsMax: 0,
+      frameMsSamples: [],
+      obstacleMsTotal: 0,
+      driveMsTotal: 0,
+      physicsMsTotal: 0,
+      syncMsTotal: 0,
+      uiMsTotal: 0,
+      renderMsTotal: 0,
+      overlayMsTotal: 0,
+      lastSummary: null,
+    };
     this.lastNameLabelUpdate = 0;
     this.lastNameLabelRankingUpdate = 0;
     this.lastNameLabelScaleTargetUpdate = 0;
@@ -1768,6 +1791,19 @@ class MarbleRace {
     else this.lastViewerOverlaySummary = overlaySummary;
   }
 
+  getVideoCompositeCameraCropFactor(sourceWidth, sourceHeight, targetWidth, targetHeight, fit = 'cover') {
+    const srcW = Math.max(1, Number(sourceWidth) || 1);
+    const srcH = Math.max(1, Number(sourceHeight) || 1);
+    const dstW = Math.max(1, Number(targetWidth) || 1);
+    const dstH = Math.max(1, Number(targetHeight) || 1);
+    if (fit === 'contain') return 1;
+    const sourceRatio = srcW / srcH;
+    const targetRatio = dstW / dstH;
+    if (sourceRatio > targetRatio) return sourceRatio / targetRatio;
+    if (sourceRatio < targetRatio) return targetRatio / sourceRatio;
+    return 1;
+  }
+
   getVideoCompositeSourceRect(sourceWidth, sourceHeight, targetWidth, targetHeight, fit = 'cover') {
     const srcW = Math.max(1, Number(sourceWidth) || 1);
     const srcH = Math.max(1, Number(sourceHeight) || 1);
@@ -1804,6 +1840,7 @@ class MarbleRace {
     ctx.fillStyle = '#020611';
     ctx.fillRect(0, 0, w, h);
     const rect = this.getVideoCompositeSourceRect(source.width || source.clientWidth || w, source.height || source.clientHeight || h, w, h, layout.fit || 'cover');
+    const cameraCropFactor = this.getVideoCompositeCameraCropFactor(source.width || source.clientWidth || w, source.height || source.clientHeight || h, w, h, layout.fit || 'cover');
     try {
       ctx.drawImage(source, rect.sx, rect.sy, rect.sw, rect.sh, rect.dx, rect.dy, rect.dw, rect.dh);
     } catch (error) {
@@ -1832,6 +1869,9 @@ class MarbleRace {
         sw: Number(rect.sw.toFixed(1)),
         sh: Number(rect.sh.toFixed(1)),
       },
+      cameraCropFactor: Number(cameraCropFactor.toFixed(3)),
+      cameraCropCompensation: cameraCropFactor > 1.01 ? 'shorts/vertical cover crop detected; render camera FOV is widened while capturing so the 9:16 video keeps the same usable race view' : 'none',
+      cameraFov: Number((this.camera?.fov || 0).toFixed(2)),
       overlay: this.lastViewerOverlaySummary || null,
     };
     return this.lastVideoCompositeSummary;
@@ -7880,7 +7920,11 @@ class MarbleRace {
     if (!leader) return;
     const remaining = this.trackLength - (leader.distance || 0);
     if (remaining <= triggerDistance && remaining > finishThreshold) {
-      this.defaultCameraPhaseUntil = Math.max(this.defaultCameraPhaseUntil || 0, this.elapsed + 3.2);
+      const slowMotionCameraHold = Math.max(
+        FINISH_SLOW_MOTION.duration || 0,
+        BROADCAST_CAMERA.finishSlowMotionCameraHoldSeconds || 0,
+      );
+      this.defaultCameraPhaseUntil = Math.max(this.defaultCameraPhaseUntil || 0, this.elapsed + slowMotionCameraHold);
       this.triggerFinishSlowMotion(leader, { reason: 'pre-finish-window', crossed: false });
     }
   }
@@ -9622,24 +9666,103 @@ class MarbleRace {
     else this.updateUI();
   }
 
+  recordFrameProfilerSample(sample = {}) {
+    const profiler = this.frameProfiler;
+    if (!profiler) return null;
+    const frameMs = Number(sample.frameMs || 0);
+    profiler.frames += 1;
+    profiler.frameMsTotal += frameMs;
+    profiler.frameMsMax = Math.max(profiler.frameMsMax || 0, frameMs);
+    profiler.frameMsSamples.push(frameMs);
+    if (profiler.frameMsSamples.length > 240) profiler.frameMsSamples.shift();
+    profiler.obstacleMsTotal += Number(sample.obstacleMs || 0);
+    profiler.driveMsTotal += Number(sample.driveMs || 0);
+    profiler.physicsMsTotal += Number(sample.physicsMs || 0);
+    profiler.syncMsTotal += Number(sample.syncMs || 0);
+    profiler.uiMsTotal += Number(sample.uiMs || 0);
+    profiler.renderMsTotal += Number(sample.renderMs || 0);
+    profiler.overlayMsTotal += Number(sample.overlayMs || 0);
+    const now = performance.now();
+    const elapsedMs = Math.max(1, now - (profiler.windowStartedAt || now));
+    if (elapsedMs >= 5000 || profiler.frames >= 300) {
+      const sorted = [...profiler.frameMsSamples].sort((a, b) => a - b);
+      const p95 = sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] : 0;
+      const frames = Math.max(1, profiler.frames);
+      profiler.lastSummary = {
+        capturedAt: new Date().toISOString(),
+        windowSeconds: Number((elapsedMs / 1000).toFixed(2)),
+        frames: profiler.frames,
+        avgFrameMs: Number((profiler.frameMsTotal / frames).toFixed(2)),
+        p95FrameMs: Number(p95.toFixed(2)),
+        maxFrameMs: Number((profiler.frameMsMax || 0).toFixed(2)),
+        avgObstacleMs: Number((profiler.obstacleMsTotal / frames).toFixed(2)),
+        avgDriveMs: Number((profiler.driveMsTotal / frames).toFixed(2)),
+        avgPhysicsMs: Number((profiler.physicsMsTotal / frames).toFixed(2)),
+        avgSyncMs: Number((profiler.syncMsTotal / frames).toFixed(2)),
+        avgUiMs: Number((profiler.uiMsTotal / frames).toFixed(2)),
+        avgRenderMs: Number((profiler.renderMsTotal / frames).toFixed(2)),
+        avgOverlayMs: Number((profiler.overlayMsTotal / frames).toFixed(2)),
+        marbleCount: this.marbleData?.length || 0,
+        worldBodies: this.world?.bodies?.length || 0,
+        obstacleCounts: this.obstacleTypeCounts || null,
+        trackStats: this.trackStats || null,
+        rendererInfo: this.renderer?.info ? {
+          calls: this.renderer.info.render?.calls ?? null,
+          triangles: this.renderer.info.render?.triangles ?? null,
+          points: this.renderer.info.render?.points ?? null,
+          lines: this.renderer.info.render?.lines ?? null,
+          geometries: this.renderer.info.memory?.geometries ?? null,
+          textures: this.renderer.info.memory?.textures ?? null,
+        } : null,
+        uiThrottleCounters: this.uiThrottleCounters || null,
+      };
+      profiler.windowStartedAt = now;
+      profiler.frames = 0;
+      profiler.frameMsTotal = 0;
+      profiler.frameMsMax = 0;
+      profiler.frameMsSamples = [];
+      profiler.obstacleMsTotal = 0;
+      profiler.driveMsTotal = 0;
+      profiler.physicsMsTotal = 0;
+      profiler.syncMsTotal = 0;
+      profiler.uiMsTotal = 0;
+      profiler.renderMsTotal = 0;
+      profiler.overlayMsTotal = 0;
+    }
+    return profiler.lastSummary;
+  }
+
   animate() {
     requestAnimationFrame(() => this.animate());
+    const frameStartedAt = performance.now();
     const rawDelta = Math.min(this.clock.getDelta(), 0.05);
     const timeScale = this.getFinishSlowMotionTimeScale();
     if (this.finishSlowMotion) this.finishSlowMotion.timeScale = timeScale;
     const delta = rawDelta * timeScale;
     this.updateStartGateAnimation(rawDelta);
     this.updateFinishSpinner(rawDelta);
+    const obstacleStartedAt = performance.now();
     this.updatePinballObstacles(delta);
     this.updateDropTargetBoostAuras(delta);
+    const obstacleMs = performance.now() - obstacleStartedAt;
     if (!this.performanceProfile?.renderSkipSpectacleEffects) this.updateSpectacleEffects(rawDelta);
     this.updatePodiumCeremony(rawDelta);
+    if (this.performanceProfile?.renderSkipSpectacleEffects) this.updateConfetti(rawDelta);
     this.updateMarbleTrails(delta);
+    let driveMs = 0;
+    let physicsMs = 0;
+    let syncMs = 0;
     if (this.state === 'running') {
       this.elapsed += delta;
+      const driveStartedAt = performance.now();
       this.applyMarbleDrive();
+      driveMs = performance.now() - driveStartedAt;
+      const physicsStartedAt = performance.now();
       this.world.step(1 / 60, delta, this.performanceProfile?.runningMaxSubSteps ?? PERFORMANCE_TUNING.runningMaxSubSteps);
+      physicsMs = performance.now() - physicsStartedAt;
+      const syncStartedAt = performance.now();
       this.syncMarbles();
+      syncMs = performance.now() - syncStartedAt;
       this.recordRaceHistorySample();
       this.updatePreFinishSlowMotionTrigger();
       this.checkFinishers();
@@ -9647,11 +9770,17 @@ class MarbleRace {
       this.updateBroadcastDirector();
     } else if (this.state === 'ready') {
       this.updateCountdown(delta);
+      const physicsStartedAt = performance.now();
       this.world.step(1 / 60, delta, PERFORMANCE_TUNING.readyMaxSubSteps);
+      physicsMs = performance.now() - physicsStartedAt;
+      const syncStartedAt = performance.now();
       this.syncMarbles();
+      syncMs = performance.now() - syncStartedAt;
     }
     this.updateCamera(delta);
+    const labelStartedAt = performance.now();
     this.updateMarbleNameLabels(delta);
+    let uiMs = performance.now() - labelStartedAt;
     this.controls.enabled = true;
     if (!this.performanceProfile?.renderSkipOrbitControlsUpdate) this.controls.update();
     this.fpsFrames += 1;
@@ -9662,7 +9791,11 @@ class MarbleRace {
       this.fpsFrames = 0;
       this.fpsTime = 0;
     }
-    if (performance.now() - this.lastLeaderboardUpdate > (this.performanceProfile?.leaderboardUpdateMs || 300)) this.updateLeaderboard(false);
+    if (performance.now() - this.lastLeaderboardUpdate > (this.performanceProfile?.leaderboardUpdateMs || 300)) {
+      const leaderboardStartedAt = performance.now();
+      this.updateLeaderboard(false);
+      uiMs += performance.now() - leaderboardStartedAt;
+    }
     const now = performance.now();
     if (this.mediaRecorder?.state === 'recording' && now - this.lastRecordingStatusUpdate > 250) {
       this.lastRecordingStatusUpdate = now;
@@ -9687,11 +9820,27 @@ class MarbleRace {
     }
     if (now - this.lastUIUpdate > (this.performanceProfile?.uiUpdateMs || 200)) {
       this.lastUIUpdate = now;
+      const uiStartedAt = performance.now();
       this.updateUI();
+      uiMs += performance.now() - uiStartedAt;
     }
     this.updateReplayHighlightPlayback(rawDelta);
+    const renderStartedAt = performance.now();
     this.renderer.render(this.scene, this.camera);
+    const renderMs = performance.now() - renderStartedAt;
+    const overlayStartedAt = performance.now();
     this.renderViewerCanvasOverlay();
+    const overlayMs = performance.now() - overlayStartedAt;
+    this.recordFrameProfilerSample({
+      frameMs: performance.now() - frameStartedAt,
+      obstacleMs,
+      driveMs,
+      physicsMs,
+      syncMs,
+      uiMs,
+      renderMs,
+      overlayMs,
+    });
   }
 
   setCachedText(node, value, cacheKey = null) {
@@ -10782,7 +10931,7 @@ class MarbleRace {
           this.ui.winner.textContent = `🏆 ${data.name} wins! ${data.finishTime.toFixed(2)}s`;
           this.ui.winner.classList.remove('hidden');
           this.pushBroadcastEvent('Winner', `${data.name} wins`, { kind: 'winner', force: true, marbleId: data.id, lines: [`${data.name} wins`, `${data.name} takes flag`, `${data.name} first home`] });
-          this.triggerFinishSlowMotion(data, { reason: 'finish-line-crossed-fallback', crossed: true });
+          if (!this.finishSlowMotion?.active) this.triggerFinishSlowMotion(data, { reason: 'finish-line-crossed-fallback', crossed: true });
           this.playFinishSound(true);
           this.spawnImpactEffect(collectPos, 0xffd166, 'burst');
           this.spawnFinishConfetti(collectPos, 132, { cannon: true });
@@ -11693,8 +11842,10 @@ class MarbleRace {
       cupVideoStageTargetSeconds: this.cupMode?.active ? CUP_VIDEO_TIMING.stageTargetSeconds?.[this.getCupStage()] ?? null : null,
       cupVideoStageTargetTrackLength: this.cupMode?.active ? CUP_VIDEO_TIMING.stageTrackLengths?.[this.getCupStage()] ?? null : null,
       defaultCameraMode: BROADCAST_CAMERA.defaultMode,
-      defaultCameraPreference: 'default auto every race/stage: lead-pack through countdown and early race; cinematic leader from 60%; after first finish, stay on lead pack of remaining marbles to avoid rapid switching; podium/orbit when fully finished',
+      defaultCameraPreference: 'default auto every race/stage: finish-line shot owns the camera whenever finish slow-motion is active, including after the race flips to finished; otherwise lead-pack through countdown and 0-80% race progress; cinematic leader after 80%; after first finish, briefly hold finish then follow remaining racers; podium/orbit when fully finished',
       defaultCameraPhaseSwitchProgress: BROADCAST_CAMERA.cinematicLeaderFromProgress,
+      finishSlowMotionCameraHoldSeconds: BROADCAST_CAMERA.finishSlowMotionCameraHoldSeconds,
+      finishSlowMotionCameraLabel: BROADCAST_CAMERA.finishSlowMotionCameraLabel,
       activeDefaultCameraShot: this.getDefaultCameraMode(),
       defaultCameraSequence: BROADCAST_CAMERA.sequence,
       defaultCameraTrackingDirection: 'xy/xz direction sampled from next tracking point back toward previous tracking point',
@@ -11706,6 +11857,8 @@ class MarbleRace {
       },
       cinematicLeaderCamera: this.cinematicLeaderCameraState || null,
       leadPackCamera: this.leadPackCameraState || null,
+      videoCompositeCameraCrop: this.videoCompositeCameraCropState || null,
+      videoCompositeCanvas: this.getVideoCompositeCanvasInfo(),
       postFirstFinishCamera: {
         config: BROADCAST_CAMERA.postFirstFinish,
         firstFinishTime: this.firstFinishTime || 0,
@@ -11752,6 +11905,7 @@ class MarbleRace {
       cameraMode: debug.cameraMode,
       broadcastAudio: debug.broadcastAudio,
       activeDefaultCameraShot: debug.activeDefaultCameraShot,
+      videoCompositeCameraCrop: debug.videoCompositeCameraCrop,
       fps: debug.measuredFps,
       physicsSteps: debug.physicsSteps,
       finishedCount: debug.finishedCount,
@@ -12270,6 +12424,7 @@ class MarbleRace {
     const leader = this.getAutoCameraRanking({ includeFinished: false })[0]
       || this.getAutoCameraRanking({ includeFinished: true })[0]
       || this.getRanking({ force: false })[0];
+    if (this.finishSlowMotion?.active) return 'finish';
     if (this.state === 'finished') return BROADCAST_CAMERA.podium360.enabled ? 'podium360' : 'finish';
     if (this.countdownActive || this.state === 'ready' || this.state === 'idle') return 'leadPack';
     if (this.finishers.length > 0) {
@@ -12564,8 +12719,28 @@ class MarbleRace {
       : (activeCameraMode === 'leadPack'
         ? (BROADCAST_CAMERA.leadPack.fov || 44)
         : (activeCameraMode === 'replayHighlight' ? 38 : 58));
-    if (Math.abs(this.camera.fov - desiredFov) > 0.01) {
-      this.camera.fov = lerp(this.camera.fov, desiredFov, (activeCameraMode === 'cinematicLeader' || activeCameraMode === 'leadPack') ? 0.035 : 0.055);
+    const layout = this.videoCanvasLayout || VIDEO_CANVAS_LAYOUTS.horizontal;
+    const sourceWidth = this.renderer?.domElement?.width || this.renderer?.domElement?.clientWidth || window.innerWidth || 1;
+    const sourceHeight = this.renderer?.domElement?.height || this.renderer?.domElement?.clientHeight || window.innerHeight || 1;
+    const targetWidth = this.videoCompositeCanvas?.width || layout.width || sourceWidth;
+    const targetHeight = this.videoCompositeCanvas?.height || layout.height || sourceHeight;
+    const cropFactor = this.getVideoCompositeCameraCropFactor(sourceWidth, sourceHeight, targetWidth, targetHeight, layout.fit || 'cover');
+    const compensatedDesiredFov = cropFactor > 1.01
+      ? clamp(THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(desiredFov) / 2) * cropFactor)), desiredFov, 92)
+      : desiredFov;
+    this.videoCompositeCameraCropState = {
+      layout: layout.key || this.videoCanvasLayoutKey || 'horizontal',
+      fit: layout.fit || 'cover',
+      sourceSize: `${sourceWidth}x${sourceHeight}`,
+      targetSize: `${targetWidth}x${targetHeight}`,
+      cropFactor: Number(cropFactor.toFixed(3)),
+      baseFov: Number(desiredFov.toFixed(2)),
+      compensatedFov: Number(compensatedDesiredFov.toFixed(2)),
+      active: cropFactor > 1.01,
+      label: cropFactor > 1.01 ? 'compensates vertical Shorts cover-crop by widening the live render FOV before compositing' : 'no video-crop camera compensation needed',
+    };
+    if (Math.abs(this.camera.fov - compensatedDesiredFov) > 0.01) {
+      this.camera.fov = lerp(this.camera.fov, compensatedDesiredFov, (activeCameraMode === 'cinematicLeader' || activeCameraMode === 'leadPack') ? 0.035 : 0.055);
       this.camera.updateProjectionMatrix();
     }
     const isLeadCloseMode = activeCameraMode === 'leadPack' || activeCameraMode === 'leadBattle' || activeCameraMode === 'replayHighlight';
