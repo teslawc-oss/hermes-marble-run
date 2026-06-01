@@ -28,6 +28,15 @@ const CANVAS_VIEWER_OVERLAY = {
   ctaPrimary: 'LIKE & SUBSCRIBE',
   maxStandingRows: 5,
 };
+const CANVAS_START_HOOK = {
+  enabled: true,
+  style: 'canvas-only-start-countdown-horizontal-and-vertical',
+  preRaceTagline: '12 MARBLES. 1 CHAMPION.',
+  gateLabel: 'GATE OPENS IN',
+  goLabel: 'RUSH!',
+  postStartHoldSeconds: 1.8,
+  goFadeStartSeconds: 1.15,
+};
 const TRACK_PRESETS = {
   short: { label: 'Short', base: 240, variation: 56, segment: 9, branches: 1 },
   medium: { label: 'Standard', base: 380, variation: 90, segment: 10, branches: 2 },
@@ -913,6 +922,11 @@ class MarbleRace {
     this.countdownRemaining = 0;
     this.countdownActive = false;
     this.countdownLastAnnouncedSecond = null;
+    this.startHookVisible = false;
+    this.startHookValue = '';
+    this.startHookIsGo = false;
+    this.startHookShownAt = 0;
+    this.startHookLastSummary = null;
     this.audioContext = null;
     this.audioMasterGain = null;
     this.audioMasterGainConnected = false;
@@ -1560,6 +1574,108 @@ class MarbleRace {
     return { title: 'MARBLE RUSH', detail: 'Pick your winner' };
   }
 
+  getStartHookState() {
+    if (!CANVAS_START_HOOK.enabled || !this.startHookVisible) return null;
+    const now = performance.now();
+    const ageSeconds = Math.max(0, (now - (this.startHookShownAt || now)) / 1000);
+    if (this.startHookIsGo && ageSeconds > CANVAS_START_HOOK.postStartHoldSeconds) return null;
+    const countdownTotal = Math.max(0.1, Number(this.countdownDuration) || 3);
+    const remaining = this.countdownActive ? clamp(this.countdownRemaining, 0, countdownTotal) : 0;
+    const countdownProgress = this.countdownActive ? clamp(1 - remaining / countdownTotal, 0, 1) : 1;
+    const value = this.startHookIsGo ? CANVAS_START_HOOK.goLabel : String(this.startHookValue || Math.max(1, Math.ceil(remaining)));
+    const beat = this.startHookIsGo ? clamp(ageSeconds / CANVAS_START_HOOK.postStartHoldSeconds, 0, 1) : clamp(ageSeconds / 0.82, 0, 1);
+    return {
+      active: true,
+      value,
+      isGo: Boolean(this.startHookIsGo),
+      ageSeconds,
+      countdownRemaining: Number(remaining.toFixed(2)),
+      countdownProgress: Number(countdownProgress.toFixed(3)),
+      beat: Number(beat.toFixed(3)),
+    };
+  }
+
+  drawCanvasStartHook({ ctx, canvas, summaryTarget = 'recording' } = {}) {
+    const state = this.getStartHookState();
+    if (!state || !ctx || !canvas) {
+      if (summaryTarget !== 'web') this.startHookLastSummary = state ? null : { active: false };
+      return null;
+    }
+    const w = canvas.width;
+    const h = canvas.height;
+    const layoutKey = this.videoCanvasLayoutKey || (w < h ? 'vertical' : 'horizontal');
+    const isVertical = layoutKey === 'vertical' || h > w * 1.2;
+    const minDim = Math.min(w, h);
+    const goHoldSeconds = Math.max(0.1, CANVAS_START_HOOK.postStartHoldSeconds || 1.8);
+    const goFadeStartSeconds = Math.min(goHoldSeconds - 0.05, Math.max(0, CANVAS_START_HOOK.goFadeStartSeconds ?? goHoldSeconds * 0.64));
+    const pulse = Math.sin(state.beat * Math.PI);
+    const popScale = state.isGo ? 1 + 0.12 * Math.max(0, 1 - state.ageSeconds / 0.45) : 1 + 0.08 * pulse;
+    const fade = state.isGo ? clamp(1 - Math.max(0, state.ageSeconds - goFadeStartSeconds) / Math.max(0.1, goHoldSeconds - goFadeStartSeconds), 0, 1) : 1;
+    const cx = w / 2;
+    const cy = isVertical ? h * 0.47 : h * 0.5;
+    const cardW = isVertical ? w * 0.84 : w * 0.56;
+    const cardH = isVertical ? h * 0.27 : h * 0.32;
+    const cardX = cx - cardW / 2;
+    const cardY = cy - cardH / 2;
+    const radius = minDim * (isVertical ? 0.04 : 0.03);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    const vignette = ctx.createRadialGradient(cx, cy, minDim * 0.08, cx, cy, minDim * 0.72);
+    vignette.addColorStop(0, 'rgba(255, 224, 90, 0.18)');
+    vignette.addColorStop(0.42, 'rgba(6, 10, 24, 0.22)');
+    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.48)');
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.translate(cx, cy);
+    ctx.scale(popScale, popScale);
+    ctx.translate(-cx, -cy);
+    this.drawViewerRoundedRect(ctx, cardX, cardY, cardW, cardH, radius);
+    const cardGradient = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
+    cardGradient.addColorStop(0, 'rgba(4, 9, 24, 0.78)');
+    cardGradient.addColorStop(0.52, 'rgba(12, 18, 40, 0.64)');
+    cardGradient.addColorStop(1, state.isGo ? 'rgba(255, 44, 72, 0.76)' : 'rgba(255, 178, 36, 0.58)');
+    ctx.fillStyle = cardGradient;
+    ctx.fill();
+    ctx.strokeStyle = state.isGo ? 'rgba(255,255,255,0.82)' : 'rgba(255, 223, 98, 0.72)';
+    ctx.lineWidth = Math.max(4, minDim * 0.006);
+    ctx.stroke();
+
+    const topLabel = state.isGo ? 'GO!' : CANVAS_START_HOOK.gateLabel;
+    const valueFont = isVertical ? `900 ${Math.round(minDim * (state.isGo ? 0.19 : 0.25))}px Arial Black, Impact, sans-serif` : `900 ${Math.round(minDim * (state.isGo ? 0.16 : 0.22))}px Arial Black, Impact, sans-serif`;
+    this.drawViewerText(ctx, topLabel, cx, cardY + cardH * 0.20, { font: `900 ${Math.round(minDim * 0.04)}px Arial Black, Impact, sans-serif`, fill: state.isGo ? '#ffffff' : '#ffec8a', strokeWidth: Math.max(4, minDim * 0.007), align: 'center', maxWidth: cardW - 50 });
+    this.drawViewerText(ctx, state.value, cx, cardY + cardH * 0.53, { font: valueFont, fill: state.isGo ? '#ffffff' : '#ffd83e', stroke: state.isGo ? 'rgba(255,36,66,0.88)' : 'rgba(0,0,0,0.86)', strokeWidth: Math.max(8, minDim * 0.018), align: 'center', maxWidth: cardW - 60 });
+    this.drawViewerText(ctx, CANVAS_START_HOOK.preRaceTagline, cx, cardY + cardH * 0.83, { font: `900 ${Math.round(minDim * (isVertical ? 0.038 : 0.032))}px Arial Black, Impact, sans-serif`, fill: '#8df7ff', strokeWidth: Math.max(4, minDim * 0.007), align: 'center', maxWidth: cardW - 64 });
+
+    if (!state.isGo) {
+      const barW = cardW * 0.72;
+      const barH = Math.max(12, minDim * 0.016);
+      const barX = cx - barW / 2;
+      const barY = cardY + cardH - barH - cardH * 0.08;
+      this.drawViewerRoundedRect(ctx, barX, barY, barW, barH, barH / 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.23)';
+      ctx.fill();
+      this.drawViewerRoundedRect(ctx, barX, barY, Math.max(barH, barW * state.countdownProgress), barH, barH / 2);
+      ctx.fillStyle = '#ffdb43';
+      ctx.fill();
+    }
+    ctx.restore();
+
+    const summary = {
+      active: true,
+      target: summaryTarget,
+      layout: isVertical ? 'vertical' : 'horizontal',
+      canvasSize: `${w}x${h}`,
+      value: state.value,
+      isGo: state.isGo,
+      countdownRemaining: state.countdownRemaining,
+      countdownProgress: state.countdownProgress,
+      style: CANVAS_START_HOOK.style,
+    };
+    if (summaryTarget !== 'web') this.startHookLastSummary = summary;
+    return summary;
+  }
+
   drawViewerCanvasOverlay({ canvas = this.viewerOverlayCanvas, ctx = this.viewerOverlayContext, summaryTarget = 'recording' } = {}) {
     if (!CANVAS_VIEWER_OVERLAY.enabled || !ctx || !canvas) return;
     const w = canvas.width;
@@ -1663,6 +1779,8 @@ class MarbleRace {
     ctx.fill();
     this.drawViewerText(ctx, `PROGRESS ${Math.round(leaderProgress * 100)}%`, progressX + progressW + 18, infoY + 25, { font: '900 20px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, maxWidth: 168 });
     this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, progressX + progressW + 18, infoY + 50, { font: '800 17px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, maxWidth: 168 });
+
+    this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
 
     const overlaySummary = {
       enabled: true,
@@ -1771,6 +1889,8 @@ class MarbleRace {
     this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, Math.max(8, progressW * leaderProgress), progressH, 8);
     ctx.fill();
     this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, infoX + infoW / 2, infoY + 102, { font: '800 23px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, align: 'center', maxWidth: infoW - 68 });
+
+    this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
 
     const overlaySummary = {
       enabled: true,
@@ -2319,6 +2439,11 @@ class MarbleRace {
     this.countdownActive = false;
     this.countdownRemaining = 0;
     this.countdownLastAnnouncedSecond = null;
+    this.startHookVisible = false;
+    this.startHookValue = '';
+    this.startHookIsGo = false;
+    this.startHookShownAt = 0;
+    this.startHookLastSummary = null;
     clearTimeout(this.countdownOverlayTimer);
     this.hideCountdownOverlay();
     if (this.ui.matchCard) this.ui.matchCard.classList.add('hidden');
@@ -8526,18 +8651,25 @@ class MarbleRace {
   }
 
   showCountdownOverlay(value, { isGo = false } = {}) {
+    this.startHookVisible = true;
+    this.startHookValue = String(value || '');
+    this.startHookIsGo = Boolean(isGo);
+    this.startHookShownAt = performance.now();
+    // Keep the visible countdown in canvas overlays so recorded horizontal/vertical
+    // video captures include it. The DOM node is deliberately hidden to avoid the
+    // old browser-overlay-only countdown path.
     if (!this.ui.countdown) return;
-    this.ui.countdown.textContent = value;
-    this.ui.countdown.classList.remove('hidden');
-    this.ui.countdown.classList.toggle('go', isGo);
-    this.ui.countdown.classList.add('pulse');
+    this.ui.countdown.textContent = '';
+    this.ui.countdown.classList.add('hidden');
+    this.ui.countdown.classList.remove('go', 'pulse');
     clearTimeout(this.countdownOverlayTimer);
-    this.countdownOverlayTimer = setTimeout(() => {
-      this.ui.countdown?.classList.remove('pulse');
-    }, 120);
   }
 
   hideCountdownOverlay() {
+    this.startHookVisible = false;
+    this.startHookValue = '';
+    this.startHookIsGo = false;
+    this.startHookShownAt = 0;
     if (!this.ui.countdown) return;
     this.ui.countdown.classList.add('hidden');
     this.ui.countdown.classList.remove('go', 'pulse');
@@ -10353,9 +10485,10 @@ class MarbleRace {
       driveDistance = clamp(Math.max(stableLastDriveDistance, nearestDistance), 0, this.trackLength);
     }
     const nearestFrame = this.getTrackFrameAt(driveDistance);
-    const clearance = data.body.position.y - (nearestFrame.p.y + data.radius);
-    const recentTrackContact = this.elapsed - (data.lastTrackContactTime ?? -Infinity) <= (this.landingReboundAbsorber?.contactGraceSeconds ?? 0.18);
-    const airborneAssistPaused = Boolean(policy.pauseAssistWhileAirborne && clearance > (policy.airborneClearance ?? 0.92));
+    const beforeStartHandoff = this.isMarbleBeforeStartChuteHandoff(data);
+    const clearance = beforeStartHandoff ? 0 : data.body.position.y - (nearestFrame.p.y + data.radius);
+    const recentTrackContact = beforeStartHandoff || this.elapsed - (data.lastTrackContactTime ?? -Infinity) <= (this.landingReboundAbsorber?.contactGraceSeconds ?? 0.18);
+    const airborneAssistPaused = Boolean(!beforeStartHandoff && policy.pauseAssistWhileAirborne && clearance > (policy.airborneClearance ?? 0.92));
 
     const guideTarget = this.getGuideTargetDistance(driveDistance);
     let guideDistance = guideTarget.distance;
@@ -10661,7 +10794,32 @@ class MarbleRace {
     const verticalClearance = Math.abs(data.body.position.y - frame.p.y);
     if (lateral > edgeLimit) return null;
     if (verticalClearance > (FALL_RESPAWN_POLICY.maxVerticalClearanceMeters ?? 2.4)) return null;
+    if (this.isMarbleBeforeStartChuteHandoff(data)) return null;
     return clamp(progress.distance, 0, Math.max(0, this.trackLength - (FALL_RESPAWN_POLICY.finishGuardDistanceMeters ?? 1.25)));
+  }
+
+  isMarbleBeforeStartChuteHandoff(data) {
+    const startCatcher = this.startCatcher;
+    const body = data?.body;
+    if (!startCatcher || !body || !Number.isFinite(startCatcher.yaw) || !startCatcher.center) return false;
+    const dx = body.position.x - startCatcher.center.x;
+    const dz = body.position.z - startCatcher.center.z;
+    const yaw = startCatcher.yaw;
+    const sin = Math.sin(yaw);
+    const cos = Math.cos(yaw);
+    const localX = dx * cos - dz * sin;
+    const localZ = dx * sin + dz * cos;
+    const frontLocalZ = startCatcher.frontLocalZ ?? START_GATE_DESIGN.chuteDepth / 2;
+    const handoffLocalZ = frontLocalZ - 0.45;
+    const withinChuteWidth = Math.abs(localX) <= (startCatcher.width ?? this.trackWidth) / 2 + 0.65;
+    if (withinChuteWidth && localZ < handoffLocalZ) {
+      data.startHandoffProgressSuppressed = true;
+      data.startHandoffLocalZ = localZ;
+      return true;
+    }
+    data.startHandoffProgressSuppressed = false;
+    data.startHandoffLocalZ = localZ;
+    return false;
   }
 
   getConfirmedFinishDistance(data, closest = null) {
@@ -11859,6 +12017,7 @@ class MarbleRace {
       leadPackCamera: this.leadPackCameraState || null,
       videoCompositeCameraCrop: this.videoCompositeCameraCropState || null,
       videoCompositeCanvas: this.getVideoCompositeCanvasInfo(),
+      canvasStartHook: this.startHookLastSummary || this.getStartHookState() || { active: false },
       postFirstFinishCamera: {
         config: BROADCAST_CAMERA.postFirstFinish,
         firstFinishTime: this.firstFinishTime || 0,
