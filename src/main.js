@@ -242,11 +242,18 @@ const SPEED_PRESETS = [
 
 const CATCHUP_ASSIST = {
   enabledByDefault: true,
-  maxBonus: 0.16,
-  fullEffectGap: 36,
+  maxBonus: 0.22,
+  fullEffectGap: 30,
+  minGapForBonus: 6,
+  lateRaceStartProgress: 0.52,
+  lateRaceMaxBonus: 0.07,
+  lateRaceFullEffectGap: 22,
+  trailingPackOnly: true,
+  protectedLeaderCount: 2,
   disableBonusOnTurnPieces: true,
   turnPieceMaxSpeedRatio: 0.7,
-  label: 'slightly stronger comeback pacing: trailing marbles reach up to +16% top speed on straights once the gap is about 36m, while leaders and corner pieces stay protected',
+  maxEffectiveBonus: 0.28,
+  label: 'stronger but bounded comeback pacing: racers outside the top two get up to +22% top speed on straights by 30m gap, plus a late-race +7% closing bonus after 52% progress; leaders and corner pieces stay protected',
 };
 
 const MID_TRACK_SPEED_ASSIST = {
@@ -10148,10 +10155,34 @@ class MarbleRace {
     const turnLimitedMaxSpeed = isTurnGuide
       ? baseMaxSpeed * (CATCHUP_ASSIST.turnPieceMaxSpeedRatio ?? 0.7)
       : baseMaxSpeed;
-    if (!this.catchupAssistEnabled || data.id === this.getLeaderId()) return turnLimitedMaxSpeed;
-    if (CATCHUP_ASSIST.disableBonusOnTurnPieces && isTurnGuide) return turnLimitedMaxSpeed;
+    const leaderId = this.getLeaderId();
     const gap = Math.max(0, leaderDistance - (data.distance || 0));
-    const bonusRatio = clamp(gap / CATCHUP_ASSIST.fullEffectGap, 0, 1) * CATCHUP_ASSIST.maxBonus;
+    const ranking = this.getRanking({ force: false });
+    const rankIndex = ranking.findIndex((entry) => entry.id === data.id);
+    const protectedLeaderCount = Math.max(1, CATCHUP_ASSIST.protectedLeaderCount || 1);
+    const isProtectedLeader = data.id === leaderId || (CATCHUP_ASSIST.trailingPackOnly && rankIndex >= 0 && rankIndex < protectedLeaderCount);
+    const baseBonusRatio = gap <= (CATCHUP_ASSIST.minGapForBonus || 0)
+      ? 0
+      : clamp((gap - (CATCHUP_ASSIST.minGapForBonus || 0)) / Math.max(1, CATCHUP_ASSIST.fullEffectGap - (CATCHUP_ASSIST.minGapForBonus || 0)), 0, 1) * CATCHUP_ASSIST.maxBonus;
+    const progress = this.trackLength ? clamp((data.distance || 0) / this.trackLength, 0, 1) : 0;
+    const lateRaceScale = clamp((progress - (CATCHUP_ASSIST.lateRaceStartProgress ?? 1)) / Math.max(0.001, 1 - (CATCHUP_ASSIST.lateRaceStartProgress ?? 1)), 0, 1);
+    const lateBonusRatio = lateRaceScale * clamp(gap / Math.max(1, CATCHUP_ASSIST.lateRaceFullEffectGap || CATCHUP_ASSIST.fullEffectGap), 0, 1) * (CATCHUP_ASSIST.lateRaceMaxBonus || 0);
+    const rawBonusRatio = baseBonusRatio + lateBonusRatio;
+    const bonusRatio = clamp(rawBonusRatio, 0, CATCHUP_ASSIST.maxEffectiveBonus ?? rawBonusRatio);
+    data.catchupGap = gap;
+    data.catchupRankIndex = rankIndex;
+    data.catchupBaseBonusRatio = baseBonusRatio;
+    data.catchupLateBonusRatio = lateBonusRatio;
+    data.catchupBonusRatio = (!this.catchupAssistEnabled || isProtectedLeader || (CATCHUP_ASSIST.disableBonusOnTurnPieces && isTurnGuide)) ? 0 : bonusRatio;
+    data.catchupAssistSkippedReason = !this.catchupAssistEnabled
+      ? 'disabled'
+      : isProtectedLeader
+        ? 'protected-leader-pack'
+        : (CATCHUP_ASSIST.disableBonusOnTurnPieces && isTurnGuide)
+          ? 'turn-piece-protected'
+          : null;
+    if (!this.catchupAssistEnabled || isProtectedLeader) return turnLimitedMaxSpeed;
+    if (CATCHUP_ASSIST.disableBonusOnTurnPieces && isTurnGuide) return turnLimitedMaxSpeed;
     return turnLimitedMaxSpeed * (1 + bonusRatio);
   }
 
@@ -11588,8 +11619,20 @@ class MarbleRace {
         guidePointAheadDistance: d.guidePointAheadDistance ?? null,
       })),
       catchupAssistEnabled: this.catchupAssistEnabled,
-      catchupMaxSpeed: this.catchupAssistEnabled ? this.speedPreset.maxSpeed * (1 + CATCHUP_ASSIST.maxBonus) : this.speedPreset.maxSpeed,
+      catchupMaxSpeed: this.catchupAssistEnabled ? this.speedPreset.maxSpeed * (1 + CATCHUP_ASSIST.maxEffectiveBonus) : this.speedPreset.maxSpeed,
       catchupAssist: CATCHUP_ASSIST,
+      catchupAssistSamples: this.marbleData.slice(0, 8).map((d) => ({
+        id: d.id,
+        name: d.name,
+        distance: Number((d.distance || 0).toFixed(2)),
+        rankIndex: d.catchupRankIndex ?? null,
+        gap: d.catchupGap == null ? null : Number(d.catchupGap.toFixed(2)),
+        baseBonusRatio: d.catchupBaseBonusRatio == null ? null : Number(d.catchupBaseBonusRatio.toFixed(3)),
+        lateBonusRatio: d.catchupLateBonusRatio == null ? null : Number(d.catchupLateBonusRatio.toFixed(3)),
+        bonusRatio: d.catchupBonusRatio == null ? null : Number(d.catchupBonusRatio.toFixed(3)),
+        catchupMaxSpeed: d.catchupMaxSpeed == null ? null : Number(d.catchupMaxSpeed.toFixed(2)),
+        skippedReason: d.catchupAssistSkippedReason || null,
+      })),
       decorationSummary: this.decorationSummary || { lampPosts: 0, lampGlobes: 0, decorativePointLights: 0, removed: true },
       performanceProfile: this.performanceProfile,
       uiThrottleProfiles: UI_THROTTLE_PROFILES,
