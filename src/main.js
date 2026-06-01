@@ -1023,6 +1023,14 @@ class MarbleRace {
       frameMsTotal: 0,
       frameMsMax: 0,
       frameMsSamples: [],
+      rafIntervalMsTotal: 0,
+      rafIntervalMsMax: 0,
+      rafIntervalMsSamples: [],
+      lastFrameStartedAt: null,
+      secondWindowStartedAt: performance.now(),
+      uniqueFramesThisSecond: 0,
+      uniqueFrameSecondHistory: [],
+      lastUniqueFrameSecondSummary: null,
       obstacleMsTotal: 0,
       driveMsTotal: 0,
       physicsMsTotal: 0,
@@ -9801,12 +9809,37 @@ class MarbleRace {
   recordFrameProfilerSample(sample = {}) {
     const profiler = this.frameProfiler;
     if (!profiler) return null;
+    const now = performance.now();
     const frameMs = Number(sample.frameMs || 0);
+    const rafIntervalMs = Number.isFinite(sample.rafIntervalMs) ? Number(sample.rafIntervalMs) : 0;
     profiler.frames += 1;
     profiler.frameMsTotal += frameMs;
     profiler.frameMsMax = Math.max(profiler.frameMsMax || 0, frameMs);
     profiler.frameMsSamples.push(frameMs);
     if (profiler.frameMsSamples.length > 240) profiler.frameMsSamples.shift();
+    if (rafIntervalMs > 0) {
+      profiler.rafIntervalMsTotal += rafIntervalMs;
+      profiler.rafIntervalMsMax = Math.max(profiler.rafIntervalMsMax || 0, rafIntervalMs);
+      profiler.rafIntervalMsSamples.push(rafIntervalMs);
+      if (profiler.rafIntervalMsSamples.length > 240) profiler.rafIntervalMsSamples.shift();
+    }
+    profiler.uniqueFramesThisSecond = (profiler.uniqueFramesThisSecond || 0) + 1;
+    const secondWindowElapsedMs = Math.max(1, now - (profiler.secondWindowStartedAt || now));
+    if (secondWindowElapsedMs >= 1000) {
+      const seconds = secondWindowElapsedMs / 1000;
+      const uniqueFrames = profiler.uniqueFramesThisSecond || 0;
+      const summary = {
+        capturedAt: new Date().toISOString(),
+        windowSeconds: Number(seconds.toFixed(3)),
+        uniqueFrames,
+        uniqueFps: Number((uniqueFrames / seconds).toFixed(2)),
+      };
+      profiler.lastUniqueFrameSecondSummary = summary;
+      profiler.uniqueFrameSecondHistory.push(summary);
+      if (profiler.uniqueFrameSecondHistory.length > 120) profiler.uniqueFrameSecondHistory.shift();
+      profiler.uniqueFramesThisSecond = 0;
+      profiler.secondWindowStartedAt = now;
+    }
     profiler.obstacleMsTotal += Number(sample.obstacleMs || 0);
     profiler.driveMsTotal += Number(sample.driveMs || 0);
     profiler.physicsMsTotal += Number(sample.physicsMs || 0);
@@ -9814,19 +9847,28 @@ class MarbleRace {
     profiler.uiMsTotal += Number(sample.uiMs || 0);
     profiler.renderMsTotal += Number(sample.renderMs || 0);
     profiler.overlayMsTotal += Number(sample.overlayMs || 0);
-    const now = performance.now();
     const elapsedMs = Math.max(1, now - (profiler.windowStartedAt || now));
     if (elapsedMs >= 5000 || profiler.frames >= 300) {
       const sorted = [...profiler.frameMsSamples].sort((a, b) => a - b);
       const p95 = sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] : 0;
+      const rafSorted = [...(profiler.rafIntervalMsSamples || [])].sort((a, b) => a - b);
+      const rafP95 = rafSorted.length ? rafSorted[Math.min(rafSorted.length - 1, Math.floor(rafSorted.length * 0.95))] : 0;
+      const rafSamples = Math.max(1, rafSorted.length || 1);
       const frames = Math.max(1, profiler.frames);
+      const latestUniqueFrameWindow = profiler.lastUniqueFrameSecondSummary || null;
       profiler.lastSummary = {
         capturedAt: new Date().toISOString(),
         windowSeconds: Number((elapsedMs / 1000).toFixed(2)),
         frames: profiler.frames,
+        uniqueFps: Number((profiler.frames / (elapsedMs / 1000)).toFixed(2)),
+        latestUniqueFrameWindow,
+        uniqueFrameSecondHistory: [...(profiler.uniqueFrameSecondHistory || [])].slice(-10),
         avgFrameMs: Number((profiler.frameMsTotal / frames).toFixed(2)),
         p95FrameMs: Number(p95.toFixed(2)),
         maxFrameMs: Number((profiler.frameMsMax || 0).toFixed(2)),
+        avgRafIntervalMs: Number(((profiler.rafIntervalMsTotal || 0) / rafSamples).toFixed(2)),
+        p95RafIntervalMs: Number(rafP95.toFixed(2)),
+        maxRafIntervalMs: Number((profiler.rafIntervalMsMax || 0).toFixed(2)),
         avgObstacleMs: Number((profiler.obstacleMsTotal / frames).toFixed(2)),
         avgDriveMs: Number((profiler.driveMsTotal / frames).toFixed(2)),
         avgPhysicsMs: Number((profiler.physicsMsTotal / frames).toFixed(2)),
@@ -9853,6 +9895,9 @@ class MarbleRace {
       profiler.frameMsTotal = 0;
       profiler.frameMsMax = 0;
       profiler.frameMsSamples = [];
+      profiler.rafIntervalMsTotal = 0;
+      profiler.rafIntervalMsMax = 0;
+      profiler.rafIntervalMsSamples = [];
       profiler.obstacleMsTotal = 0;
       profiler.driveMsTotal = 0;
       profiler.physicsMsTotal = 0;
@@ -9864,9 +9909,77 @@ class MarbleRace {
     return profiler.lastSummary;
   }
 
+  getFrameTimingDiagnostics() {
+    const profiler = this.frameProfiler || {};
+    const history = [...(profiler.uniqueFrameSecondHistory || [])];
+    const chunkHistory = [...(profiler.captureChunkHistory || [])];
+    const lastSummary = profiler.lastSummary || null;
+    const currentSecondElapsedMs = Math.max(1, performance.now() - (profiler.secondWindowStartedAt || performance.now()));
+    const currentUniqueFrames = profiler.uniqueFramesThisSecond || 0;
+    return {
+      enabled: true,
+      source: 'browser-side-frame-timing',
+      lastSummary,
+      currentSecond: {
+        elapsedSeconds: Number((currentSecondElapsedMs / 1000).toFixed(3)),
+        uniqueFrames: currentUniqueFrames,
+        projectedUniqueFps: Number((currentUniqueFrames / (currentSecondElapsedMs / 1000)).toFixed(2)),
+      },
+      latestUniqueFrameWindow: profiler.lastUniqueFrameSecondSummary || null,
+      uniqueFrameSecondHistory: history.slice(-20),
+      captureChunkTiming: {
+        last: profiler.lastCaptureChunkTiming || null,
+        history: chunkHistory.slice(-20),
+      },
+      interpretation: {
+        uniqueFrames: 'RAF/game frames produced in each browser-side second window',
+        rafIntervalMs: 'time between requestAnimationFrame callbacks; spikes indicate browser scheduling/compositor stalls',
+        frameMs: 'measured game-loop work inside a RAF callback',
+        avgPhysicsMs: 'Cannon/world.step cost per frame',
+        avgUiMs: 'labels/leaderboard/UI updates per frame',
+        avgRenderMs: 'Three.js renderer.render cost per frame',
+        avgOverlayMs: 'viewer/video overlay/composite draw cost per frame',
+        captureChunkTiming: 'MediaRecorder dataavailable + blob/arrayBuffer/Playwright binding/write prep timing when canvas capture is active',
+      },
+    };
+  }
+
+  recordCaptureChunkTiming(timing = {}) {
+    const profiler = this.frameProfiler;
+    if (!profiler || !timing) return null;
+    const compact = {
+      capturedAt: new Date().toISOString(),
+      blobBytes: timing.blobBytes ?? null,
+      msSinceLastChunk: timing.msSinceLastChunk ?? null,
+      arrayBufferMs: timing.arrayBufferMs ?? null,
+      byteArrayMs: timing.byteArrayMs ?? null,
+      browserPrepMs: timing.browserPrepMs ?? null,
+      bindingRoundTripMs: timing.bindingRoundTripMs ?? null,
+      totalWriteMs: timing.totalWriteMs ?? null,
+      nodeBindingMs: timing.nodeBindingMs ?? null,
+      nodeBufferMs: timing.nodeBufferMs ?? null,
+      nodeWriteMs: timing.nodeWriteMs ?? null,
+      pendingBefore: timing.pendingBefore ?? null,
+      pendingAfter: timing.pendingAfter ?? null,
+      browserFps: timing.browserFps ?? null,
+      captureElapsedSeconds: timing.captureElapsedSeconds ?? null,
+      final: Boolean(timing.final),
+      buffered: Boolean(timing.buffered),
+    };
+    profiler.lastCaptureChunkTiming = compact;
+    if (!profiler.captureChunkHistory) profiler.captureChunkHistory = [];
+    profiler.captureChunkHistory.push(compact);
+    if (profiler.captureChunkHistory.length > 120) profiler.captureChunkHistory.shift();
+    return compact;
+  }
+
   animate() {
     requestAnimationFrame(() => this.animate());
     const frameStartedAt = performance.now();
+    const rafIntervalMs = this.frameProfiler?.lastFrameStartedAt != null
+      ? frameStartedAt - this.frameProfiler.lastFrameStartedAt
+      : null;
+    if (this.frameProfiler) this.frameProfiler.lastFrameStartedAt = frameStartedAt;
     const rawDelta = Math.min(this.clock.getDelta(), 0.05);
     const timeScale = this.getFinishSlowMotionTimeScale();
     if (this.finishSlowMotion) this.finishSlowMotion.timeScale = timeScale;
@@ -9972,6 +10085,7 @@ class MarbleRace {
       uiMs,
       renderMs,
       overlayMs,
+      rafIntervalMs,
     });
   }
 
@@ -11719,6 +11833,7 @@ class MarbleRace {
       spectacleEffectMeshCount: this.getSpectacleEffectMeshCount(),
       spectacleEffectBudget: this.effectBudget,
       spectacleEffectBudgetCounters: this.effectBudgetCounters,
+      frameTimingDiagnostics: this.getFrameTimingDiagnostics?.() || null,
       marbleTrailCount: this.marbleData.filter((data) => Boolean(data.trail?.line)).length,
       confettiCount: this.confettiPieces.length,
       finishSlowMotion: {
