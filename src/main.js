@@ -3642,14 +3642,26 @@ class MarbleRace {
       }
       ctx.globalCompositeOperation = 'source-over';
     } else {
-      for (let i = 0; i < 90; i += 1) {
+      // Mixed Showcase uses one long stretched playfield texture on the ribbon.
+      // Keep artwork low-frequency and mostly longitudinal so track-piece joins do not read as tiled blocks.
+      ctx.globalCompositeOperation = 'screen';
+      for (let x = -80; x < 1120; x += 128) {
+        const lane = ctx.createLinearGradient(x, 0, x + 92, 1024);
+        lane.addColorStop(0, `${style.accent || '#ff4fa3'}00`);
+        lane.addColorStop(0.42, `${style.secondary || '#7cf7d4'}20`);
+        lane.addColorStop(1, `${style.accent || '#ff4fa3'}00`);
+        ctx.fillStyle = lane;
+        ctx.fillRect(x, 0, 92, 1024);
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      for (let i = 0; i < 42; i += 1) {
         const x = (i * 137 + 61) % 1024;
         const y = (i * 251 + 97) % 1024;
-        const r = 18 + (i % 7) * 8;
+        const r = 30 + (i % 7) * 12;
         const hue = [style.accent, style.secondary, style.line, style.mid].filter(Boolean)[i % 4] || '#ff4fa3';
         ctx.strokeStyle = hue;
-        ctx.globalAlpha = 0.08 + (i % 3) * 0.025;
-        ctx.lineWidth = 4 + (i % 4);
+        ctx.globalAlpha = 0.045 + (i % 3) * 0.014;
+        ctx.lineWidth = 3 + (i % 3);
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.stroke();
@@ -3679,7 +3691,11 @@ class MarbleRace {
     ctx.textAlign = 'center';
     ctx.fillText((style.pattern || 'THEME').toUpperCase().slice(0, 18), 512, 540);
     const texture = this.finishTexture(canvas, 1, 1);
-    texture.userData = { style: pattern, themeKey: this.visualThemeKey, role: 'track-surface' };
+    if (pattern === 'pinball-playfield') {
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.userData = { seamlessLongitudinalUv: true };
+    }
+    texture.userData = { ...(texture.userData || {}), style: pattern, themeKey: this.visualThemeKey, role: 'track-surface' };
     return texture;
   }
 
@@ -3975,7 +3991,8 @@ class MarbleRace {
           point.z + frame.right.z * side * (point.w ?? width) / 2
         );
         normals.push(0, 1, 0);
-        uvs.push(side < 0 ? 0 : 1, point.d / 12);
+        const useFullTrackUv = Boolean(material?.map?.userData?.seamlessLongitudinalUv);
+        uvs.push(side < 0 ? 0 : 1, useFullTrackUv ? point.d / Math.max(1, this.trackLength) : point.d / 12);
       });
       if (index < points.length - 1) {
         const base = index * 2;
