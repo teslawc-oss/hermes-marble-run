@@ -3686,10 +3686,6 @@ class MarbleRace {
     ctx.lineTo(868, 1024);
     ctx.stroke();
 
-    ctx.font = 'bold 72px sans-serif';
-    ctx.fillStyle = `${style.line || '#ffd166'}33`;
-    ctx.textAlign = 'center';
-    ctx.fillText((style.pattern || 'THEME').toUpperCase().slice(0, 18), 512, 540);
     const texture = this.finishTexture(canvas, 1, 1);
     const useSeamlessLongitudinalUv = pattern !== 'candy-checker';
     if (useSeamlessLongitudinalUv) {
