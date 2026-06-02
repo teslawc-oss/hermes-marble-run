@@ -26,6 +26,7 @@ const estimateNonRaceSeconds = (mode, raceCount) => {
 };
 
 const rawVideoCapture = String(args.get('video-capture') || process.env.MARBLE_RENDER_VIDEO_CAPTURE || '').toLowerCase();
+const MARBLE_VISUAL_THEME_KEYS = ['mixed', 'neon', 'luxe', 'candy', 'natural'];
 const config = {
   url: args.get('url') || process.env.MARBLE_RENDER_URL || 'http://127.0.0.1:4173',
   port: Number(args.get('port') || process.env.MARBLE_RENDER_PORT || 4173),
@@ -90,6 +91,7 @@ const config = {
   obstaclePreset: args.get('obstacle-preset') || process.env.MARBLE_RENDER_OBSTACLE_PRESET || '',
   obstacleDistribution: args.get('obstacle-distribution') || process.env.MARBLE_RENDER_OBSTACLE_DISTRIBUTION || 'random',
   obstacleTypes: (args.get('obstacle-types') || process.env.MARBLE_RENDER_OBSTACLE_TYPES || '').split(',').map((type) => type.trim()).filter(Boolean),
+  visualTheme: args.get('visual-theme') || args.get('theme') || process.env.MARBLE_RENDER_VISUAL_THEME || process.env.MARBLE_RENDER_THEME || '',
 };
 config.captureScale = Number.isFinite(config.captureScale) && config.captureScale > 0 ? config.captureScale : 1;
 config.targetSeconds = Number.isFinite(config.targetSeconds) ? Math.max(60, Math.min(7200, Math.round(config.targetSeconds))) : 600;
@@ -124,6 +126,7 @@ if (config.uploadYoutube) config.youtubeMetadata = true;
 
 config.ttsVoice = String(config.ttsVoice || 'Alex').replace(/[^\w .'-]/g, '').trim().slice(0, 48) || 'Alex';
 config.obstacleDistribution = ['random', 'zoned'].includes(config.obstacleDistribution) ? config.obstacleDistribution : 'random';
+config.visualTheme = MARBLE_VISUAL_THEME_KEYS.includes(String(config.visualTheme || '').trim()) ? String(config.visualTheme).trim() : '';
 let audioOutputPath = config.audioOutput ? path.resolve(config.audioOutput) : '';
 const explicitAudioOutputPath = audioOutputPath;
 
@@ -1575,7 +1578,7 @@ async function main() {
     }
 
     progress('app-start', `${config.mode}, races=${config.multipleRaceCount}, marbles=${config.cupSize}`);
-    const started = await page.evaluate(({ mode, multipleRaceCount, cupSize, trackLength, targetSeconds, lengthMode, smokeSeconds, maxRaceSeconds, cupName, ttsVoice, obstaclePreset, obstacleDistribution, obstacleTypes, showLeftUi, showRightUi, disableMouseOrbit, renderPerformanceMode, renderPerformanceProfile }) => {
+    const started = await page.evaluate(({ mode, multipleRaceCount, cupSize, trackLength, targetSeconds, lengthMode, smokeSeconds, maxRaceSeconds, cupName, ttsVoice, obstaclePreset, obstacleDistribution, obstacleTypes, visualTheme, showLeftUi, showRightUi, disableMouseOrbit, renderPerformanceMode, renderPerformanceProfile }) => {
       const app = window.__MARBLE_RACE_APP__;
       if (!app) return { ok: false, reason: 'app-missing' };
       app.__playwrightRenderTrackLength = trackLength;
@@ -1601,6 +1604,10 @@ async function main() {
       app.setCommentaryVoiceEnabled?.(true);
       app.setTtsVoice?.(ttsVoice, { resetQueue: false, updateStatus: true });
       app.checkLocalTtsBridge?.();
+      if (visualTheme && app.ui?.visualTheme) {
+        app.ui.visualTheme.value = visualTheme;
+        app.updateVisualTheme?.({ themeKey: visualTheme, regenerateMarbles: true, source: 'playwright-render' });
+      }
       if (app.ui?.cupName) app.ui.cupName.value = cupName || 'Speed X Cup';
       if (app.ui?.count) app.ui.count.value = String(cupSize);
       app.marbleCount = cupSize;
@@ -1928,6 +1935,7 @@ async function main() {
         ttsVoice: app.localTtsBridge?.voice || ttsVoice,
         obstacleLabel: app.obstaclePreset?.label,
         obstacleTypes: [...(app.enabledObstacleTypes || [])],
+        visualTheme: app.visualThemeKey || app.ui?.visualTheme?.value || null,
         obstacleTypeCounts: app.obstacleTypeCounts,
         phase: activeRecording?.phase,
         stage: mode === 'cup' ? app.getCupStage?.() : mode,
@@ -1971,6 +1979,7 @@ async function main() {
       obstaclePreset: config.obstaclePreset,
       obstacleDistribution: config.obstacleDistribution,
       obstacleTypes: config.obstacleTypes,
+      visualTheme: config.visualTheme,
       showLeftUi: config.showLeftUi,
       showRightUi: config.showRightUi,
       disableMouseOrbit: config.disableMouseOrbit,
