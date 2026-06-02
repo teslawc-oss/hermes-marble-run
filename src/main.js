@@ -3691,9 +3691,10 @@ class MarbleRace {
     ctx.textAlign = 'center';
     ctx.fillText((style.pattern || 'THEME').toUpperCase().slice(0, 18), 512, 540);
     const texture = this.finishTexture(canvas, 1, 1);
-    if (pattern === 'pinball-playfield') {
+    const useSeamlessLongitudinalUv = pattern !== 'candy-checker';
+    if (useSeamlessLongitudinalUv) {
       texture.wrapT = THREE.ClampToEdgeWrapping;
-      texture.userData = { seamlessLongitudinalUv: true };
+      texture.userData = { seamlessLongitudinalUv: true, seamlessLongitudinalUvReason: 'full-route-theme-surface' };
     }
     texture.userData = { ...(texture.userData || {}), style: pattern, themeKey: this.visualThemeKey, role: 'track-surface' };
     return texture;
