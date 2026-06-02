@@ -63,7 +63,7 @@ html, body, #app {
 .hud-left { left: 18px; width: min(390px, calc(100vw - 36px)); max-height: calc(100vh - 36px); overflow-y: auto; padding-right: 4px; }
 .hud-right { right: 18px; width: min(380px, calc(100vw - 36px)); }
 
-.brand, .panel, .winner-banner, .broadcast-caption, .final-showcase, .replay-highlight-overlay {
+.brand, .panel, .winner-banner, .broadcast-caption, .final-showcase, .replay-highlight-overlay, .race-theme-overlay {
   border: 1px solid var(--line);
   background: var(--glass);
   backdrop-filter: blur(16px) saturate(140%);
@@ -197,6 +197,112 @@ input[type="range"] {
   justify-content: space-between;
   font-size: 10px;
   color: var(--muted);
+}
+
+.race-theme-overlay {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 11;
+  width: min(780px, calc(100vw - 36px));
+  transform: translateX(-50%);
+  padding: 12px;
+  border-radius: 18px;
+  pointer-events: auto;
+  background: rgba(6, 10, 22, 0.72);
+}
+
+.race-theme-overlay-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.race-theme-kicker {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+#race-theme-overlay-label {
+  color: var(--gold);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-align: right;
+}
+
+.race-theme-overlay-options {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.race-theme-option {
+  position: relative;
+  min-height: 42px;
+  padding: 7px 8px 7px 30px;
+  overflow: hidden;
+  border-radius: 13px;
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.race-theme-option::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  transform: translateY(-50%);
+  background: linear-gradient(135deg, var(--theme-accent, var(--accent)), var(--theme-secondary, var(--accent-2)));
+  box-shadow: 0 0 18px var(--theme-accent, var(--accent));
+}
+
+.race-theme-option strong {
+  display: block;
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+.race-theme-option small {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: rgba(247, 251, 255, 0.68);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.race-theme-option.active {
+  border-color: var(--theme-accent, var(--accent));
+  background: linear-gradient(135deg, rgba(124, 247, 212, 0.22), rgba(255, 119, 183, 0.13));
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1), 0 12px 36px rgba(0, 0, 0, 0.28);
+}
+
+.race-theme-option.active::after {
+  content: "✓";
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  color: var(--theme-accent, var(--accent));
+  font-size: 11px;
+  font-weight: 900;
+}
+
+#race-theme-overlay-note {
+  display: block;
+  margin-top: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .obstacle-type-toggles {

@@ -1451,6 +1451,10 @@ class MarbleRace {
       catchupLabel: document.querySelector('#catchup-label'),
       curveSelect: document.querySelector('#curve-select'),
       visualTheme: document.querySelector('#visual-theme-select'),
+      raceThemeOverlay: document.querySelector('#race-theme-overlay'),
+      raceThemeOverlayOptions: document.querySelector('#race-theme-overlay-options'),
+      raceThemeOverlayLabel: document.querySelector('#race-theme-overlay-label'),
+      raceThemeOverlayNote: document.querySelector('#race-theme-overlay-note'),
       speed: document.querySelector('#speed-slider'),
       speedLabel: document.querySelector('#speed-label'),
       guideBias: document.querySelector('#guide-bias-slider'),
@@ -1483,6 +1487,7 @@ class MarbleRace {
     this.setTtsPitch(this.ui.ttsPitchSlider?.value || this.ttsPitch || 1, { resetQueue: false, updateStatus: false });
     this.initTtsVoiceSelector();
     this.buildObstacleTypeToggles();
+    this.buildRaceThemeOverlay();
     this.initThree();
     this.initPhysics();
     this.bindEvents();
@@ -2191,7 +2196,7 @@ class MarbleRace {
     this.ui.catchupToggle.addEventListener('change', () => this.updateCatchupAssist());
     this.ui.showGuidePointsToggle?.addEventListener('change', () => this.updateGuidePointsVisibility());
     this.ui.curveSelect.addEventListener('change', () => this.newRace({ regenerateTrack: true }));
-    this.ui.visualTheme?.addEventListener('change', () => this.updateVisualTheme({ regenerateMarbles: true }));
+    this.ui.visualTheme?.addEventListener('change', () => this.updateVisualTheme({ regenerateMarbles: true, source: 'panel' }));
     this.ui.speed.addEventListener('input', () => this.updateSpeedPreset());
     this.ui.guideBias?.addEventListener('input', () => this.updateGuideBias());
     this.ui.select.addEventListener('change', () => {
@@ -2214,11 +2219,59 @@ class MarbleRace {
     });
   }
 
-  updateVisualTheme({ regenerateMarbles = false } = {}) {
-    const requested = this.ui.visualTheme?.value || this.visualThemeKey || DEFAULT_MARBLE_VISUAL_THEME_KEY;
+  buildRaceThemeOverlay() {
+    const container = this.ui.raceThemeOverlayOptions;
+    if (!container) return;
+    container.textContent = '';
+    Object.values(MARBLE_VISUAL_THEMES).forEach((theme) => {
+      const world = this.getWorldVisualThemeStyle(theme);
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'race-theme-option';
+      option.dataset.themeKey = theme.key;
+      option.setAttribute('role', 'option');
+      option.setAttribute('aria-selected', theme.key === this.visualThemeKey ? 'true' : 'false');
+      option.style.setProperty('--theme-accent', world.track?.accent || '#7cf7d4');
+      option.style.setProperty('--theme-secondary', world.track?.secondary || '#ff77b7');
+      option.innerHTML = `<strong>${theme.label}</strong><small>${world.track?.pattern || theme.description}</small>`;
+      option.addEventListener('click', () => this.updateVisualTheme({ themeKey: theme.key, regenerateMarbles: true, source: 'overlay' }));
+      container.appendChild(option);
+    });
+    this.updateRaceThemeOverlay();
+  }
+
+  updateRaceThemeOverlay() {
+    const activeTheme = this.visualTheme || MARBLE_VISUAL_THEMES[DEFAULT_MARBLE_VISUAL_THEME_KEY];
+    const world = this.getWorldVisualThemeStyle(activeTheme);
+    if (this.ui.raceThemeOverlayLabel) this.ui.raceThemeOverlayLabel.textContent = activeTheme.label;
+    if (this.ui.raceThemeOverlayNote) {
+      this.ui.raceThemeOverlayNote.textContent = `${activeTheme.description} Covers: marbles, track floor, rails, ground, start gate.`;
+    }
+    this.ui.raceThemeOverlayOptions?.querySelectorAll('.race-theme-option').forEach((button) => {
+      const active = button.dataset.themeKey === activeTheme.key;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    if (this.ui.raceThemeOverlay) {
+      this.ui.raceThemeOverlay.dataset.activeTheme = activeTheme.key;
+      this.ui.raceThemeOverlay.style.setProperty('--theme-accent', world.track?.accent || '#7cf7d4');
+      this.ui.raceThemeOverlay.style.setProperty('--theme-secondary', world.track?.secondary || '#ff77b7');
+    }
+  }
+
+  updateVisualTheme({ regenerateMarbles = false, themeKey = null, source = 'panel' } = {}) {
+    const requested = themeKey || this.ui.visualTheme?.value || this.visualThemeKey || DEFAULT_MARBLE_VISUAL_THEME_KEY;
     this.visualThemeKey = MARBLE_VISUAL_THEMES[requested] ? requested : DEFAULT_MARBLE_VISUAL_THEME_KEY;
     this.visualTheme = MARBLE_VISUAL_THEMES[this.visualThemeKey] || MARBLE_VISUAL_THEMES[DEFAULT_MARBLE_VISUAL_THEME_KEY];
     if (this.ui.visualTheme) this.ui.visualTheme.value = this.visualThemeKey;
+    this.updateRaceThemeOverlay();
+    window.__MARBLE_RACE_LAST_THEME_CHANGE__ = {
+      source,
+      themeKey: this.visualThemeKey,
+      label: this.visualTheme.label,
+      state: this.state,
+      changedAt: new Date().toISOString(),
+    };
     if (regenerateMarbles) this.newRace({ regenerateTrack: true });
     else this.updateUI();
   }
