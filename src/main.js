@@ -866,6 +866,86 @@ const MARBLE_COLOR_STYLES = [
   { label: 'Lava Obsidian', hex: '#7f1d1d', color: 0x7f1d1d, palette: ['#111111', '#7f1d1d', '#fb923c'], material: 'stone' },
 ];
 
+const MARBLE_VISUAL_THEMES = {
+  mixed: {
+    key: 'mixed',
+    label: 'Mixed Showcase',
+    description: 'Balanced mix of glass, neon, chrome, candy, stone, and opal marbles.',
+  },
+  neon: {
+    key: 'neon',
+    label: 'Neon Arcade',
+    description: 'High-contrast cyber colors with circuit, starfield, ripple, and chevron textures.',
+    colorLabels: ['Aqua Neon', 'Mint Circuit', 'Acid Glow', 'Galaxy Opal Trio', 'Oil Slick Chrome', 'Violet Haze', 'Blue Nova'],
+    patternKeys: ['circuit', 'starfield', 'ripple', 'chevron', 'comet'],
+    materialOverride: 'neon',
+  },
+  luxe: {
+    key: 'luxe',
+    label: 'Luxury Glass',
+    description: 'Premium pearl/chrome/glass marbles with rings, split panels, and opal-style highlights.',
+    colorLabels: ['Pearl White', 'Ruby Sapphire Duo', 'Emerald Amethyst Duo', 'Fire Ice Trio', 'Oil Slick Chrome', 'Galaxy Opal Trio', 'Sunlit Gold'],
+    patternKeys: ['rings', 'split', 'triad', 'spiral', 'starfield'],
+  },
+  candy: {
+    key: 'candy',
+    label: 'Candy Pop',
+    description: 'Bright confectionery palettes with checker, ripple, split, and speckle textures.',
+    colorLabels: ['Rose Candy', 'Cotton Candy Split', 'Crimson Pulse', 'Orange Flare', 'Lime Comet', 'Pearl White'],
+    patternKeys: ['checker', 'speckle', 'split', 'ripple', 'rings'],
+    materialOverride: 'candy',
+  },
+  natural: {
+    key: 'natural',
+    label: 'Natural Stone',
+    description: 'Grounded marble/stone palettes with veins, storm lines, flame, and layered rings.',
+    colorLabels: ['Tiger Jade', 'Lava Obsidian', 'Emerald Amethyst Duo', 'Amber Spark', 'Pearl White', 'Sunlit Gold'],
+    patternKeys: ['marble-vein', 'storm', 'rings', 'flame', 'speckle'],
+  },
+};
+
+const DEFAULT_MARBLE_VISUAL_THEME_KEY = 'mixed';
+
+function hexColorToNumber(hex, fallback = 0xffffff) {
+  if (typeof hex !== 'string') return fallback;
+  const cleaned = hex.replace('#', '').trim();
+  const value = Number.parseInt(cleaned, 16);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+const WORLD_VISUAL_THEME_STYLES = {
+  mixed: {
+    track: { base: '#10172a', mid: '#252b55', accent: '#ff4fa3', secondary: '#7cf7d4', line: '#ffd166', pattern: 'pinball-playfield', roughness: 0.38, metalness: 0.12, clearcoat: 0.75 },
+    ground: { base: '#8a552f', mid: '#a96c3d', accent: '#5b2b12', secondary: '#d19a62', pattern: 'wood-arena', roughness: 0.82, metalness: 0.02 },
+    rail: { base: '#151827', mid: '#202a37', accent: '#7cf7d4', secondary: '#ff4fa3', pattern: 'neon-rubber', roughness: 0.30, metalness: 0.18, clearcoat: 0.8 },
+    gate: { base: '#0f172a', panel: '#7cf7d4', warning: '#ffd166', emissive: '#00483d', signEmissive: '#3d2500' },
+  },
+  neon: {
+    track: { base: '#050816', mid: '#111a3a', accent: '#00f5d4', secondary: '#ff4fa3', line: '#c8ff00', pattern: 'cyber-circuit', roughness: 0.26, metalness: 0.24, clearcoat: 0.9 },
+    ground: { base: '#060914', mid: '#151827', accent: '#00f5d4', secondary: '#9b8cff', pattern: 'dark-grid', roughness: 0.58, metalness: 0.12 },
+    rail: { base: '#07111f', mid: '#12213a', accent: '#00f5d4', secondary: '#ff3864', pattern: 'neon-rubber', roughness: 0.24, metalness: 0.22, clearcoat: 0.85 },
+    gate: { base: '#050a18', panel: '#00f5d4', warning: '#c8ff00', emissive: '#00f5d4', signEmissive: '#6d7a00' },
+  },
+  luxe: {
+    track: { base: '#111827', mid: '#334155', accent: '#f8fafc', secondary: '#d4af37', line: '#93c5fd', pattern: 'glass-lanes', roughness: 0.18, metalness: 0.32, clearcoat: 1.0 },
+    ground: { base: '#3b2f2f', mid: '#6b4f3a', accent: '#d4af37', secondary: '#f8fafc', pattern: 'polished-wood', roughness: 0.54, metalness: 0.08 },
+    rail: { base: '#1f2937', mid: '#475569', accent: '#f8fafc', secondary: '#d4af37', pattern: 'chrome-rail', roughness: 0.18, metalness: 0.58, clearcoat: 0.95 },
+    gate: { base: '#111827', panel: '#f8fafc', warning: '#d4af37', emissive: '#334155', signEmissive: '#5c4200' },
+  },
+  candy: {
+    track: { base: '#ffd1dc', mid: '#93c5fd', accent: '#ff70a6', secondary: '#75ff8a', line: '#ffffff', pattern: 'candy-checker', roughness: 0.22, metalness: 0.05, clearcoat: 0.9 },
+    ground: { base: '#ffe4ef', mid: '#c7d2fe', accent: '#ff70a6', secondary: '#ffd166', pattern: 'soft-sprinkles', roughness: 0.64, metalness: 0.02 },
+    rail: { base: '#ff70a6', mid: '#ae7cff', accent: '#ffffff', secondary: '#ffd166', pattern: 'candy-stripes', roughness: 0.18, metalness: 0.04, clearcoat: 0.85 },
+    gate: { base: '#ae7cff', panel: '#ff70a6', warning: '#ffd166', emissive: '#5c1d44', signEmissive: '#5c3600' },
+  },
+  natural: {
+    track: { base: '#334155', mid: '#64748b', accent: '#fef3c7', secondary: '#064e3b', line: '#f59e0b', pattern: 'stone-veins', roughness: 0.48, metalness: 0.08, clearcoat: 0.35 },
+    ground: { base: '#2f2418', mid: '#5a3f2b', accent: '#a16207', secondary: '#064e3b', pattern: 'earth-grain', roughness: 0.88, metalness: 0.01 },
+    rail: { base: '#1f2937', mid: '#374151', accent: '#10b981', secondary: '#f59e0b', pattern: 'weathered-rail', roughness: 0.42, metalness: 0.18, clearcoat: 0.25 },
+    gate: { base: '#1f2937', panel: '#10b981', warning: '#f59e0b', emissive: '#053b2a', signEmissive: '#3a2100' },
+  },
+};
+
 const MARBLE_MATERIAL_STYLES = {
   glass: { label: 'Glass', roughness: 0.12, metalness: 0.02, emissiveIntensity: 0.05 },
   neon: { label: 'Neon Glow', roughness: 0.18, metalness: 0.02, emissiveIntensity: 0.28 },
@@ -976,6 +1056,8 @@ class MarbleRace {
     this.obstacleDistributionSummary = null;
     this.curveStyleKey = 'mixed';
     this.curveStyle = CURVE_PRESETS[this.curveStyleKey];
+    this.visualThemeKey = DEFAULT_MARBLE_VISUAL_THEME_KEY;
+    this.visualTheme = MARBLE_VISUAL_THEMES[this.visualThemeKey];
     this.rng = Math.random;
     this.physicsSteps = 0;
     this.lastLeaderboardUpdate = 0;
@@ -1368,6 +1450,7 @@ class MarbleRace {
       catchupToggle: document.querySelector('#catchup-toggle'),
       catchupLabel: document.querySelector('#catchup-label'),
       curveSelect: document.querySelector('#curve-select'),
+      visualTheme: document.querySelector('#visual-theme-select'),
       speed: document.querySelector('#speed-slider'),
       speedLabel: document.querySelector('#speed-label'),
       guideBias: document.querySelector('#guide-bias-slider'),
@@ -2108,6 +2191,7 @@ class MarbleRace {
     this.ui.catchupToggle.addEventListener('change', () => this.updateCatchupAssist());
     this.ui.showGuidePointsToggle?.addEventListener('change', () => this.updateGuidePointsVisibility());
     this.ui.curveSelect.addEventListener('change', () => this.newRace({ regenerateTrack: true }));
+    this.ui.visualTheme?.addEventListener('change', () => this.updateVisualTheme({ regenerateMarbles: true }));
     this.ui.speed.addEventListener('input', () => this.updateSpeedPreset());
     this.ui.guideBias?.addEventListener('input', () => this.updateGuideBias());
     this.ui.select.addEventListener('change', () => {
@@ -2128,6 +2212,41 @@ class MarbleRace {
       const map = { '1': 'default', '2': 'leadPack', '3': 'selected', '4': 'cinematicLeader', '5': 'orbit' };
       if (map[event.key]) this.cameraMode = map[event.key];
     });
+  }
+
+  updateVisualTheme({ regenerateMarbles = false } = {}) {
+    const requested = this.ui.visualTheme?.value || this.visualThemeKey || DEFAULT_MARBLE_VISUAL_THEME_KEY;
+    this.visualThemeKey = MARBLE_VISUAL_THEMES[requested] ? requested : DEFAULT_MARBLE_VISUAL_THEME_KEY;
+    this.visualTheme = MARBLE_VISUAL_THEMES[this.visualThemeKey] || MARBLE_VISUAL_THEMES[DEFAULT_MARBLE_VISUAL_THEME_KEY];
+    if (this.ui.visualTheme) this.ui.visualTheme.value = this.visualThemeKey;
+    if (regenerateMarbles) this.newRace({ regenerateTrack: true });
+    else this.updateUI();
+  }
+
+  getWorldVisualThemeStyle(theme = this.visualTheme) {
+    const key = theme?.key || this.visualThemeKey || DEFAULT_MARBLE_VISUAL_THEME_KEY;
+    return WORLD_VISUAL_THEME_STYLES[key] || WORLD_VISUAL_THEME_STYLES[DEFAULT_MARBLE_VISUAL_THEME_KEY];
+  }
+
+  getVisualThemeStyles(theme = this.visualTheme) {
+    if (!theme || theme.key === 'mixed') {
+      return {
+        colorStyles: MARBLE_COLOR_STYLES,
+        patternStyles: MARBLE_PATTERN_STYLES,
+        materialOverride: null,
+      };
+    }
+    const colorStyles = (theme.colorLabels || [])
+      .map((label) => MARBLE_COLOR_STYLES.find((style) => style.label === label))
+      .filter(Boolean);
+    const patternStyles = (theme.patternKeys || [])
+      .map((key) => MARBLE_PATTERN_STYLES.find((style) => style.key === key))
+      .filter(Boolean);
+    return {
+      colorStyles: colorStyles.length ? colorStyles : MARBLE_COLOR_STYLES,
+      patternStyles: patternStyles.length ? patternStyles : MARBLE_PATTERN_STYLES,
+      materialOverride: theme.materialOverride || null,
+    };
   }
 
   updateRaceMode() {
@@ -2505,6 +2624,7 @@ class MarbleRace {
     this.updateObstaclePreset({ regenerateTrack: false });
     this.updateCatchupAssist();
     this.updateCurveStyle();
+    this.updateVisualTheme({ regenerateMarbles: false });
     this.refreshStallEliminationPolicy();
     this.resetDefaultAutoCameraForRace();
     this.initialCameraRotationApplied = false;
@@ -3287,7 +3407,10 @@ class MarbleRace {
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.repeat.set(repeatX, repeatY);
-    texture.anisotropy = 8;
+    texture.generateMipmaps = true;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.anisotropy = Math.min(8, this.renderer?.capabilities?.getMaxAnisotropy?.() || 1);
     return texture;
   }
 
@@ -3348,20 +3471,20 @@ class MarbleRace {
     return this.finishTexture(canvas, 6, 2);
   }
 
-  createWoodTexture() {
+  createWoodTexture(style = this.getWorldVisualThemeStyle().ground) {
     const canvas = document.createElement('canvas');
     canvas.width = 512;
     canvas.height = 512;
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#8a552f';
+    ctx.fillStyle = style.base || '#8a552f';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     for (let plank = 0; plank < 8; plank += 1) {
       const y = plank * 64;
       const grad = ctx.createLinearGradient(0, y, 512, y + 64);
-      grad.addColorStop(0, plank % 2 ? '#7b4827' : '#9a6236');
-      grad.addColorStop(0.5, plank % 2 ? '#a96c3d' : '#734323');
-      grad.addColorStop(1, plank % 2 ? '#6d3e21' : '#b87945');
+      grad.addColorStop(0, plank % 2 ? (style.base || '#7b4827') : (style.mid || '#9a6236'));
+      grad.addColorStop(0.5, plank % 2 ? (style.secondary || '#a96c3d') : (style.accent || '#734323'));
+      grad.addColorStop(1, plank % 2 ? (style.mid || '#6d3e21') : (style.secondary || '#b87945'));
       ctx.fillStyle = grad;
       ctx.fillRect(0, y, 512, 64);
       ctx.strokeStyle = 'rgba(50, 24, 10, 0.55)';
@@ -3402,57 +3525,121 @@ class MarbleRace {
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.repeat.set(6, 10);
-    texture.anisotropy = 8;
+    texture.generateMipmaps = true;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.anisotropy = Math.min(8, this.renderer?.capabilities?.getMaxAnisotropy?.() || 1);
+    texture.userData = { style: style.pattern || 'wood-arena', themeKey: this.visualThemeKey, role: 'arena-ground' };
     return texture;
   }
 
-  createPinballPlayfieldTexture() {
-    const { canvas, ctx } = this.createTextureCanvas(1024, '#10172a');
+  createThemedTrackTexture(style = this.getWorldVisualThemeStyle().track) {
+    const { canvas, ctx } = this.createTextureCanvas(1024, style.base || '#10172a');
     const grad = ctx.createLinearGradient(0, 0, 1024, 1024);
-    grad.addColorStop(0, '#10172a');
-    grad.addColorStop(0.45, '#252b55');
-    grad.addColorStop(1, '#3b1243');
+    grad.addColorStop(0, style.base || '#10172a');
+    grad.addColorStop(0.46, style.mid || '#252b55');
+    grad.addColorStop(1, style.secondary || '#3b1243');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 1024, 1024);
 
-    for (let i = 0; i < 90; i += 1) {
-      const x = (i * 137 + 61) % 1024;
-      const y = (i * 251 + 97) % 1024;
-      const r = 18 + (i % 7) * 8;
-      const hue = ['#ff4fa3', '#7cf7d4', '#ffd166', '#9b8cff'][i % 4];
-      ctx.strokeStyle = hue;
-      ctx.globalAlpha = 0.08 + (i % 3) * 0.025;
-      ctx.lineWidth = 4 + (i % 4);
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.stroke();
+    const pattern = style.pattern || 'pinball-playfield';
+    if (pattern === 'cyber-circuit') {
+      ctx.strokeStyle = `${style.accent || '#00f5d4'}88`;
+      ctx.lineWidth = 5;
+      for (let y = 70; y < 1024; y += 118) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        for (let x = 0; x <= 1024; x += 92) ctx.lineTo(x, y + ((x / 92) % 2 ? 30 : -16));
+        ctx.stroke();
+      }
+      ctx.strokeStyle = `${style.secondary || '#ff4fa3'}77`;
+      for (let x = 48; x < 1024; x += 128) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x + 80, 1024);
+        ctx.stroke();
+      }
+    } else if (pattern === 'candy-checker') {
+      const cell = 96;
+      for (let y = 0; y < 1024; y += cell) {
+        for (let x = 0; x < 1024; x += cell) {
+          ctx.fillStyle = ((x + y) / cell) % 2 === 0 ? `${style.accent || '#ff70a6'}55` : `${style.secondary || '#75ff8a'}44`;
+          ctx.fillRect(x, y, cell, cell);
+        }
+      }
+    } else if (pattern === 'stone-veins') {
+      ctx.strokeStyle = `${style.accent || '#fef3c7'}66`;
+      ctx.lineWidth = 6;
+      for (let i = 0; i < 26; i += 1) {
+        const y = (i * 83 + 41) % 1024;
+        ctx.beginPath();
+        ctx.moveTo(-40, y);
+        for (let x = 0; x <= 1060; x += 70) ctx.lineTo(x, y + Math.sin(i * 1.7 + x * 0.018) * 34);
+        ctx.stroke();
+      }
+    } else if (pattern === 'glass-lanes') {
+      ctx.globalCompositeOperation = 'screen';
+      for (let x = -120; x < 1120; x += 150) {
+        const lane = ctx.createLinearGradient(x, 0, x + 120, 1024);
+        lane.addColorStop(0, `${style.accent || '#f8fafc'}00`);
+        lane.addColorStop(0.5, `${style.accent || '#f8fafc'}35`);
+        lane.addColorStop(1, `${style.secondary || '#d4af37'}00`);
+        ctx.fillStyle = lane;
+        ctx.fillRect(x, 0, 120, 1024);
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    } else {
+      for (let i = 0; i < 90; i += 1) {
+        const x = (i * 137 + 61) % 1024;
+        const y = (i * 251 + 97) % 1024;
+        const r = 18 + (i % 7) * 8;
+        const hue = [style.accent, style.secondary, style.line, style.mid].filter(Boolean)[i % 4] || '#ff4fa3';
+        ctx.strokeStyle = hue;
+        ctx.globalAlpha = 0.08 + (i % 3) * 0.025;
+        ctx.lineWidth = 4 + (i % 4);
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
     }
-    ctx.globalAlpha = 1;
 
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-    ctx.lineWidth = 7;
-    for (let x = -220; x < 1220; x += 160) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.lineWidth = 8;
+    for (let x = -220; x < 1220; x += 170) {
       ctx.beginPath();
       ctx.moveTo(x, 1024);
       ctx.bezierCurveTo(x + 90, 720, x + 10, 310, x + 180, 0);
       ctx.stroke();
     }
+    ctx.strokeStyle = `${style.line || style.accent || '#ffd166'}88`;
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.moveTo(156, 0);
+    ctx.lineTo(156, 1024);
+    ctx.moveTo(868, 0);
+    ctx.lineTo(868, 1024);
+    ctx.stroke();
 
-    ctx.font = 'bold 82px sans-serif';
-    ctx.fillStyle = 'rgba(255,209,102,0.18)';
+    ctx.font = 'bold 72px sans-serif';
+    ctx.fillStyle = `${style.line || '#ffd166'}33`;
     ctx.textAlign = 'center';
-    ctx.fillText('PINBALL', 512, 540);
-    return this.finishTexture(canvas, 1, 1);
+    ctx.fillText((style.pattern || 'THEME').toUpperCase().slice(0, 18), 512, 540);
+    const texture = this.finishTexture(canvas, 1, 1);
+    texture.userData = { style: pattern, themeKey: this.visualThemeKey, role: 'track-surface' };
+    return texture;
   }
 
-  createNeonRubberTexture() {
-    const { canvas, ctx } = this.createTextureCanvas(512, '#151827');
+  createNeonRubberTexture(style = this.getWorldVisualThemeStyle().rail) {
+    const { canvas, ctx } = this.createTextureCanvas(512, style.base || '#151827');
     for (let y = 0; y < 512; y += 1) {
       const pulse = Math.sin(y * 0.045) * 20;
-      ctx.fillStyle = `rgb(${25 + pulse}, ${31 + pulse * 0.4}, ${47 + pulse * 0.8})`;
+      ctx.fillStyle = style.pattern === 'chrome-rail'
+        ? `rgb(${70 + pulse}, ${78 + pulse * 0.5}, ${92 + pulse * 0.6})`
+        : `rgb(${25 + pulse}, ${31 + pulse * 0.4}, ${47 + pulse * 0.8})`;
       ctx.fillRect(0, y, 512, 1);
     }
-    ['#ff4fa3', '#7cf7d4', '#ffd166', '#9b8cff'].forEach((color, i) => {
+    [style.accent, style.secondary, '#ffd166', '#9b8cff'].filter(Boolean).forEach((color, i) => {
       ctx.strokeStyle = color;
       ctx.globalAlpha = 0.45;
       ctx.lineWidth = 9;
@@ -3462,7 +3649,9 @@ class MarbleRace {
       ctx.stroke();
     });
     ctx.globalAlpha = 1;
-    return this.finishTexture(canvas, 3, 1);
+    const texture = this.finishTexture(canvas, 3, 1);
+    texture.userData = { style: style.pattern || 'neon-rubber', themeKey: this.visualThemeKey, role: 'track-rail' };
+    return texture;
   }
 
   createTrack() {
@@ -3483,12 +3672,13 @@ class MarbleRace {
     const groundY = minTrackY - 3.2;
     this.groundY = groundY;
     this.minTrackY = minTrackY;
-    const woodTexture = this.createWoodTexture();
+    const worldTheme = this.getWorldVisualThemeStyle();
+    const woodTexture = this.createWoodTexture(worldTheme.ground);
     this.woodGroundMaterial = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       map: woodTexture,
-      roughness: 0.82,
-      metalness: 0.02,
+      roughness: worldTheme.ground.roughness ?? 0.82,
+      metalness: worldTheme.ground.metalness ?? 0.02,
       side: THREE.DoubleSide,
     });
     const ground = new THREE.Mesh(
@@ -3504,23 +3694,25 @@ class MarbleRace {
 
     const floorMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
-      map: this.createPinballPlayfieldTexture(),
-      roughness: 0.38,
-      metalness: 0.12,
-      clearcoat: 0.75,
+      map: this.createThemedTrackTexture(worldTheme.track),
+      roughness: worldTheme.track.roughness ?? 0.38,
+      metalness: worldTheme.track.metalness ?? 0.12,
+      clearcoat: worldTheme.track.clearcoat ?? 0.75,
       clearcoatRoughness: 0.18,
       side: THREE.DoubleSide,
     });
+    floorMat.userData = { themeKey: this.visualThemeKey, role: 'track-surface', style: worldTheme.track.pattern };
     const railMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
-      map: this.createNeonRubberTexture(),
-      roughness: 0.3,
-      metalness: 0.18,
-      clearcoat: 0.8,
+      map: this.createNeonRubberTexture(worldTheme.rail),
+      roughness: worldTheme.rail.roughness ?? 0.3,
+      metalness: worldTheme.rail.metalness ?? 0.18,
+      clearcoat: worldTheme.rail.clearcoat ?? 0.8,
       clearcoatRoughness: 0.16,
     });
-    const stripeMat = new THREE.MeshStandardMaterial({ color: 0xf7f7ff, roughness: 0.5 });
-    const finishMat = new THREE.MeshStandardMaterial({ color: 0xffd166, roughness: 0.3, emissive: 0x443000 });
+    railMat.userData = { themeKey: this.visualThemeKey, role: 'track-rail', style: worldTheme.rail.pattern };
+    const stripeMat = new THREE.MeshStandardMaterial({ color: hexColorToNumber(worldTheme.track.line || worldTheme.track.accent, 0xf7f7ff), roughness: 0.5 });
+    const finishMat = new THREE.MeshStandardMaterial({ color: hexColorToNumber(worldTheme.gate.warning, 0xffd166), roughness: 0.3, emissive: hexColorToNumber(worldTheme.gate.signEmissive, 0x443000) });
 
     this.addTrackRibbon(this.pathPoints, this.trackWidth, floorMat);
     this.addTrackPhysicsRibbon(this.pathPoints, this.trackWidth);
@@ -4160,8 +4352,8 @@ class MarbleRace {
     this.startCatcher = this.addStartingChute({
       frame: startFrame,
       railMat,
-      accentMat: new THREE.MeshStandardMaterial({ color: 0x7cf7d4, roughness: 0.32, emissive: 0x00382f, emissiveIntensity: 0.45 }),
-      labelColor: 0x7cf7d4,
+      accentMat: new THREE.MeshStandardMaterial({ color: hexColorToNumber(this.getWorldVisualThemeStyle().gate.panel, 0x7cf7d4), roughness: 0.32, emissive: hexColorToNumber(this.getWorldVisualThemeStyle().gate.emissive, 0x00382f), emissiveIntensity: 0.45 }),
+      labelColor: hexColorToNumber(this.getWorldVisualThemeStyle().gate.panel, 0x7cf7d4),
     });
     // No start apron/bridge here: even an invisible physics bridge can block the marbles after the gate opens.
     // START_CHUTE now connects directly to the track entrance; the gate is the only removable blocker.
@@ -4325,6 +4517,10 @@ class MarbleRace {
         rails: START_GATE_DESIGN.startRailOpacity,
         markings: START_GATE_DESIGN.startMarkingOpacity,
       },
+      visualThemeKey: this.visualThemeKey,
+      textureStyle: this.getWorldVisualThemeStyle().track.pattern,
+      railTextureStyle: this.getWorldVisualThemeStyle().rail.pattern,
+      gateStyle: this.getWorldVisualThemeStyle().gate,
     };
   }
 
@@ -4421,16 +4617,17 @@ class MarbleRace {
     group.rotation.y = yaw;
     this.trackGroup.add(group);
 
+    const gateStyle = this.getWorldVisualThemeStyle().gate;
     const gateMat = makeStartTransparentMaterial(
-      new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.38, metalness: 0.55 }),
+      new THREE.MeshStandardMaterial({ color: hexColorToNumber(gateStyle.base, 0x0f172a), roughness: 0.38, metalness: 0.55 }),
       START_GATE_DESIGN.startGateOpacity
     );
     const barMat = makeStartTransparentMaterial(
-      new THREE.MeshStandardMaterial({ color: 0x7cf7d4, roughness: 0.24, metalness: 0.28, emissive: 0x00483d, emissiveIntensity: 0.42 }),
+      new THREE.MeshStandardMaterial({ color: hexColorToNumber(gateStyle.panel, 0x7cf7d4), roughness: 0.24, metalness: 0.28, emissive: hexColorToNumber(gateStyle.emissive, 0x00483d), emissiveIntensity: 0.42 }),
       START_GATE_DESIGN.startGateOpacity
     );
     const warningMat = makeStartTransparentMaterial(
-      new THREE.MeshStandardMaterial({ color: 0xffd166, roughness: 0.3, metalness: 0.15, emissive: 0x3d2500, emissiveIntensity: 0.28 }),
+      new THREE.MeshStandardMaterial({ color: hexColorToNumber(gateStyle.warning, 0xffd166), roughness: 0.3, metalness: 0.15, emissive: hexColorToNumber(gateStyle.signEmissive, 0x3d2500), emissiveIntensity: 0.28 }),
       START_GATE_DESIGN.startMarkingOpacity
     );
     const gateLayout = this.getStartGateLayout(this.ui.count?.value);
@@ -4510,6 +4707,10 @@ class MarbleRace {
       reducedByWidth: stallCount < Math.min(START_GATE_DESIGN.maxGateCount ?? 12, Math.max(1, Math.floor(Number(this.ui.count?.value) || 12))),
       design: 'track-aligned-vertical-lift-stall-gate-removes-physics-blocker-on-open',
       launchImpulse: START_GATE_DESIGN.launchImpulse,
+      visualThemeKey: this.visualThemeKey,
+      textureStyle: this.getWorldVisualThemeStyle().track.pattern,
+      railTextureStyle: this.getWorldVisualThemeStyle().rail.pattern,
+      gateStyle,
     };
   }
 
@@ -8341,6 +8542,9 @@ class MarbleRace {
         colorName: identity.colorName,
         palette: identity.palette,
         paletteHex: identity.paletteHex,
+        visualThemeKey: identity.visualThemeKey,
+        visualThemeName: identity.visualThemeName,
+        visualThemeDescription: identity.visualThemeDescription,
         materialKey: identity.materialKey,
         materialName: identity.materialName,
         patternKey: identity.patternKey,
@@ -8423,21 +8627,26 @@ class MarbleRace {
   }
 
   createMarbleIdentity(index, count = this.marbleData.length) {
-    const colorStyle = MARBLE_COLOR_STYLES[index % MARBLE_COLOR_STYLES.length];
-    const patternStyle = MARBLE_PATTERN_STYLES[Math.floor(index / MARBLE_COLOR_STYLES.length) % MARBLE_PATTERN_STYLES.length];
+    const theme = this.visualTheme || MARBLE_VISUAL_THEMES[DEFAULT_MARBLE_VISUAL_THEME_KEY];
+    const themeStyles = this.getVisualThemeStyles(theme);
+    const colorStyle = themeStyles.colorStyles[index % themeStyles.colorStyles.length];
+    const patternStyle = themeStyles.patternStyles[Math.floor(index / themeStyles.colorStyles.length) % themeStyles.patternStyles.length];
     const sizeStyle = MARBLE_SIZE_STYLES[index % MARBLE_SIZE_STYLES.length];
-    const materialKey = colorStyle.material || 'glass';
+    const materialKey = themeStyles.materialOverride || colorStyle.material || 'glass';
     const materialStyle = MARBLE_MATERIAL_STYLES[materialKey] || MARBLE_MATERIAL_STYLES.glass;
     const paletteHex = colorStyle.palette?.length ? colorStyle.palette : [colorStyle.hex];
     const palette = paletteHex.map((hex) => Number.parseInt(hex.replace('#', ''), 16));
     const codeNumber = String(index + 1).padStart(Math.max(2, String(count).length), '0');
-    const code = `MB-${codeNumber}-${colorStyle.hex.slice(1, 4).toUpperCase()}-${patternStyle.key.slice(0, 3).toUpperCase()}-${materialKey.slice(0, 3).toUpperCase()}-${sizeStyle.key}`;
+    const code = `MB-${codeNumber}-${theme.key.slice(0, 3).toUpperCase()}-${colorStyle.hex.slice(1, 4).toUpperCase()}-${patternStyle.key.slice(0, 3).toUpperCase()}-${materialKey.slice(0, 3).toUpperCase()}-${sizeStyle.key}`;
     const name = this.generateName(index);
     return {
       id: index,
       code,
       name,
       displayName: `${code} ${name}`,
+      visualThemeKey: theme.key,
+      visualThemeName: theme.label,
+      visualThemeDescription: theme.description,
       color: colorStyle.color,
       colorHex: colorStyle.hex,
       colorName: colorStyle.label,
@@ -8560,6 +8769,11 @@ class MarbleRace {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
+    texture.generateMipmaps = true;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.anisotropy = Math.min(8, this.renderer?.capabilities?.getMaxAnisotropy?.() || 1);
+    texture.needsUpdate = true;
     const materialStyle = MARBLE_MATERIAL_STYLES[materialKey] || MARBLE_MATERIAL_STYLES.glass;
     const material = new THREE.MeshStandardMaterial({
       color,
@@ -11767,6 +11981,10 @@ class MarbleRace {
       startRampSlopeEnabled: Boolean(START_RAMP.enabled),
       startPrepTray: this.startCatcher ? {
         redesign: this.startCatcher.design,
+        visualThemeKey: this.startCatcher.visualThemeKey,
+        textureStyle: this.startCatcher.textureStyle,
+        railTextureStyle: this.startCatcher.railTextureStyle,
+        gateStyle: this.startCatcher.gateStyle,
         trackConnection: this.startCatcher.trackConnection,
         center: { x: this.startCatcher.center.x, y: this.startCatcher.center.y, z: this.startCatcher.center.z },
         backOffset: START_RAMP.prepTrayBackOffset,
@@ -11804,6 +12022,10 @@ class MarbleRace {
       startGateDesign: this.startGate ? {
         ...START_GATE_DESIGN,
         activeDesign: this.startGate.design,
+        visualThemeKey: this.startGate.visualThemeKey,
+        textureStyle: this.startGate.textureStyle,
+        railTextureStyle: this.startGate.railTextureStyle,
+        gateStyle: this.startGate.gateStyle,
         stallCount: this.startGate.stallCount,
         gateWidth: this.startGate.gateWidth,
         trackWidthAtGate: this.startGate.trackWidth,
@@ -11822,13 +12044,26 @@ class MarbleRace {
         visibleLabelCount: this.marbleData.filter((data) => data.labelSprite?.visible).length,
         visibleLabelIds: this.marbleData.filter((data) => data.labelSprite?.visible).map((data) => data.id),
       },
+      marbleVisualTheme: {
+        active: this.visualTheme || MARBLE_VISUAL_THEMES[DEFAULT_MARBLE_VISUAL_THEME_KEY],
+        world: this.getWorldVisualThemeStyle(),
+        coveredObjects: ['marbles', 'track-surface', 'arena-ground', 'rails', 'start-chute', 'start-gate'],
+        available: Object.values(MARBLE_VISUAL_THEMES).map(({ key, label, description }) => ({ key, label, description })),
+        colorStyleCount: this.getVisualThemeStyles().colorStyles.length,
+        patternStyleCount: this.getVisualThemeStyles().patternStyles.length,
+        materialOverride: this.getVisualThemeStyles().materialOverride,
+      },
       startSlotDiagnostics: this.marbleData.map((data) => ({
         id: data.id,
         name: data.name,
+        visualThemeKey: data.visualThemeKey,
+        visualThemeName: data.visualThemeName,
         colorName: data.colorName,
         colorHex: data.colorHex,
         paletteHex: data.paletteHex,
+        materialKey: data.materialKey,
         materialName: data.materialName,
+        patternKey: data.patternKey,
         patternName: data.patternName,
         labelVisible: Boolean(data.labelSprite?.visible),
         row: data.startSlotRow,
