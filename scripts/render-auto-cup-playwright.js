@@ -21,6 +21,7 @@ const averageRaceSecondsPerMeter = 90 / 300;
 const estimateMaxRaceSecondsForTrackLength = (trackLength) => Math.max(45, Math.min(1200, Math.ceil(trackLength * averageRaceSecondsPerMeter)));
 const estimateNonRaceSeconds = (mode, raceCount) => {
   if (mode === 'cup') return 164;
+  if (mode === 'survivor') return 2 + Math.max(0, raceCount - 1) * 15 + 5;
   if (mode === 'continuous') return 2 + Math.max(0, raceCount - 1) * 10 + 5;
   return 7;
 };
@@ -84,7 +85,7 @@ const config = {
   renderPerformanceMode: args.get('render-performance-mode') !== 'false' && process.env.MARBLE_RENDER_PERFORMANCE_MODE !== 'false',
   renderPerformanceProfile: args.get('render-performance-profile') || process.env.MARBLE_RENDER_PERFORMANCE_PROFILE || 'turbo60',
   audioOutput: args.get('audio-output') || process.env.MARBLE_RENDER_AUDIO_OUTPUT || '',
-  mode: ['cup', 'continuous', 'single'].includes(args.get('mode') || process.env.MARBLE_RENDER_MODE) ? (args.get('mode') || process.env.MARBLE_RENDER_MODE) : 'continuous',
+  mode: ['cup', 'continuous', 'single', 'survivor'].includes(args.get('mode') || process.env.MARBLE_RENDER_MODE) ? (args.get('mode') || process.env.MARBLE_RENDER_MODE) : 'continuous',
   multipleRaceCount: Number(args.get('multiple-race-count') || process.env.MARBLE_RENDER_MULTIPLE_RACE_COUNT || 5),
   cupName: args.get('cup-name') || process.env.MARBLE_RENDER_CUP_NAME || 'Speed X Cup',
   ttsVoice: args.get('tts-voice') || process.env.MARBLE_RENDER_TTS_VOICE || 'Alex',
@@ -103,7 +104,7 @@ const configuredMaxRaceSeconds = hasExplicitMaxRaceSeconds && Number.isFinite(co
 const timeoutRaceSecondsEstimate = configuredMaxRaceSeconds || estimateMaxRaceSecondsForTrackLength(config.trackLength);
 config.maxRaceSeconds = configuredMaxRaceSeconds;
 config.multipleRaceCount = Number.isFinite(config.multipleRaceCount) ? Math.max(1, Math.min(99, Math.round(config.multipleRaceCount))) : 5;
-const estimatedRaceCount = config.mode === 'continuous' ? config.multipleRaceCount : config.mode === 'single' ? 1 : 7;
+const estimatedRaceCount = config.mode === 'continuous' || config.mode === 'survivor' ? config.multipleRaceCount : config.mode === 'single' ? 1 : 7;
 const dynamicTimeoutSeconds = Math.ceil((timeoutRaceSecondsEstimate * estimatedRaceCount) + estimateNonRaceSeconds(config.mode, estimatedRaceCount) + 300);
 config.timeoutSeconds = hasExplicitTimeout && Number.isFinite(config.timeoutSeconds) && config.timeoutSeconds > 0
   ? Math.max(120, Math.min(7200, Math.round(config.timeoutSeconds)))
@@ -1613,7 +1614,7 @@ async function main() {
       app.marbleCount = cupSize;
       if (app.ui?.cupSize) app.ui.cupSize.value = String(cupSize);
       if (app.ui?.multipleRaceCount) app.ui.multipleRaceCount.value = String(multipleRaceCount || 5);
-      if (app.ui?.raceMode) app.ui.raceMode.value = mode === 'cup' ? 'cup' : 'single';
+      if (app.ui?.raceMode) app.ui.raceMode.value = mode === 'cup' ? 'cup' : mode === 'survivor' ? 'survivor' : 'single';
       if (app.ui?.lengthSelect) app.ui.lengthSelect.value = 'custom';
       if (app.ui?.customLength) app.ui.customLength.value = String(trackLength || 600);
       if (obstaclePreset) {
@@ -1672,10 +1673,13 @@ async function main() {
         app.__playwrightRenderQuality = { width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio || 1, rendererPixelRatio: app.renderer?.getPixelRatio?.() ?? null };
       }
       if (mode === 'cup') app.startCupMode?.(cupSize, { preserveCurrentSettings: true });
+      else if (mode === 'survivor') app.startSurvivorLeagueMode?.();
       else if (app.cupMode?.active) {
         app.cupMode = { ...app.cupMode, active: false, status: 'idle', stageIndex: 0, currentEntrants: [], results: [], lastQualified: [], champion: null, podium: [] };
+        if (app.survivorLeague?.active) app.survivorLeague = { ...app.survivorLeague, active: false, status: 'idle', roster: [], spotlight: null };
         app.newRace?.({ regenerateTrack: false });
       } else {
+        if (app.survivorLeague?.active) app.survivorLeague = { ...app.survivorLeague, active: false, status: 'idle', roster: [], spotlight: null };
         app.newRace?.({ regenerateTrack: true });
       }
       app.cameraMode = 'default';
@@ -1695,8 +1699,8 @@ async function main() {
         app.ui?.caption?.classList.remove('hidden');
       };
       showRenderLiveEventCaption(
-        mode === 'cup' ? (app.getCupDisplayName?.() || cupName || 'Cup Mode') : (mode === 'continuous' ? `Multiple · ${multipleRaceCount || 5} races` : 'Single Race'),
-        `${mode === 'cup' ? (app.getCupStage?.() || 'Cup') : (mode === 'continuous' ? 'Multiple' : 'Single')} · ${app.obstaclePreset?.label || 'High-density'} · Live race coverage`,
+        mode === 'cup' ? (app.getCupDisplayName?.() || cupName || 'Cup Mode') : (mode === 'survivor' ? `Survivor League · ${multipleRaceCount || 5} races` : mode === 'continuous' ? `Multiple · ${multipleRaceCount || 5} races` : 'Single Race'),
+        `${mode === 'cup' ? (app.getCupStage?.() || 'Cup') : (mode === 'survivor' ? 'Survivor League' : mode === 'continuous' ? 'Multiple' : 'Single')} · ${app.obstaclePreset?.label || 'High-density'} · Live race coverage`,
       );
       const timing = smokeSeconds > 0
         ? {
@@ -1869,6 +1873,114 @@ async function main() {
           app.updateCamera?.(1 / 60);
           app.startContinuousRecordingRace?.();
         });
+      } else if (mode === 'survivor') {
+        app.continuousRecording = {
+          ...(app.continuousRecording || {}),
+          active: true,
+          mode: 'survivor',
+          label: 'Survivor League',
+          phase: 'playwright-render-waiting-open-gate',
+          startedAt: performance.now(),
+          racesCompleted: 0,
+          totalRaces: multipleRaceCount || 5,
+          preserveCurrentSettings: false,
+          nextRaceDelaySeconds: timing.postRaceHoldSeconds ?? 5,
+          gateDelaySeconds: timing.nextGateAfterRaceSeconds ?? 5,
+          initialGateDelaySeconds: timing.gateDelaySeconds ?? 2,
+          finalStopDelaySeconds: timing.stopAfterFinalSeconds ?? 5,
+          nextActionAt: null,
+          pendingTimer: null,
+          playwrightRender: true,
+        };
+        const scheduleSurvivorRecordingAction = (delaySeconds, phase, action) => {
+          if (!app.continuousRecording?.active || app.continuousRecording.mode !== 'survivor') return;
+          app.clearContinuousRecordingTimer?.();
+          app.continuousRecording.phase = phase;
+          app.continuousRecording.nextActionAt = performance.now() + delaySeconds * 1000;
+          app.continuousRecording.pendingTimer = setTimeout(() => {
+            if (!app.continuousRecording?.active || app.continuousRecording.mode !== 'survivor') return;
+            app.continuousRecording.pendingTimer = null;
+            app.continuousRecording.nextActionAt = null;
+            action();
+            app.updateUI?.();
+          }, delaySeconds * 1000);
+          app.updateUI?.();
+        };
+        const originalHandleSurvivorLeagueRaceComplete = app.handleSurvivorLeagueRaceComplete?.bind(app);
+        if (originalHandleSurvivorLeagueRaceComplete && !app.__playwrightSurvivorRaceCompleteWrapped) {
+          app.handleSurvivorLeagueRaceComplete = (...args) => {
+            const result = originalHandleSurvivorLeagueRaceComplete(...args);
+            const recording = app.continuousRecording;
+            if (recording?.playwrightRender && recording.mode === 'survivor') {
+              recording.racesCompleted = Number(app.survivorLeague?.raceNumber || recording.racesCompleted || 0);
+              const completed = Number(recording.racesCompleted || 0);
+              const totalRaces = Math.max(1, Number(recording.totalRaces || 0));
+              if (completed >= totalRaces) {
+                scheduleSurvivorRecordingAction(Number(recording.finalStopDelaySeconds || 0), 'waiting-final-stop', () => {
+                  if (!app.continuousRecording?.active || app.continuousRecording.mode !== 'survivor') return;
+                  app.clearContinuousRecordingTimer?.();
+                  app.continuousRecording.active = false;
+                  app.continuousRecording.phase = 'completed-all-races';
+                  app.continuousRecording.nextActionAt = null;
+                });
+                const capture = window.__MARBLE_RENDER_CANVAS_CAPTURE__?.getInfo?.() || null;
+                if (typeof window.marbleRenderNotifyFinalRaceFinished === 'function') {
+                  Promise.resolve(window.marbleRenderNotifyFinalRaceFinished({
+                    eventSource: 'handleSurvivorLeagueRaceComplete',
+                    mode: 'survivor',
+                    phase: 'waiting-final-stop',
+                    active: true,
+                    state: app.state || null,
+                    elapsed: Number(app.elapsed || 0),
+                    racesCompleted: completed,
+                    totalRaces,
+                    captureElapsedSeconds: capture?.elapsedSeconds ?? null,
+                    capture,
+                  })).catch((error) => {
+                    if (window.__MARBLE_RENDER_DEBUG_LOGS) console.warn('[render:auto-cup] survivor final-race binding notify failed', error?.message || error);
+                  });
+                }
+              } else {
+                scheduleSurvivorRecordingAction(Number(recording.nextRaceDelaySeconds || 0), 'ceremony-hold', () => {
+                  app.newRace?.({ regenerateTrack: true });
+                  scheduleSurvivorRecordingAction(Number(app.continuousRecording?.gateDelaySeconds || 0), 'waiting-open-gate', () => {
+                    app.cameraMode = 'default';
+                    app.resetDefaultAutoCameraForRace?.();
+                    app.updateCamera?.(1 / 60);
+                    app.startSurvivorLeagueRaceWithSpotlight?.();
+                  });
+                });
+              }
+            }
+            return result;
+          };
+          app.__playwrightSurvivorRaceCompleteWrapped = true;
+        }
+        if (maxRaceSeconds > 0) {
+          const originalStartSurvivorLeagueRaceWithSpotlight = app.startSurvivorLeagueRaceWithSpotlight?.bind(app);
+          if (originalStartSurvivorLeagueRaceWithSpotlight && !app.__playwrightSurvivorRaceTimeoutWrapped) {
+            app.startSurvivorLeagueRaceWithSpotlight = (...args) => {
+              const result = originalStartSurvivorLeagueRaceWithSpotlight(...args);
+              const expectedRaceNumber = Number(app.survivorLeague?.raceNumber || 0);
+              window.setTimeout(() => {
+                if (!app.continuousRecording?.active || app.continuousRecording.mode !== 'survivor') return;
+                if (!app.survivorLeague?.active || Number(app.survivorLeague.raceNumber || 0) !== expectedRaceNumber) return;
+                if (app.state !== 'running') return;
+                const unfinished = (app.marbleData || []).filter((data) => data && !data.finished && !data.defeated);
+                unfinished.forEach((data) => app.eliminateStalledMarble?.(data, data.distance || 0, 'playwright-max-race-timeout'));
+                app.checkFinishers?.();
+              }, maxRaceSeconds * 1000);
+              return result;
+            };
+            app.__playwrightSurvivorRaceTimeoutWrapped = true;
+          }
+        }
+        scheduleSurvivorRecordingAction(app.continuousRecording.initialGateDelaySeconds, 'waiting-open-gate', () => {
+          app.cameraMode = 'default';
+          app.resetDefaultAutoCameraForRace?.();
+          app.updateCamera?.(1 / 60);
+          app.startSurvivorLeagueRaceWithSpotlight?.();
+        });
       } else {
         app.autoCupRecording = {
           ...(app.autoCupRecording || {}),
@@ -1919,7 +2031,7 @@ async function main() {
         app.startAutoCupRace?.();
       });
       }
-      const activeRecording = mode === 'single' ? app.singleRecording : mode === 'continuous' ? app.continuousRecording : app.autoCupRecording;
+      const activeRecording = mode === 'single' ? app.singleRecording : (mode === 'continuous' || mode === 'survivor') ? app.continuousRecording : app.autoCupRecording;
       return {
         ok: true,
         cupSize,
@@ -1931,14 +2043,14 @@ async function main() {
         renderLengthMode: app.__playwrightRenderLengthMode,
         mode,
         multipleRaceCount,
-        cupName: mode === 'cup' ? app.getCupDisplayName?.() : (cupName || 'Single Race'),
+        cupName: mode === 'cup' ? app.getCupDisplayName?.() : mode === 'survivor' ? 'Survivor League' : (cupName || 'Single Race'),
         ttsVoice: app.localTtsBridge?.voice || ttsVoice,
         obstacleLabel: app.obstaclePreset?.label,
         obstacleTypes: [...(app.enabledObstacleTypes || [])],
         visualTheme: app.visualThemeKey || app.ui?.visualTheme?.value || null,
         obstacleTypeCounts: app.obstacleTypeCounts,
         phase: activeRecording?.phase,
-        stage: mode === 'cup' ? app.getCupStage?.() : mode,
+        stage: mode === 'cup' ? app.getCupStage?.() : mode === 'survivor' ? (app.survivorLeague?.status || mode) : mode,
         cameraMode: app.cameraMode,
         activeDefaultCameraShot: app.getDefaultCameraMode?.(),
         activeCameraMode: app.activeCameraMode,
