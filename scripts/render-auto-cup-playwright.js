@@ -93,6 +93,8 @@ const config = {
   obstacleDistribution: args.get('obstacle-distribution') || process.env.MARBLE_RENDER_OBSTACLE_DISTRIBUTION || 'random',
   obstacleTypes: (args.get('obstacle-types') || process.env.MARBLE_RENDER_OBSTACLE_TYPES || '').split(',').map((type) => type.trim()).filter(Boolean),
   visualTheme: args.get('visual-theme') || args.get('theme') || process.env.MARBLE_RENDER_VISUAL_THEME || process.env.MARBLE_RENDER_THEME || '',
+  survivorStateInput: args.get('survivor-state-input') || process.env.MARBLE_RENDER_SURVIVOR_STATE_INPUT || '',
+  survivorStateOutput: args.get('survivor-state-output') || process.env.MARBLE_RENDER_SURVIVOR_STATE_OUTPUT || '',
 };
 config.captureScale = Number.isFinite(config.captureScale) && config.captureScale > 0 ? config.captureScale : 1;
 config.targetSeconds = Number.isFinite(config.targetSeconds) ? Math.max(60, Math.min(7200, Math.round(config.targetSeconds))) : 600;
@@ -128,6 +130,11 @@ if (config.uploadYoutube) config.youtubeMetadata = true;
 config.ttsVoice = String(config.ttsVoice || 'Alex').replace(/[^\w .'-]/g, '').trim().slice(0, 48) || 'Alex';
 config.obstacleDistribution = ['random', 'zoned'].includes(config.obstacleDistribution) ? config.obstacleDistribution : 'random';
 config.visualTheme = MARBLE_VISUAL_THEME_KEYS.includes(String(config.visualTheme || '').trim()) ? String(config.visualTheme).trim() : '';
+config.survivorStateInput = config.survivorStateInput ? path.resolve(config.survivorStateInput) : '';
+config.survivorStateOutput = config.survivorStateOutput
+  ? path.resolve(config.survivorStateOutput)
+  : (config.mode === 'survivor' ? path.join(recordingsDir, 'survivor-league-state.json') : '');
+if (config.mode === 'survivor' && !config.survivorStateInput) config.survivorStateInput = config.survivorStateOutput;
 let audioOutputPath = config.audioOutput ? path.resolve(config.audioOutput) : '';
 const explicitAudioOutputPath = audioOutputPath;
 
@@ -258,6 +265,24 @@ const run = (command, args, options = {}) => {
   const result = spawnSync(command, args, { cwd: rootDir, stdio: 'inherit', ...options });
   if (result.status !== 0) fail(`${command} failed with exit code ${result.status ?? result.signal}`);
 };
+
+function readJsonFileIfExists(filePath, label) {
+  if (!filePath || !existsSync(filePath)) return null;
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    fail(`could not parse ${label || 'JSON file'}: ${filePath}`, error);
+  }
+  return null;
+}
+
+function writeJsonFile(filePath, value) {
+  if (!filePath) return;
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+const survivorStateInput = readJsonFileIfExists(config.survivorStateInput, 'Survivor League state input');
 const withTimeout = async (label, promiseFactory, timeoutMs = 5000) => {
   let timer = null;
   let timedOut = false;
@@ -1127,6 +1152,20 @@ async function main() {
       ...(config.videoCapture === 'playwright' ? { recordVideo: { dir: videoDir, size: { width: config.captureWidth, height: config.captureHeight } } } : {}),
     });
     const page = await context.newPage();
+    await page.exposeBinding('marbleRenderWriteSurvivorLeagueState', async (_source, payload = {}) => {
+      if (config.mode !== 'survivor' || !config.survivorStateOutput) return { ok: false, reason: 'not-survivor-render' };
+      const state = payload?.state && typeof payload.state === 'object' ? payload.state : payload;
+      if (!state || typeof state !== 'object' || !Array.isArray(state.roster) || !state.standings) return { ok: false, reason: 'invalid-state' };
+      const document = {
+        ...state,
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        renderOutput: config.output,
+        source: payload?.source || 'playwright-render',
+      };
+      writeJsonFile(config.survivorStateOutput, document);
+      return { ok: true, path: config.survivorStateOutput, raceNumber: document.raceNumber ?? null, rosterSize: document.roster?.length ?? null };
+    });
     await page.exposeBinding('marbleRenderNotifyFinalRaceFinished', async (_source, payload = {}) => {
       if (config.videoCapture !== 'canvas') return { ok: false, reason: 'not-canvas-capture' };
       const snapshot = {
@@ -1579,7 +1618,7 @@ async function main() {
     }
 
     progress('app-start', `${config.mode}, races=${config.multipleRaceCount}, marbles=${config.cupSize}`);
-    const started = await page.evaluate(({ mode, multipleRaceCount, cupSize, trackLength, targetSeconds, lengthMode, smokeSeconds, maxRaceSeconds, cupName, ttsVoice, obstaclePreset, obstacleDistribution, obstacleTypes, visualTheme, showLeftUi, showRightUi, disableMouseOrbit, renderPerformanceMode, renderPerformanceProfile }) => {
+    const started = await page.evaluate(({ mode, multipleRaceCount, cupSize, trackLength, targetSeconds, lengthMode, smokeSeconds, maxRaceSeconds, cupName, ttsVoice, obstaclePreset, obstacleDistribution, obstacleTypes, visualTheme, showLeftUi, showRightUi, disableMouseOrbit, renderPerformanceMode, renderPerformanceProfile, survivorStateInput }) => {
       const app = window.__MARBLE_RACE_APP__;
       if (!app) return { ok: false, reason: 'app-missing' };
       app.__playwrightRenderTrackLength = trackLength;
@@ -1673,7 +1712,7 @@ async function main() {
         app.__playwrightRenderQuality = { width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio || 1, rendererPixelRatio: app.renderer?.getPixelRatio?.() ?? null };
       }
       if (mode === 'cup') app.startCupMode?.(cupSize, { preserveCurrentSettings: true });
-      else if (mode === 'survivor') app.startSurvivorLeagueMode?.();
+      else if (mode === 'survivor') app.startSurvivorLeagueMode?.({ initialState: survivorStateInput });
       else if (app.cupMode?.active) {
         app.cupMode = { ...app.cupMode, active: false, status: 'idle', stageIndex: 0, currentEntrants: [], results: [], lastQualified: [], champion: null, podium: [] };
         if (app.survivorLeague?.active) app.survivorLeague = { ...app.survivorLeague, active: false, status: 'idle', roster: [], spotlight: null };
@@ -1913,6 +1952,12 @@ async function main() {
             const recording = app.continuousRecording;
             if (recording?.playwrightRender && recording.mode === 'survivor') {
               recording.racesCompleted = Number(app.survivorLeague?.raceNumber || recording.racesCompleted || 0);
+              if (typeof window.marbleRenderWriteSurvivorLeagueState === 'function') {
+                const state = app.exportSurvivorLeagueState?.();
+                if (state) Promise.resolve(window.marbleRenderWriteSurvivorLeagueState({ state, source: 'race-complete' })).catch((error) => {
+                  if (window.__MARBLE_RENDER_DEBUG_LOGS) console.warn('[render:auto-cup] survivor state export failed', error?.message || error);
+                });
+              }
               const completed = Number(recording.racesCompleted || 0);
               const totalRaces = Math.max(1, Number(recording.totalRaces || 0));
               if (completed >= totalRaces) {
@@ -2097,6 +2142,7 @@ async function main() {
       disableMouseOrbit: config.disableMouseOrbit,
       renderPerformanceMode: config.renderPerformanceMode,
       renderPerformanceProfile: config.renderPerformanceProfile,
+      survivorStateInput,
     });
     if (!started.ok) fail(`Could not start Playwright auto cup: ${started.reason || 'unknown'}`);
     log('Auto cup started:', JSON.stringify(started));
@@ -2378,6 +2424,7 @@ async function main() {
         winner: podium?.[0]?.name || app.finishers?.[0]?.name || app.cupMode?.champion?.name || null,
         champion: app.cupMode?.champion?.name || null,
         podium: (podium || []).slice(0, 3).map((data, index) => ({ rank: index + 1, id: data.id, name: data.name, time: data.finishTime ?? null })),
+        survivorLeague: app.exportSurvivorLeagueState?.() || null,
         broadcastEvents: (app.broadcastEvents || []).map((event) => ({
           title: event.title,
           detail: event.detail,
@@ -2406,7 +2453,17 @@ async function main() {
       renderSummary.thumbnailCandidates = markerDocument.thumbnailCandidates;
       renderSummary.eventMarkersOutput = config.eventMarkersOutput || '';
     }
-    if (renderSummary) log('Render metadata summary:', JSON.stringify({ eventCount: renderSummary.eventMarkers?.length || renderSummary.broadcastEvents?.length || 0, thumbnailCandidateCount: renderSummary.thumbnailCandidates?.length || 0, winner: renderSummary.winner, champion: renderSummary.champion, cupName: renderSummary.cupName }));
+    if (config.mode === 'survivor' && config.survivorStateOutput && renderSummary?.survivorLeague) {
+      writeJsonFile(config.survivorStateOutput, {
+        ...renderSummary.survivorLeague,
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        renderOutput: config.output,
+        source: 'render-finalize',
+      });
+      renderSummary.survivorStateOutput = config.survivorStateOutput;
+    }
+    if (renderSummary) log('Render metadata summary:', JSON.stringify({ eventCount: renderSummary.eventMarkers?.length || renderSummary.broadcastEvents?.length || 0, thumbnailCandidateCount: renderSummary.thumbnailCandidates?.length || 0, winner: renderSummary.winner, champion: renderSummary.champion, cupName: renderSummary.cupName, survivorRaces: renderSummary.survivorLeague?.raceNumber ?? null, survivorStateOutput: renderSummary.survivorStateOutput || null }));
     const runtimeFpsSummary = await page.evaluate(() => {
       const app = window.__MARBLE_RACE_APP__;
       return app ? {

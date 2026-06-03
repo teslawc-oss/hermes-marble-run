@@ -2559,9 +2559,92 @@ class MarbleRace {
     return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
   }
 
-  startSurvivorLeagueMode() {
-    const fieldSize = SURVIVOR_LEAGUE.fieldSize;
-    const roster = Array.from({ length: fieldSize }, (_, index) => this.createMarbleIdentity(index, fieldSize));
+  normalizeSurvivorIdentity(identity, index = 0, count = SURVIVOR_LEAGUE.fieldSize) {
+    const fallback = this.createMarbleIdentity(index, count);
+    const merged = { ...fallback, ...(identity && typeof identity === 'object' ? identity : {}) };
+    const numericColor = Number.isFinite(Number(merged.color))
+      ? Number(merged.color)
+      : Number.parseInt(String(merged.colorHex || fallback.colorHex || '#ffffff').replace('#', ''), 16);
+    const paletteHex = Array.isArray(merged.paletteHex) && merged.paletteHex.length ? merged.paletteHex : fallback.paletteHex;
+    return {
+      ...merged,
+      id: Number.isFinite(Number(merged.id)) ? Number(merged.id) : index,
+      code: String(merged.code || fallback.code),
+      name: String(merged.name || fallback.name),
+      displayName: String(merged.displayName || `${merged.code || fallback.code} ${merged.name || fallback.name}`),
+      color: Number.isFinite(numericColor) ? numericColor : fallback.color,
+      colorHex: String(merged.colorHex || fallback.colorHex),
+      paletteHex,
+      palette: Array.isArray(merged.palette) && merged.palette.length
+        ? merged.palette
+        : paletteHex.map((hex) => Number.parseInt(String(hex).replace('#', ''), 16)).filter(Number.isFinite),
+      radius: Number.isFinite(Number(merged.radius)) ? Number(merged.radius) : fallback.radius,
+    };
+  }
+
+  normalizeSurvivorStats(stats, identity) {
+    const base = this.createSurvivorStats(identity);
+    const source = stats && typeof stats === 'object' ? stats : {};
+    const normalized = { ...base, ...source, code: identity.code, name: source.name || identity.name, colorHex: source.colorHex || identity.colorHex };
+    ['races', 'wins', 'podiums', 'top5', 'cyclePoints', 'cycleRaces', 'lifetimePoints', 'currentWinStreak', 'currentPodiumStreak', 'survivedCycles'].forEach((key) => {
+      normalized[key] = Number.isFinite(Number(normalized[key])) ? Number(normalized[key]) : base[key];
+    });
+    normalized.recentResults = Array.isArray(source.recentResults) ? source.recentResults.slice(-5) : [];
+    normalized.newcomer = Boolean(source.newcomer ?? base.newcomer);
+    return normalized;
+  }
+
+  normalizeSurvivorLeagueState(state) {
+    if (!state || typeof state !== 'object') return null;
+    const fieldSize = Math.max(1, Math.min(99, Math.round(Number(state.fieldSize || SURVIVOR_LEAGUE.fieldSize))));
+    const rosterSource = Array.isArray(state.roster) ? state.roster : [];
+    const roster = Array.from({ length: fieldSize }, (_, index) => this.normalizeSurvivorIdentity(rosterSource[index], index, fieldSize));
+    const standingsSource = state.standings && typeof state.standings === 'object' ? state.standings : {};
+    const standings = { ...standingsSource };
+    roster.forEach((identity) => {
+      standings[identity.code] = this.normalizeSurvivorStats(standingsSource[identity.code], identity);
+    });
+    return {
+      fieldSize,
+      cycleSize: Math.max(1, Math.round(Number(state.cycleSize || SURVIVOR_LEAGUE.cycleSize))),
+      keepCount: Math.max(1, Math.min(fieldSize, Math.round(Number(state.keepCount || SURVIVOR_LEAGUE.keepCount)))),
+      raceNumber: Math.max(0, Math.round(Number(state.raceNumber || 0))),
+      cycleRaceNumber: Math.max(0, Math.round(Number(state.cycleRaceNumber || 0))),
+      generation: Math.max(1, Math.round(Number(state.generation || 1))),
+      roster,
+      standings,
+      history: Array.isArray(state.history) ? state.history : [],
+      lastSurvivors: Array.isArray(state.lastSurvivors) ? state.lastSurvivors.map((identity, index) => this.normalizeSurvivorIdentity(identity, index, fieldSize)) : [],
+      lastReplaced: Array.isArray(state.lastReplaced) ? state.lastReplaced.map((identity, index) => this.normalizeSurvivorIdentity(identity, index, fieldSize)) : [],
+    };
+  }
+
+  exportSurvivorLeagueState() {
+    if (!this.survivorLeague?.active) return null;
+    const league = this.survivorLeague;
+    return {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      fieldSize: league.fieldSize,
+      cycleSize: league.cycleSize,
+      keepCount: league.keepCount,
+      raceNumber: league.raceNumber,
+      cycleRaceNumber: league.cycleRaceNumber,
+      generation: league.generation,
+      roster: league.roster || [],
+      standings: league.standings || {},
+      history: league.history || [],
+      lastSurvivors: league.lastSurvivors || [],
+      lastReplaced: league.lastReplaced || [],
+    };
+  }
+
+  startSurvivorLeagueMode({ initialState = null } = {}) {
+    const importedState = this.normalizeSurvivorLeagueState(initialState);
+    const fieldSize = importedState?.fieldSize || SURVIVOR_LEAGUE.fieldSize;
+    const roster = importedState?.roster?.length
+      ? importedState.roster.slice(0, fieldSize)
+      : Array.from({ length: fieldSize }, (_, index) => this.createMarbleIdentity(index, fieldSize));
     this.cupMode = { ...this.cupMode, active: false, status: 'idle', stageIndex: 0, currentEntrants: [], results: [], lastQualified: [], champion: null, podium: [] };
     if (this.ui.raceMode) this.ui.raceMode.value = 'survivor';
     if (this.ui.count) {
@@ -2573,16 +2656,16 @@ class MarbleRace {
       active: true,
       status: 'ready',
       fieldSize,
-      cycleSize: SURVIVOR_LEAGUE.cycleSize,
-      keepCount: SURVIVOR_LEAGUE.keepCount,
-      raceNumber: 0,
-      cycleRaceNumber: 0,
-      generation: 1,
+      cycleSize: importedState?.cycleSize || SURVIVOR_LEAGUE.cycleSize,
+      keepCount: importedState?.keepCount || SURVIVOR_LEAGUE.keepCount,
+      raceNumber: Number(importedState?.raceNumber || 0),
+      cycleRaceNumber: Number(importedState?.cycleRaceNumber || 0),
+      generation: Number(importedState?.generation || 1),
       roster,
-      history: [],
-      standings: Object.fromEntries(roster.map((identity) => [identity.code, this.createSurvivorStats(identity)])),
-      lastSurvivors: [],
-      lastReplaced: [],
+      history: Array.isArray(importedState?.history) ? importedState.history : [],
+      standings: importedState?.standings || Object.fromEntries(roster.map((identity) => [identity.code, this.createSurvivorStats(identity)])),
+      lastSurvivors: Array.isArray(importedState?.lastSurvivors) ? importedState.lastSurvivors : [],
+      lastReplaced: Array.isArray(importedState?.lastReplaced) ? importedState.lastReplaced : [],
       spotlight: null,
     };
     this.hideMatchCard();
