@@ -836,19 +836,25 @@ const nameAdjectives = [
   'Copper', 'Velvet', 'Neon', 'Ivory', 'Obsidian', 'Sapphire', 'Ruby', 'Amber',
   'Cobalt', 'Prism', 'Meteor', 'Mirage', 'Nimbus', 'Vector', 'Glacier', 'Wild',
   'Electric', 'Royal', 'Mighty', 'Swift', 'Daring', 'Brave', 'Silent', 'Lucky',
+  'Apex', 'Lava', 'Ember', 'Inferno', 'Tidal', 'Polar', 'Mist', 'Aero',
+  'Sonic', 'Eclipse', 'Void', 'Ghost', 'Noble', 'Titan', 'Chrome', 'Opal',
+  'Candy', 'Orbit', 'Galaxy', 'Lightning', 'Granite', 'Iron', 'Steel', 'Prime',
 ];
 const nameNouns = [
   'Bolt', 'Racer', 'Spinner', 'Flash', 'Rocket', 'Marble', 'Surge', 'Pearl',
-  'Bandit', 'Drifter', 'Chaser', 'Nova', 'Dash', 'Champion', 'Whisker', 'Falcon',
+  'Bandit', 'Drifter', 'Chaser', 'Nova', 'Dash', 'Whisker', 'Falcon',
   'Comet', 'Vortex', 'Voyager', 'Meteor', 'Orbit', 'Pulse', 'Spark', 'Jet',
   'Arrow', 'Storm', 'River', 'Flare', 'Phoenix', 'Dragon', 'Panther', 'Tiger',
   'Cyclone', 'Ranger', 'Runner', 'Glider', 'Striker', 'Pioneer', 'Ace', 'Maverick',
-  'Cruiser', 'Breaker', 'Sprinter', 'Blazer', 'Seeker', 'Raider', 'Knight', 'Pilot',
+  'Cruiser', 'Breaker', 'Blazer', 'Seeker', 'Raider', 'Knight', 'Pilot',
+  'Lynx', 'Fox', 'Hawk', 'Wave', 'Ripple', 'Tide', 'Wisp', 'Drift',
+  'Ember', 'Core', 'Shard', 'Gleam', 'Quill', 'Crown', 'Anchor', 'Guard',
+  'Trail', 'Streak', 'Prism', 'Lance', 'Blade', 'Stone', 'Beacon', 'Rune',
 ];
 const nameTitles = [
   'Turbo', 'Omega', 'Zero', 'Neo', 'Pro', 'Prime', 'Infinity', 'Velocity',
-  'Legend', 'Apex', 'Blitz', 'Fusion', 'Nitro', 'Quantum', 'Orbit', 'Zenith',
-  'Eclipse', 'Vertex', 'Momentum', 'Radiance', 'Catalyst', 'Overdrive', 'Miracle', 'Vanguard',
+  'Apex', 'Blitz', 'Fusion', 'Nitro', 'Quantum', 'Orbit', 'Zenith',
+  'Eclipse', 'Vertex', 'Momentum', 'Radiance', 'Catalyst', 'Overdrive', 'Vanguard',
 ];
 
 const MARBLE_COLOR_STYLES = [
@@ -966,20 +972,20 @@ const MARBLE_MATERIAL_STYLES = {
 };
 
 const MARBLE_PATTERN_STYLES = [
-  { key: 'rings', label: 'Layered Rings' },
-  { key: 'spiral', label: 'Spiral Swirl' },
-  { key: 'ripple', label: 'Ripple Waves' },
-  { key: 'speckle', label: 'Speckled Pearl' },
-  { key: 'comet', label: 'Comet Trails' },
-  { key: 'storm', label: 'Storm Veins' },
-  { key: 'split', label: 'Two-Tone Split' },
-  { key: 'triad', label: 'Tri-Color Panels' },
-  { key: 'chevron', label: 'Chevron Bands' },
-  { key: 'circuit', label: 'Circuit Lines' },
-  { key: 'flame', label: 'Flame Licks' },
-  { key: 'marble-vein', label: 'Natural Marble Veins' },
-  { key: 'checker', label: 'Checker Pop' },
-  { key: 'starfield', label: 'Starfield Glitter' },
+  { key: 'rings', label: 'Orbit Rings' },
+  { key: 'spiral', label: 'Galaxy Swirl' },
+  { key: 'ripple', label: 'Tidal Waves' },
+  { key: 'speckle', label: 'Pearl Speckles' },
+  { key: 'comet', label: 'Comet Streaks' },
+  { key: 'storm', label: 'Lightning Veins' },
+  { key: 'split', label: 'Duel Split' },
+  { key: 'triad', label: 'Triad Panels' },
+  { key: 'chevron', label: 'Racing Arrows' },
+  { key: 'circuit', label: 'Neon Circuit' },
+  { key: 'flame', label: 'Fire Licks' },
+  { key: 'marble-vein', label: 'Stone Veins' },
+  { key: 'checker', label: 'Race Checker' },
+  { key: 'starfield', label: 'Star Glitter' },
 ];
 
 const MARBLE_SIZE_STYLES = [
@@ -2566,6 +2572,9 @@ class MarbleRace {
       ? Number(merged.color)
       : Number.parseInt(String(merged.colorHex || fallback.colorHex || '#ffffff').replace('#', ''), 16);
     const paletteHex = Array.isArray(merged.paletteHex) && merged.paletteHex.length ? merged.paletteHex : fallback.paletteHex;
+    const materialName = String(merged.materialName || fallback.materialName || 'Glass');
+    const patternName = String(merged.patternName || fallback.patternName || 'Orbit Rings');
+    const visualTagline = String(merged.visualTagline || `${materialName} ${patternName}`);
     return {
       ...merged,
       id: Number.isFinite(Number(merged.id)) ? Number(merged.id) : index,
@@ -2578,6 +2587,9 @@ class MarbleRace {
       palette: Array.isArray(merged.palette) && merged.palette.length
         ? merged.palette
         : paletteHex.map((hex) => Number.parseInt(String(hex).replace('#', ''), 16)).filter(Number.isFinite),
+      materialName,
+      patternName,
+      visualTagline,
       radius: Number.isFinite(Number(merged.radius)) ? Number(merged.radius) : fallback.radius,
     };
   }
@@ -2776,14 +2788,17 @@ class MarbleRace {
       const recentTop5 = recent.filter((result) => result.rank <= 5).length;
       const lines = [];
       let drama = 0;
-      if (stats.currentWinStreak >= 2) { lines.push(`${identity.name} has ${stats.currentWinStreak} wins in a row`); drama += 20 + stats.currentWinStreak; }
-      if (recentWins >= 2) { lines.push(`${identity.name} has ${recentWins} wins in the recent 5 races`); drama += 16 + recentWins; }
-      if (stats.currentPodiumStreak >= 3) { lines.push(`${identity.name} is on a ${stats.currentPodiumStreak}-race podium streak`); drama += 14; }
-      if (recentTop5 >= 4) { lines.push(`${identity.name} finished top 5 in ${recentTop5} of the recent 5`); drama += 10; }
-      if (stats.survivedCycles >= 1) { lines.push(`${identity.name} survived ${stats.survivedCycles} cut${stats.survivedCycles === 1 ? '' : 's'}`); drama += 8 + stats.survivedCycles; }
-      if (stats.newcomer || stats.races === 0) { lines.push(`${identity.name} makes a fresh Survivor League debut`); drama += 6; }
-      if (!lines.length) lines.push(`${identity.name} is hunting for a breakout race`);
-      return { identity, stats, drama, lines: lines.slice(0, 2) };
+      const visualTagline = identity.visualTagline || [identity.materialName, identity.patternName].filter(Boolean).join(' ') || identity.colorName || 'signature marble look';
+      const earnedTitles = [];
+      if (stats.currentWinStreak >= 2) { lines.push(`${identity.name} has ${stats.currentWinStreak} wins in a row`); earnedTitles.push('Win Streak'); drama += 20 + stats.currentWinStreak; }
+      if (recentWins >= 2) { lines.push(`${identity.name} has ${recentWins} wins in the recent 5 races`); earnedTitles.push('Hot Streak'); drama += 16 + recentWins; }
+      if (stats.currentPodiumStreak >= 3) { lines.push(`${identity.name} is on a ${stats.currentPodiumStreak}-race podium streak`); earnedTitles.push('Podium Machine'); drama += 14; }
+      if (recentTop5 >= 4) { lines.push(`${identity.name} finished top 5 in ${recentTop5} of the recent 5`); earnedTitles.push('Front Pack Regular'); drama += 10; }
+      if (stats.survivedCycles >= 1) { lines.push(`${identity.name} survived ${stats.survivedCycles} cut${stats.survivedCycles === 1 ? '' : 's'}`); earnedTitles.push('Survivor'); drama += 8 + stats.survivedCycles; }
+      if (stats.newcomer || stats.races === 0) { lines.push(`${identity.name} debuts with ${visualTagline}`); drama += 6; }
+      if (!lines.length) lines.push(`${identity.name} rolls with ${visualTagline}`);
+      if (earnedTitles.length && lines.length < 2) lines.push(`Earned title: ${earnedTitles[0]}`);
+      return { identity, stats, drama, earnedTitles, visualTagline, lines: lines.slice(0, 2) };
     }).sort((a, b) => b.drama - a.drama || Math.random() - 0.5);
     return {
       title: 'Race Spotlight',
@@ -9129,6 +9144,7 @@ class MarbleRace {
     const materialStyle = MARBLE_MATERIAL_STYLES[materialKey] || MARBLE_MATERIAL_STYLES.glass;
     const paletteHex = colorStyle.palette?.length ? colorStyle.palette : [colorStyle.hex];
     const palette = paletteHex.map((hex) => Number.parseInt(hex.replace('#', ''), 16));
+    const visualTagline = `${materialStyle.label} ${patternStyle.label}`;
     const codeNumber = String(index + 1).padStart(Math.max(2, String(count).length), '0');
     const code = `MB-${codeNumber}-${theme.key.slice(0, 3).toUpperCase()}-${colorStyle.hex.slice(1, 4).toUpperCase()}-${patternStyle.key.slice(0, 3).toUpperCase()}-${materialKey.slice(0, 3).toUpperCase()}-${sizeStyle.key}`;
     const name = this.generateName(index);
@@ -9149,6 +9165,7 @@ class MarbleRace {
       materialName: materialStyle.label,
       patternKey: patternStyle.key,
       patternName: patternStyle.label,
+      visualTagline,
       sizeKey: sizeStyle.key,
       sizeName: sizeStyle.label,
       radius: sizeStyle.radius,
