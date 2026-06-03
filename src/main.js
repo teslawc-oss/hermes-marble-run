@@ -1849,8 +1849,6 @@ class MarbleRace {
     const headerY = cardY + cardH * 0.12;
     this.drawViewerText(ctx, 'SURVIVOR LEAGUE', cx, headerY, { font: `900 ${Math.round(minDim * (isVertical ? 0.034 : 0.030))}px Arial Black, Impact, sans-serif`, fill: '#ffd166', strokeWidth: Math.max(3, minDim * 0.005), align: 'center', maxWidth: cardW - 70 });
     this.drawViewerText(ctx, spotlight.title || 'Race Spotlight', cx, cardY + cardH * 0.24, { font: `900 ${Math.round(minDim * (isVertical ? 0.060 : 0.055))}px Arial Black, Impact, sans-serif`, fill: '#ffffff', strokeWidth: Math.max(5, minDim * 0.008), align: 'center', maxWidth: cardW - 70 });
-    this.drawViewerText(ctx, spotlight.subtitle || `Hidden scores · top ${league.keepCount} survive`, cx, cardY + cardH * 0.34, { font: `800 ${Math.round(minDim * (isVertical ? 0.027 : 0.023))}px Arial, system-ui, sans-serif`, fill: '#dffaff', strokeWidth: Math.max(3, minDim * 0.004), align: 'center', maxWidth: cardW - 90 });
-
     const marbles = spotlight.marbles.slice(0, 2);
     const cardGap = isVertical ? cardH * 0.035 : cardW * 0.026;
     const miniY = cardY + cardH * 0.43;
@@ -2695,7 +2693,7 @@ class MarbleRace {
     }).sort((a, b) => b.drama - a.drama || Math.random() - 0.5);
     return {
       title: 'Race Spotlight',
-      subtitle: `Hidden scores · top ${league.keepCount} average survive every ${league.cycleSize} races`,
+      subtitle: '',
       marbles: candidates.slice(0, 2),
     };
   }
@@ -2712,7 +2710,8 @@ class MarbleRace {
       const lineHtml = lines.map((line) => `<li>${this.escapeOverlayHtml(line)}</li>`).join('');
       return `<article class="survivor-spotlight-card" style="--spotlight-color:${color}"><div class="survivor-spotlight-name"><span class="swatch"></span><span>${this.escapeOverlayHtml(identity.name)}</span></div><ul class="survivor-spotlight-lines">${lineHtml}</ul></article>`;
     }).join('');
-    this.ui.survivorSpotlight.innerHTML = `<span class="spotlight-kicker">Survivor League</span><h2>${this.escapeOverlayHtml(spotlight.title)}</h2><p class="spotlight-rule">${this.escapeOverlayHtml(spotlight.subtitle)}</p><div class="survivor-spotlight-grid">${cards}</div>`;
+    const ruleHtml = spotlight.subtitle ? `<p class="spotlight-rule">${this.escapeOverlayHtml(spotlight.subtitle)}</p>` : '';
+    this.ui.survivorSpotlight.innerHTML = `<span class="spotlight-kicker">Survivor League</span><h2>${this.escapeOverlayHtml(spotlight.title)}</h2>${ruleHtml}<div class="survivor-spotlight-grid">${cards}</div>`;
     this.ui.survivorSpotlight.classList.remove('hidden');
     return true;
   }
