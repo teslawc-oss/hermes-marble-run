@@ -1848,7 +1848,7 @@ class MarbleRace {
 
     const headerY = cardY + cardH * 0.12;
     this.drawViewerText(ctx, 'SURVIVOR LEAGUE', cx, headerY, { font: `900 ${Math.round(minDim * (isVertical ? 0.034 : 0.030))}px Arial Black, Impact, sans-serif`, fill: '#ffd166', strokeWidth: Math.max(3, minDim * 0.005), align: 'center', maxWidth: cardW - 70 });
-    this.drawViewerText(ctx, spotlight.title || `Race ${league.raceNumber + 1} Spotlight`, cx, cardY + cardH * 0.24, { font: `900 ${Math.round(minDim * (isVertical ? 0.060 : 0.055))}px Arial Black, Impact, sans-serif`, fill: '#ffffff', strokeWidth: Math.max(5, minDim * 0.008), align: 'center', maxWidth: cardW - 70 });
+    this.drawViewerText(ctx, spotlight.title || 'Race Spotlight', cx, cardY + cardH * 0.24, { font: `900 ${Math.round(minDim * (isVertical ? 0.060 : 0.055))}px Arial Black, Impact, sans-serif`, fill: '#ffffff', strokeWidth: Math.max(5, minDim * 0.008), align: 'center', maxWidth: cardW - 70 });
     this.drawViewerText(ctx, spotlight.subtitle || `Hidden scores · top ${league.keepCount} survive`, cx, cardY + cardH * 0.34, { font: `800 ${Math.round(minDim * (isVertical ? 0.027 : 0.023))}px Arial, system-ui, sans-serif`, fill: '#dffaff', strokeWidth: Math.max(3, minDim * 0.004), align: 'center', maxWidth: cardW - 90 });
 
     const marbles = spotlight.marbles.slice(0, 2);
@@ -1886,7 +1886,6 @@ class MarbleRace {
     this.drawViewerRoundedRect(ctx, barX, barY, Math.max(barH, barW * progress), barH, barH / 2);
     ctx.fillStyle = '#7cf7d4';
     ctx.fill();
-    this.drawViewerText(ctx, 'SCORES STAY HIDDEN FROM VIEWERS', cx, cardY + cardH - cardH * 0.18, { font: `900 ${Math.round(minDim * (isVertical ? 0.024 : 0.019))}px Arial Black, Impact, sans-serif`, fill: '#ffd166', strokeWidth: Math.max(3, minDim * 0.004), align: 'center', maxWidth: cardW - 80 });
     ctx.restore();
 
     return {
@@ -2695,7 +2694,7 @@ class MarbleRace {
       return { identity, stats, drama, lines: lines.slice(0, 2) };
     }).sort((a, b) => b.drama - a.drama || Math.random() - 0.5);
     return {
-      title: `Race ${league.raceNumber + 1} Spotlight`,
+      title: 'Race Spotlight',
       subtitle: `Hidden scores · top ${league.keepCount} average survive every ${league.cycleSize} races`,
       marbles: candidates.slice(0, 2),
     };
