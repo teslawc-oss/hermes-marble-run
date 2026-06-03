@@ -2713,7 +2713,7 @@ class MarbleRace {
       const lineHtml = lines.map((line) => `<li>${this.escapeOverlayHtml(line)}</li>`).join('');
       return `<article class="survivor-spotlight-card" style="--spotlight-color:${color}"><div class="survivor-spotlight-name"><span class="swatch"></span><span>${this.escapeOverlayHtml(identity.name)}</span></div><ul class="survivor-spotlight-lines">${lineHtml}</ul></article>`;
     }).join('');
-    this.ui.survivorSpotlight.innerHTML = `<span class="spotlight-kicker">Survivor League</span><h2>${this.escapeOverlayHtml(spotlight.title)}</h2><p class="spotlight-rule">${this.escapeOverlayHtml(spotlight.subtitle)}</p><div class="survivor-spotlight-grid">${cards}</div><div class="survivor-spotlight-footer">Scores stay hidden from viewers</div>`;
+    this.ui.survivorSpotlight.innerHTML = `<span class="spotlight-kicker">Survivor League</span><h2>${this.escapeOverlayHtml(spotlight.title)}</h2><p class="spotlight-rule">${this.escapeOverlayHtml(spotlight.subtitle)}</p><div class="survivor-spotlight-grid">${cards}</div>`;
     this.ui.survivorSpotlight.classList.remove('hidden');
     return true;
   }
