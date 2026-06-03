@@ -64,6 +64,14 @@ const MULTIPLE_RECORDING_CEREMONY_HOLD_SECONDS = 10;
 const MULTIPLE_RECORDING_NEXT_GATE_SECONDS = 10;
 const MULTIPLE_RECORDING_FINAL_STOP_SECONDS = 10;
 const SINGLE_RECORDING_FINAL_STOP_SECONDS = MULTIPLE_RECORDING_FINAL_STOP_SECONDS;
+const SURVIVOR_LEAGUE = {
+  fieldSize: 16,
+  cycleSize: 5,
+  keepCount: 10,
+  spotlightSeconds: 5,
+  pointsByRank: [20, 17, 15, 13, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+  label: 'hidden score survivor league: every race scores all placements, every five races keeps the top ten average performers, and replaces the rest without exposing points to viewers',
+};
 const CUP_CEREMONY_POST_NARRATION_DELAY_SECONDS = 2;
 const CUP_VIDEO_TIMING = {
   enabled: true,
@@ -1398,6 +1406,25 @@ class MarbleRace {
       champion: null,
       podium: [],
     };
+    this.survivorLeague = {
+      active: false,
+      status: 'idle',
+      fieldSize: SURVIVOR_LEAGUE.fieldSize,
+      cycleSize: SURVIVOR_LEAGUE.cycleSize,
+      keepCount: SURVIVOR_LEAGUE.keepCount,
+      raceNumber: 0,
+      cycleRaceNumber: 0,
+      generation: 1,
+      roster: [],
+      history: [],
+      standings: {},
+      lastSurvivors: [],
+      lastReplaced: [],
+      spotlight: null,
+      spotlightTimer: null,
+      spotlightStartedAt: 0,
+      lastCanvasSurvivorSpotlightSummary: null,
+    };
     this.ui = {
       leftHud: document.querySelector('#left-hud'),
       rightHud: document.querySelector('#right-hud'),
@@ -1477,6 +1504,7 @@ class MarbleRace {
       commentaryLine: document.querySelector('#commentary-line'),
       countdown: document.querySelector('#countdown-overlay'),
       matchCard: document.querySelector('#match-card'),
+      survivorSpotlight: document.querySelector('#survivor-spotlight'),
       replayHighlight: document.querySelector('#replay-highlight-overlay'),
       finalShowcase: document.querySelector('#final-showcase'),
     };
@@ -1779,6 +1807,99 @@ class MarbleRace {
     return summary;
   }
 
+  drawCanvasSurvivorSpotlight({ ctx, canvas, summaryTarget = 'recording' } = {}) {
+    const league = this.survivorLeague;
+    const spotlight = league?.spotlight;
+    if (!league?.active || league.status !== 'spotlight' || !league.spotlightStartedAt || !spotlight?.marbles?.length || !ctx || !canvas) return null;
+    const w = canvas.width;
+    const h = canvas.height;
+    const layoutKey = this.videoCanvasLayoutKey || (w < h ? 'vertical' : 'horizontal');
+    const isVertical = layoutKey === 'vertical' || h > w * 1.2;
+    const minDim = Math.min(w, h);
+    const startedAt = league.spotlightStartedAt || performance.now();
+    const ageSeconds = Math.max(0, (performance.now() - startedAt) / 1000);
+    const duration = Math.max(0.1, Number(league.spotlightSeconds) || SURVIVOR_LEAGUE.spotlightSeconds || 5);
+    const progress = clamp(ageSeconds / duration, 0, 1);
+    const cx = w / 2;
+    const cardW = isVertical ? w * 0.86 : w * 0.58;
+    const cardH = isVertical ? h * 0.34 : h * 0.42;
+    const cardX = cx - cardW / 2;
+    const cardY = isVertical ? h * 0.30 : h * 0.25;
+    const radius = minDim * (isVertical ? 0.04 : 0.032);
+
+    ctx.save();
+    const vignette = ctx.createRadialGradient(cx, cardY + cardH * 0.48, minDim * 0.12, cx, cardY + cardH * 0.48, minDim * 0.82);
+    vignette.addColorStop(0, 'rgba(124, 247, 212, 0.16)');
+    vignette.addColorStop(0.44, 'rgba(9, 11, 28, 0.30)');
+    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.58)');
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, w, h);
+
+    this.drawViewerRoundedRect(ctx, cardX, cardY, cardW, cardH, radius);
+    const bg = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
+    bg.addColorStop(0, 'rgba(6, 10, 24, 0.92)');
+    bg.addColorStop(0.56, 'rgba(18, 14, 44, 0.86)');
+    bg.addColorStop(1, 'rgba(38, 18, 54, 0.84)');
+    ctx.fillStyle = bg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(124,247,212,0.56)';
+    ctx.lineWidth = Math.max(4, minDim * 0.006);
+    ctx.stroke();
+
+    const headerY = cardY + cardH * 0.12;
+    this.drawViewerText(ctx, 'SURVIVOR LEAGUE', cx, headerY, { font: `900 ${Math.round(minDim * (isVertical ? 0.034 : 0.030))}px Arial Black, Impact, sans-serif`, fill: '#ffd166', strokeWidth: Math.max(3, minDim * 0.005), align: 'center', maxWidth: cardW - 70 });
+    this.drawViewerText(ctx, spotlight.title || `Race ${league.raceNumber + 1} Spotlight`, cx, cardY + cardH * 0.24, { font: `900 ${Math.round(minDim * (isVertical ? 0.060 : 0.055))}px Arial Black, Impact, sans-serif`, fill: '#ffffff', strokeWidth: Math.max(5, minDim * 0.008), align: 'center', maxWidth: cardW - 70 });
+    this.drawViewerText(ctx, spotlight.subtitle || `Hidden scores · top ${league.keepCount} survive`, cx, cardY + cardH * 0.34, { font: `800 ${Math.round(minDim * (isVertical ? 0.027 : 0.023))}px Arial, system-ui, sans-serif`, fill: '#dffaff', strokeWidth: Math.max(3, minDim * 0.004), align: 'center', maxWidth: cardW - 90 });
+
+    const marbles = spotlight.marbles.slice(0, 2);
+    const cardGap = isVertical ? cardH * 0.035 : cardW * 0.026;
+    const miniY = cardY + cardH * 0.43;
+    const miniH = isVertical ? cardH * 0.22 : cardH * 0.31;
+    const miniW = isVertical ? cardW - 70 : (cardW - 92 - cardGap) / 2;
+    marbles.forEach(({ identity, lines }, index) => {
+      const color = /^#[0-9a-f]{6}$/i.test(identity.colorHex || '') ? identity.colorHex : '#7cf7d4';
+      const x = isVertical ? cardX + 35 : cardX + 46 + index * (miniW + cardGap);
+      const y = isVertical ? miniY + index * (miniH + cardH * 0.035) : miniY;
+      this.drawViewerRoundedRect(ctx, x, y, miniW, miniH, Math.max(22, radius * 0.65));
+      ctx.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.lineWidth = Math.max(2, minDim * 0.003);
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x + miniW * 0.08, y + miniH * 0.26, Math.max(12, minDim * 0.018), 0, Math.PI * 2);
+      ctx.fill();
+      this.drawViewerText(ctx, identity.name, x + miniW * 0.14, y + miniH * 0.26, { font: `900 ${Math.round(minDim * (isVertical ? 0.034 : 0.032))}px Arial Black, Impact, sans-serif`, fill: '#ffffff', strokeWidth: Math.max(4, minDim * 0.006), maxWidth: miniW * 0.78 });
+      (lines || []).slice(0, 2).forEach((line, lineIndex) => {
+        this.drawViewerText(ctx, line, x + 24, y + miniH * (0.58 + lineIndex * 0.22), { font: `800 ${Math.round(minDim * (isVertical ? 0.025 : 0.021))}px Arial, system-ui, sans-serif`, fill: '#dffaff', strokeWidth: Math.max(3, minDim * 0.004), maxWidth: miniW - 48 });
+      });
+    });
+
+    const barW = cardW * 0.56;
+    const barH = Math.max(10, minDim * 0.012);
+    const barX = cx - barW / 2;
+    const barY = cardY + cardH - cardH * 0.10;
+    this.drawViewerRoundedRect(ctx, barX, barY, barW, barH, barH / 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.20)';
+    ctx.fill();
+    this.drawViewerRoundedRect(ctx, barX, barY, Math.max(barH, barW * progress), barH, barH / 2);
+    ctx.fillStyle = '#7cf7d4';
+    ctx.fill();
+    this.drawViewerText(ctx, 'SCORES STAY HIDDEN FROM VIEWERS', cx, cardY + cardH - cardH * 0.18, { font: `900 ${Math.round(minDim * (isVertical ? 0.024 : 0.019))}px Arial Black, Impact, sans-serif`, fill: '#ffd166', strokeWidth: Math.max(3, minDim * 0.004), align: 'center', maxWidth: cardW - 80 });
+    ctx.restore();
+
+    return {
+      active: true,
+      target: summaryTarget,
+      layout: isVertical ? 'vertical' : 'horizontal',
+      canvasSize: `${w}x${h}`,
+      title: spotlight.title,
+      marbles: marbles.map(({ identity }) => identity.name),
+      progress: Number(progress.toFixed(3)),
+    };
+  }
+
   drawViewerCanvasOverlay({ canvas = this.viewerOverlayCanvas, ctx = this.viewerOverlayContext, summaryTarget = 'recording' } = {}) {
     if (!CANVAS_VIEWER_OVERLAY.enabled || !ctx || !canvas) return;
     const w = canvas.width;
@@ -1884,6 +2005,8 @@ class MarbleRace {
     this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, progressX + progressW + 18, infoY + 50, { font: '800 17px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, maxWidth: 168 });
 
     this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
+    const survivorSpotlightSummary = this.drawCanvasSurvivorSpotlight({ ctx, canvas, summaryTarget });
+    if (survivorSpotlightSummary && summaryTarget !== 'web') this.survivorLeague.lastCanvasSurvivorSpotlightSummary = survivorSpotlightSummary;
 
     const overlaySummary = {
       enabled: true,
@@ -1994,6 +2117,8 @@ class MarbleRace {
     this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, infoX + infoW / 2, infoY + 102, { font: '800 23px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, align: 'center', maxWidth: infoW - 68 });
 
     this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
+    const survivorSpotlightSummary = this.drawCanvasSurvivorSpotlight({ ctx, canvas, summaryTarget });
+    if (survivorSpotlightSummary && summaryTarget !== 'web') this.survivorLeague.lastCanvasSurvivorSpotlightSummary = survivorSpotlightSummary;
 
     const overlaySummary = {
       enabled: true,
@@ -2138,7 +2263,8 @@ class MarbleRace {
     window.addEventListener('pointerdown', unlockAudio, { once: true, passive: true });
     window.addEventListener('keydown', unlockAudio, { once: true });
     this.ui.start.addEventListener('click', () => {
-      if (this.state === 'ready' || this.state === 'idle') this.startCountdownAndGateOpen();
+      if ((this.state === 'ready' || this.state === 'idle') && this.survivorLeague?.active) this.startSurvivorLeagueRaceWithSpotlight();
+      else if (this.state === 'ready' || this.state === 'idle') this.startCountdownAndGateOpen();
       else if (this.cupMode?.active && this.cupMode.status === 'awaiting-next') this.advanceCupMatch();
       else if (this.cupMode?.active && this.cupMode.status === 'complete') this.startCupMode(this.cupMode.size);
       else this.newRace({ regenerateTrack: false });
@@ -2305,9 +2431,12 @@ class MarbleRace {
   updateRaceMode() {
     const mode = this.ui.raceMode?.value || 'single';
     if (mode === 'cup') this.startCupMode(Number(this.ui.cupSize?.value) || 12);
+    else if (mode === 'survivor') this.startSurvivorLeagueMode();
     else {
       this.cupMode = { ...this.cupMode, active: false, status: 'idle', stageIndex: 0, currentEntrants: [], results: [], lastQualified: [], champion: null, podium: [] };
+      this.survivorLeague = { ...this.survivorLeague, active: false, status: 'idle', roster: [], spotlight: null };
       this.hideMatchCard();
+      this.hideSurvivorSpotlight();
       this.ui.count.disabled = false;
       this.newRace({ regenerateTrack: true });
     }
@@ -2334,6 +2463,8 @@ class MarbleRace {
   startCupMode(size = 12, { preserveCurrentSettings = true } = {}) {
     const rawSize = Math.round(Number(size) || 12);
     const cupSize = Math.max(2, Math.min(99, rawSize));
+    this.survivorLeague = { ...this.survivorLeague, active: false, status: 'idle', roster: [], spotlight: null };
+    this.hideSurvivorSpotlight();
     if (this.ui.raceMode) this.ui.raceMode.value = 'cup';
     if (this.ui.cupSize) this.ui.cupSize.value = String(cupSize);
     if (this.ui.count) {
@@ -2414,6 +2545,201 @@ class MarbleRace {
 
   hideMatchCard() {
     if (this.ui.matchCard) this.ui.matchCard.classList.add('hidden');
+  }
+
+  escapeOverlayHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+  }
+
+  startSurvivorLeagueMode() {
+    const fieldSize = SURVIVOR_LEAGUE.fieldSize;
+    const roster = Array.from({ length: fieldSize }, (_, index) => this.createMarbleIdentity(index, fieldSize));
+    this.cupMode = { ...this.cupMode, active: false, status: 'idle', stageIndex: 0, currentEntrants: [], results: [], lastQualified: [], champion: null, podium: [] };
+    if (this.ui.raceMode) this.ui.raceMode.value = 'survivor';
+    if (this.ui.count) {
+      this.ui.count.value = String(fieldSize);
+      this.ui.count.disabled = true;
+    }
+    this.survivorLeague = {
+      ...this.survivorLeague,
+      active: true,
+      status: 'ready',
+      fieldSize,
+      cycleSize: SURVIVOR_LEAGUE.cycleSize,
+      keepCount: SURVIVOR_LEAGUE.keepCount,
+      raceNumber: 0,
+      cycleRaceNumber: 0,
+      generation: 1,
+      roster,
+      history: [],
+      standings: Object.fromEntries(roster.map((identity) => [identity.code, this.createSurvivorStats(identity)])),
+      lastSurvivors: [],
+      lastReplaced: [],
+      spotlight: null,
+    };
+    this.hideMatchCard();
+    this.newRace({ regenerateTrack: true });
+  }
+
+  createSurvivorStats(identity) {
+    return {
+      code: identity.code,
+      name: identity.name,
+      colorHex: identity.colorHex,
+      races: 0,
+      wins: 0,
+      podiums: 0,
+      top5: 0,
+      cyclePoints: 0,
+      cycleRaces: 0,
+      lifetimePoints: 0,
+      currentWinStreak: 0,
+      currentPodiumStreak: 0,
+      survivedCycles: 0,
+      recentResults: [],
+      newcomer: true,
+    };
+  }
+
+  getSurvivorStats(identity) {
+    if (!identity?.code) return null;
+    if (!this.survivorLeague.standings[identity.code]) this.survivorLeague.standings[identity.code] = this.createSurvivorStats(identity);
+    return this.survivorLeague.standings[identity.code];
+  }
+
+  getSurvivorPointsForRank(rank) {
+    const points = SURVIVOR_LEAGUE.pointsByRank[Math.max(0, rank - 1)];
+    return Number.isFinite(points) ? points : 0;
+  }
+
+  handleSurvivorLeagueRaceComplete(finalRanking) {
+    if (!this.survivorLeague?.active) return;
+    const league = this.survivorLeague;
+    league.raceNumber += 1;
+    league.cycleRaceNumber += 1;
+    const raceResult = [];
+    finalRanking.forEach((data, index) => {
+      const identity = data.reusableIdentity || league.roster.find((entry) => entry.code === data.code);
+      const stats = this.getSurvivorStats(identity || data);
+      if (!stats) return;
+      const rank = index + 1;
+      const points = this.getSurvivorPointsForRank(rank);
+      stats.name = data.name || stats.name;
+      stats.colorHex = data.colorHex || stats.colorHex;
+      stats.races += 1;
+      stats.cycleRaces += 1;
+      stats.cyclePoints += points;
+      stats.lifetimePoints += points;
+      stats.wins += rank === 1 ? 1 : 0;
+      stats.podiums += rank <= 3 ? 1 : 0;
+      stats.top5 += rank <= 5 ? 1 : 0;
+      stats.currentWinStreak = rank === 1 ? stats.currentWinStreak + 1 : 0;
+      stats.currentPodiumStreak = rank <= 3 ? stats.currentPodiumStreak + 1 : 0;
+      stats.newcomer = false;
+      stats.recentResults = [...(stats.recentResults || []), { race: league.raceNumber, rank, points }].slice(-5);
+      raceResult.push({ rank, points, code: stats.code, name: stats.name });
+    });
+    league.history.push({ race: league.raceNumber, generation: league.generation, results: raceResult });
+    if (league.cycleRaceNumber >= league.cycleSize) this.settleSurvivorCycle();
+    league.spotlight = this.buildSurvivorSpotlight();
+  }
+
+  settleSurvivorCycle() {
+    const league = this.survivorLeague;
+    if (!league?.active) return;
+    const scoredRoster = league.roster.map((identity) => {
+      const stats = this.getSurvivorStats(identity);
+      const average = stats?.cycleRaces ? stats.cyclePoints / stats.cycleRaces : 0;
+      return { identity, stats, average };
+    }).sort((a, b) => b.average - a.average || (b.stats?.wins || 0) - (a.stats?.wins || 0) || (b.stats?.podiums || 0) - (a.stats?.podiums || 0));
+    const survivors = scoredRoster.slice(0, league.keepCount).map((entry) => entry.identity);
+    const replaced = scoredRoster.slice(league.keepCount).map((entry) => entry.identity);
+    survivors.forEach((identity) => {
+      const stats = this.getSurvivorStats(identity);
+      if (!stats) return;
+      stats.survivedCycles += 1;
+      stats.cyclePoints = 0;
+      stats.cycleRaces = 0;
+    });
+    const newcomersNeeded = Math.max(0, league.fieldSize - survivors.length);
+    const newcomers = Array.from({ length: newcomersNeeded }, (_, index) => {
+      const identity = this.createMarbleIdentity(league.generation * 100 + index + survivors.length, league.fieldSize + league.generation * 100);
+      this.survivorLeague.standings[identity.code] = this.createSurvivorStats(identity);
+      return identity;
+    });
+    league.lastSurvivors = survivors;
+    league.lastReplaced = replaced;
+    league.roster = [...survivors, ...newcomers];
+    league.cycleRaceNumber = 0;
+    league.generation += 1;
+    this.pushBroadcastEvent('Survivor Cut', `${survivors.length} survive · ${replaced.length} replaced`, { kind: 'complete', force: true, lines: [`${survivors.length} survive the cut`, `${replaced.length} new challengers enter`] });
+  }
+
+  buildSurvivorSpotlight() {
+    const league = this.survivorLeague;
+    if (!league?.active || !league.roster?.length) return null;
+    const candidates = league.roster.map((identity) => {
+      const stats = this.getSurvivorStats(identity) || this.createSurvivorStats(identity);
+      const recent = stats.recentResults || [];
+      const recentWins = recent.filter((result) => result.rank === 1).length;
+      const recentTop5 = recent.filter((result) => result.rank <= 5).length;
+      const lines = [];
+      let drama = 0;
+      if (stats.currentWinStreak >= 2) { lines.push(`${identity.name} has ${stats.currentWinStreak} wins in a row`); drama += 20 + stats.currentWinStreak; }
+      if (recentWins >= 2) { lines.push(`${identity.name} has ${recentWins} wins in the recent 5 races`); drama += 16 + recentWins; }
+      if (stats.currentPodiumStreak >= 3) { lines.push(`${identity.name} is on a ${stats.currentPodiumStreak}-race podium streak`); drama += 14; }
+      if (recentTop5 >= 4) { lines.push(`${identity.name} finished top 5 in ${recentTop5} of the recent 5`); drama += 10; }
+      if (stats.survivedCycles >= 1) { lines.push(`${identity.name} survived ${stats.survivedCycles} cut${stats.survivedCycles === 1 ? '' : 's'}`); drama += 8 + stats.survivedCycles; }
+      if (stats.newcomer || stats.races === 0) { lines.push(`${identity.name} makes a fresh Survivor League debut`); drama += 6; }
+      if (!lines.length) lines.push(`${identity.name} is hunting for a breakout race`);
+      return { identity, stats, drama, lines: lines.slice(0, 2) };
+    }).sort((a, b) => b.drama - a.drama || Math.random() - 0.5);
+    return {
+      title: `Race ${league.raceNumber + 1} Spotlight`,
+      subtitle: `Hidden scores · top ${league.keepCount} average survive every ${league.cycleSize} races`,
+      marbles: candidates.slice(0, 2),
+    };
+  }
+
+  showSurvivorSpotlight() {
+    if (!this.ui.survivorSpotlight || !this.survivorLeague?.active) return false;
+    const spotlight = this.survivorLeague.spotlight || this.buildSurvivorSpotlight();
+    if (!spotlight?.marbles?.length) return false;
+    this.survivorLeague.spotlight = spotlight;
+    this.survivorLeague.spotlightStartedAt = performance.now();
+    this.survivorLeague.lastCanvasSurvivorSpotlightSummary = null;
+    const cards = spotlight.marbles.map(({ identity, lines }) => {
+      const color = this.escapeOverlayHtml(identity.colorHex || '#7cf7d4');
+      const lineHtml = lines.map((line) => `<li>${this.escapeOverlayHtml(line)}</li>`).join('');
+      return `<article class="survivor-spotlight-card" style="--spotlight-color:${color}"><div class="survivor-spotlight-name"><span class="swatch"></span><span>${this.escapeOverlayHtml(identity.name)}</span></div><ul class="survivor-spotlight-lines">${lineHtml}</ul></article>`;
+    }).join('');
+    this.ui.survivorSpotlight.innerHTML = `<span class="spotlight-kicker">Survivor League</span><h2>${this.escapeOverlayHtml(spotlight.title)}</h2><p class="spotlight-rule">${this.escapeOverlayHtml(spotlight.subtitle)}</p><div class="survivor-spotlight-grid">${cards}</div><div class="survivor-spotlight-footer">Scores stay hidden from viewers</div>`;
+    this.ui.survivorSpotlight.classList.remove('hidden');
+    return true;
+  }
+
+  hideSurvivorSpotlight() {
+    if (this.survivorLeague?.spotlightTimer) {
+      clearTimeout(this.survivorLeague.spotlightTimer);
+      this.survivorLeague.spotlightTimer = null;
+    }
+    if (this.ui?.survivorSpotlight) this.ui.survivorSpotlight.classList.add('hidden');
+    this.survivorLeague.spotlightStartedAt = 0;
+    this.survivorLeague.lastCanvasSurvivorSpotlightSummary = { active: false };
+  }
+
+  startSurvivorLeagueRaceWithSpotlight() {
+    if (!this.survivorLeague?.active || this.state !== 'ready') return;
+    this.hideMatchCard();
+    this.showSurvivorSpotlight();
+    this.survivorLeague.status = 'spotlight';
+    this.ui.start.textContent = 'Spotlight';
+    this.survivorLeague.spotlightTimer = setTimeout(() => {
+      if (!this.survivorLeague?.active || this.state !== 'ready') return;
+      this.hideSurvivorSpotlight();
+      this.survivorLeague.status = 'countdown';
+      this.startCountdownAndGateOpen();
+    }, Math.max(0, Number(this.survivorLeague.spotlightSeconds) || SURVIVOR_LEAGUE.spotlightSeconds) * 1000);
   }
 
   advanceCupMatch() {
@@ -2714,11 +3040,17 @@ class MarbleRace {
       this.updateTrackDebugCode();
     }
 
-    const requestedCount = this.cupMode?.active
-      ? Math.max(1, this.cupMode.currentEntrants?.length || this.cupMode.size || 12)
-      : Math.max(1, Math.floor(Number(this.ui.count.value) || 12));
-    if (this.cupMode?.active && this.ui.count) this.ui.count.value = String(requestedCount);
+    const requestedCount = this.survivorLeague?.active
+      ? Math.max(1, this.survivorLeague.roster?.length || this.survivorLeague.fieldSize || SURVIVOR_LEAGUE.fieldSize)
+      : this.cupMode?.active
+        ? Math.max(1, this.cupMode.currentEntrants?.length || this.cupMode.size || 12)
+        : Math.max(1, Math.floor(Number(this.ui.count.value) || 12));
+    if ((this.cupMode?.active || this.survivorLeague?.active) && this.ui.count) this.ui.count.value = String(requestedCount);
     this.createMarbles(requestedCount);
+    if (this.survivorLeague?.active) {
+      this.survivorLeague.status = 'ready';
+      this.survivorLeague.spotlight = this.buildSurvivorSpotlight();
+    }
     this.applyInitialCameraVerticalAxisRotation();
     this.showMatchCard();
     this.updateLeaderboard(true);
@@ -8555,9 +8887,11 @@ class MarbleRace {
     };
     this.ui.select.innerHTML = '';
     for (let i = 0; i < count; i += 1) {
-      const identity = this.cupMode?.active && this.cupMode.currentEntrants?.[i]
-        ? this.cupMode.currentEntrants[i]
-        : this.createMarbleIdentity(i, count);
+      const identity = this.survivorLeague?.active && this.survivorLeague.roster?.[i]
+        ? this.survivorLeague.roster[i]
+        : this.cupMode?.active && this.cupMode.currentEntrants?.[i]
+          ? this.cupMode.currentEntrants[i]
+          : this.createMarbleIdentity(i, count);
       const { color, radius } = identity;
       const mesh = this.makeMarbleMesh(radius, color, i, identity.patternKey, identity.palette, identity.materialKey);
       const labelSprite = this.createMarbleNameLabel(identity.name);
@@ -11527,6 +11861,7 @@ class MarbleRace {
       this.cameraMode = 'default';
       const finalRanking = this.getRanking({ force: true });
       this.handleCupRaceComplete(finalRanking);
+      this.handleSurvivorLeagueRaceComplete(finalRanking);
       this.handleSingleRecordingRaceComplete();
       this.handleContinuousRecordingRaceComplete();
       this.handleAutoCupRaceComplete();
