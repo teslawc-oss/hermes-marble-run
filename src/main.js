@@ -1850,9 +1850,9 @@ class MarbleRace {
     this.drawViewerText(ctx, 'SURVIVOR LEAGUE', cx, headerY, { font: `900 ${Math.round(minDim * (isVertical ? 0.034 : 0.030))}px Arial Black, Impact, sans-serif`, fill: '#ffd166', strokeWidth: Math.max(3, minDim * 0.005), align: 'center', maxWidth: cardW - 70 });
     this.drawViewerText(ctx, spotlight.title || 'Race Spotlight', cx, cardY + cardH * 0.24, { font: `900 ${Math.round(minDim * (isVertical ? 0.060 : 0.055))}px Arial Black, Impact, sans-serif`, fill: '#ffffff', strokeWidth: Math.max(5, minDim * 0.008), align: 'center', maxWidth: cardW - 70 });
     const marbles = spotlight.marbles.slice(0, 2);
-    const cardGap = isVertical ? cardH * 0.035 : cardW * 0.026;
-    const miniY = cardY + cardH * 0.43;
-    const miniH = isVertical ? cardH * 0.22 : cardH * 0.31;
+    const cardGap = isVertical ? cardH * 0.030 : cardW * 0.026;
+    const miniY = cardY + cardH * (isVertical ? 0.38 : 0.43);
+    const miniH = isVertical ? cardH * 0.20 : cardH * 0.31;
     const miniW = isVertical ? cardW - 70 : (cardW - 92 - cardGap) / 2;
     marbles.forEach(({ identity, lines }, index) => {
       const color = /^#[0-9a-f]{6}$/i.test(identity.colorHex || '') ? identity.colorHex : '#7cf7d4';
@@ -1894,6 +1894,17 @@ class MarbleRace {
       title: spotlight.title,
       marbles: marbles.map(({ identity }) => identity.name),
       progress: Number(progress.toFixed(3)),
+      layoutMetrics: {
+        cardY: Number(cardY.toFixed(1)),
+        cardH: Number(cardH.toFixed(1)),
+        miniY: Number(miniY.toFixed(1)),
+        miniH: Number(miniH.toFixed(1)),
+        cardGap: Number(cardGap.toFixed(1)),
+        secondMiniBottom: Number((miniY + (isVertical ? 1 : 0) * (miniH + cardGap) + miniH).toFixed(1)),
+        barY: Number(barY.toFixed(1)),
+        barH: Number(barH.toFixed(1)),
+        gapBeforeBar: Number((barY - (miniY + (isVertical ? 1 : 0) * (miniH + cardGap) + miniH)).toFixed(1)),
+      },
     };
   }
 
