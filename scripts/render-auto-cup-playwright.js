@@ -1887,7 +1887,7 @@ async function main() {
           nextRaceDelaySeconds: timing.postRaceHoldSeconds ?? 5,
           gateDelaySeconds: timing.nextGateAfterRaceSeconds ?? 5,
           initialGateDelaySeconds: timing.gateDelaySeconds ?? 2,
-          finalStopDelaySeconds: timing.stopAfterFinalSeconds ?? 5,
+          finalStopDelaySeconds: timing.stopAfterFinalSeconds ?? 12,
           nextActionAt: null,
           pendingTimer: null,
           playwrightRender: true,
@@ -2281,13 +2281,18 @@ async function main() {
           const singleDone = app.singleRecording?.playwrightRender && app.singleRecording.active === false && donePhases.includes(app.singleRecording.phase);
           const continuousDone = app.continuousRecording?.playwrightRender && app.continuousRecording.active === false && donePhases.includes(app.continuousRecording.phase);
           const continuousReachedTarget = app.continuousRecording?.playwrightRender
+            && app.continuousRecording.mode !== 'survivor'
             && Number(app.continuousRecording.racesCompleted || 0) >= Number(app.continuousRecording.totalRaces || 0)
             && (app.continuousRecording.phase === 'waiting-final-stop' || donePhases.includes(app.continuousRecording.phase));
+          const survivorDone = app.continuousRecording?.playwrightRender
+            && app.continuousRecording.mode === 'survivor'
+            && app.continuousRecording.active === false
+            && donePhases.includes(app.continuousRecording.phase);
           if (continuousReachedTarget && app.continuousRecording?.active) {
             stopRenderCompletion('completed-all-races-render-stop');
           }
-          if (finalDone || stopped || singleDone || continuousDone || continuousReachedTarget) {
-            const activeRecording = singleDone ? app.singleRecording : (continuousDone || continuousReachedTarget) ? app.continuousRecording : app.autoCupRecording;
+          if (finalDone || stopped || singleDone || continuousDone || continuousReachedTarget || survivorDone) {
+            const activeRecording = singleDone ? app.singleRecording : (continuousDone || continuousReachedTarget || survivorDone) ? app.continuousRecording : app.autoCupRecording;
             return {
             done: true,
             ok: true,

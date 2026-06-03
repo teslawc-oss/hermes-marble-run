@@ -10222,6 +10222,7 @@ class MarbleRace {
 
   handleContinuousRecordingRaceComplete() {
     if (!this.continuousRecording?.active) return;
+    if (this.continuousRecording.mode === 'survivor') return;
     this.continuousRecording.racesCompleted += 1;
     const completed = Number(this.continuousRecording.racesCompleted) || 0;
     const totalRaces = Math.max(1, Number(this.continuousRecording.totalRaces) || MULTIPLE_RECORDING_DEFAULT_RACES);
