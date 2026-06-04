@@ -492,7 +492,7 @@ const BROADCAST_CAMERA = {
   defaultPitchModes: ['leadPack', 'leadBattle', 'unfinishedOrder'],
   outOfBoundsIgnoreAfterSeconds: 1.0,
   outOfBoundsIgnoreLabel: 'auto camera: if a marble is outside the track for more than 1 second, stop targeting it until it respawns/returns',
-  cinematicLeaderFromProgress: 0.58,
+  cinematicLeaderFromProgress: 0.8,
   finishSlowMotionCameraHoldSeconds: 3.4,
   finishSlowMotionCameraLabel: 'when finish slow motion triggers near/crossing the line, Default Auto holds the finish-line shot through the slow-mo window so the slow finish camera remains visible before returning to race/podium coverage',
   postFirstFinish: {
@@ -768,6 +768,10 @@ const PINBALL_PHYSICS = {
   dropTargetDropSpeed: 4.2,
   dropTargetResetSpeed: 3.2,
   dropTargetBankBonusImpulse: 4.5,
+  movingGateRadius: 2.45,
+  movingGateImpulse: 4.9,
+  movingGateSweepSpeed: 1.8,
+  movingGateSwingAmplitude: 0.78,
 };
 
 const CURVE_PRESETS = {
@@ -3258,6 +3262,11 @@ class MarbleRace {
         pinBumperDimensions: obstacle.pinBumperDimensions ?? null,
         lastHitPinIndex: obstacle.lastHitPinIndex ?? null,
         gongDimensions: obstacle.gongDimensions ?? null,
+        movingGateDimensions: obstacle.movingGateDimensions ?? null,
+        movingGateOpenAmount: obstacle.type === 'movingGate' && obstacle.openAmount != null ? Number(obstacle.openAmount.toFixed(3)) : null,
+        movingGateBladeY: obstacle.type === 'movingGate' && obstacle.bladeY != null ? Number(obstacle.bladeY.toFixed(3)) : null,
+        movingGateSweepSpeed: obstacle.type === 'movingGate' && obstacle.sweepSpeed != null ? Number(Math.abs(obstacle.sweepSpeed).toFixed(2)) : null,
+        lastMovingGateHitBy: obstacle.type === 'movingGate' ? (obstacle.lastHitBy ?? null) : null,
         gongPackRadius: obstacle.packRadius ?? null,
         gongPackImpulse: obstacle.packImpulse ?? null,
         gongShake: obstacle.shake != null ? Number(obstacle.shake.toFixed(2)) : null,
@@ -3353,6 +3362,11 @@ class MarbleRace {
         pinBumperDimensions: obstacle.pinBumperDimensions ?? null,
         lastHitPinIndex: obstacle.lastHitPinIndex ?? null,
         gongDimensions: obstacle.gongDimensions ?? null,
+        movingGateDimensions: obstacle.movingGateDimensions ?? null,
+        movingGateOpenAmount: obstacle.type === 'movingGate' && obstacle.openAmount != null ? Number(obstacle.openAmount.toFixed(3)) : null,
+        movingGateBladeY: obstacle.type === 'movingGate' && obstacle.bladeY != null ? Number(obstacle.bladeY.toFixed(3)) : null,
+        movingGateSweepSpeed: obstacle.type === 'movingGate' && obstacle.sweepSpeed != null ? Number(Math.abs(obstacle.sweepSpeed).toFixed(2)) : null,
+        lastMovingGateHitBy: obstacle.type === 'movingGate' ? (obstacle.lastHitBy ?? null) : null,
         gongPackRadius: obstacle.packRadius ?? null,
         gongPackImpulse: obstacle.packImpulse ?? null,
         gongShake: obstacle.shake != null ? Number(obstacle.shake.toFixed(2)) : null,
@@ -3366,6 +3380,17 @@ class MarbleRace {
           dropped: Boolean(target.dropped),
           hitBy: target.hitBy ?? null,
         })) || [],
+      })),
+      movingGates: this.pinballObstacles.filter((obstacle) => obstacle.type === 'movingGate').map((obstacle, index) => ({
+        index,
+        movingGateDimensions: obstacle.movingGateDimensions ?? null,
+        openAmount: obstacle.openAmount != null ? Number(obstacle.openAmount.toFixed(3)) : null,
+        bladeY: obstacle.bladeY != null ? Number(obstacle.bladeY.toFixed(3)) : null,
+        sweepSpeed: obstacle.sweepSpeed != null ? Number(Math.abs(obstacle.sweepSpeed).toFixed(2)) : null,
+        swingDirection: obstacle.swingDirection ?? null,
+        lastHitBy: obstacle.lastHitBy ?? null,
+        visualStyle: obstacle.visualStyle || null,
+        textureStyle: obstacle.textureStyle || null,
       })),
       enabledObstacleTypes: [...(this.enabledObstacleTypes || new Set(PINBALL_OBSTACLE_TYPES))],
       obstacles: this.getObstacleDebugEntries(),
@@ -5648,6 +5673,7 @@ class MarbleRace {
       popBumperCap: new THREE.MeshPhysicalMaterial({ color: 0xfff1fa, roughness: 0.12, metalness: 0.02, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0xff5fb7, emissiveIntensity: 0.18 }),
       slingshot: new THREE.MeshPhysicalMaterial({ color: 0x12f0c8, roughness: 0.16, metalness: 0.06, clearcoat: 1, clearcoatRoughness: 0.07, emissive: 0x00685d, emissiveIntensity: 0.46 }),
       spinnerGate: new THREE.MeshPhysicalMaterial({ color: 0x8d7dff, roughness: 0.15, metalness: 0.16, clearcoat: 1, clearcoatRoughness: 0.06, emissive: 0x280090, emissiveIntensity: 0.38 }),
+      movingGate: new THREE.MeshPhysicalMaterial({ color: 0x46f6ff, roughness: 0.13, metalness: 0.22, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0x005f75, emissiveIntensity: 0.48 }),
       dropTarget: new THREE.MeshPhysicalMaterial({ color: 0xff8f3f, roughness: 0.17, metalness: 0.05, clearcoat: 1, clearcoatRoughness: 0.08, emissive: 0x5a1900, emissiveIntensity: 0.36 }),
       rubber: new THREE.MeshPhysicalMaterial({ color: 0x101422, roughness: 0.32, metalness: 0.02, clearcoat: 0.45, clearcoatRoughness: 0.18, emissive: 0x061020, emissiveIntensity: 0.26 }),
       chrome: new THREE.MeshPhysicalMaterial({ color: 0xe6f2ff, roughness: 0.12, metalness: 0.9, clearcoat: 1, clearcoatRoughness: 0.04 }),
@@ -5857,6 +5883,22 @@ class MarbleRace {
         palette.spinnerGate.userData.redInsert = palette.redInsert;
         palette.spinnerGate.userData.chromeMaterial = palette.chrome;
         return this.createSpinnerGateObstacle(trackSurface, yaw, pitch, palette.spinnerGate);
+      case 'movingGate': {
+        palette.movingGate.userData.chromeMaterial = palette.chrome;
+        palette.movingGate.userData.insertMaterial = palette.redInsert;
+        const movingGateWidth = 5.025;
+        const railClearance = 0.55;
+        const maxCenterOffset = Math.max(0, localWidth / 2 - movingGateWidth / 2 - railClearance);
+        const safeLane = clamp(lane, -maxCenterOffset, maxCenterOffset);
+        const safeTrackSurface = new THREE.Vector3(frame.p.x + frame.right.x * safeLane, frame.p.y, frame.p.z + frame.right.z * safeLane);
+        return this.createMovingGateObstacle(safeTrackSurface, yaw, pitch, (this.rng() < 0.5 ? -1 : 1), palette.movingGate, {
+          laneOffset: safeLane,
+          requestedLaneOffset: lane,
+          localTrackWidth: localWidth,
+          railClearance,
+          railContainmentHalfWidth: movingGateWidth / 2,
+        });
+      }
       case 'dropTarget':
       default:
         palette.rubber.userData.insertMaterial = palette.yellowInsert;
@@ -6445,6 +6487,115 @@ class MarbleRace {
     return obstacle;
   }
 
+  createMovingGateObstacle(trackSurface, yaw, pitch, swingDirection = 1, material, placement = {}) {
+    const group = new THREE.Group();
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation(group, yaw, pitch);
+    group.userData.visualStyle = 'frameless-wide-guillotine-gate';
+    this.trackGroup.add(group);
+
+    const insertMat = material.userData?.insertMaterial || new THREE.MeshPhysicalMaterial({ color: 0xff3864, roughness: 0.18, metalness: 0.04, clearcoat: 1, emissive: 0x79001c, emissiveIntensity: 0.42 });
+    const bladeMat = new THREE.MeshPhysicalMaterial({ color: 0xf7f4ea, roughness: 0.24, metalness: 0.02, clearcoat: 0.72, emissive: 0xffffff, emissiveIntensity: 0.08 });
+    const gateWidth = 5.025;
+    const bladeWidth = gateWidth;
+    const bladeHeight = 2;
+    const bladeDepth = 0.32;
+    const closedY = -1.08;
+    const openY = 0.56;
+    const liftAmplitude = openY - closedY;
+    const cycleSpeed = Math.abs(PINBALL_PHYSICS.movingGateSweepSpeed) * 0.82;
+    const colliderHalfExtents = new CANNON.Vec3(bladeWidth / 2, bladeHeight / 2, bladeDepth / 2);
+
+    const bladeGroup = new THREE.Group();
+    bladeGroup.position.set(0, closedY, 0.02);
+    group.add(bladeGroup);
+
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(bladeWidth, bladeHeight, bladeDepth), bladeMat);
+    blade.castShadow = PERFORMANCE_TUNING.shadows;
+    blade.receiveShadow = PERFORMANCE_TUNING.shadows;
+    bladeGroup.add(blade);
+
+    const dangerGlowMat = new THREE.MeshBasicMaterial({ color: 0xff0038, transparent: true, opacity: 0.82, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending });
+    const dangerGlow = new THREE.Mesh(new THREE.BoxGeometry(bladeWidth + 0.72, bladeHeight + 0.52, 0.07), dangerGlowMat);
+    dangerGlow.position.set(0, 0, -bladeDepth / 2 - 0.035);
+    dangerGlow.renderOrder = 6;
+    bladeGroup.add(dangerGlow);
+
+    const lowerLip = new THREE.Mesh(new THREE.BoxGeometry(bladeWidth + 0.12, 0.08, bladeDepth * 1.12), insertMat);
+    lowerLip.position.set(0, -bladeHeight / 2 - 0.045, 0.01);
+    lowerLip.castShadow = PERFORMANCE_TUNING.shadows;
+    bladeGroup.add(lowerLip);
+
+    const warningStripes = [];
+    [-0.42, -0.28, -0.14, 0, 0.14, 0.28, 0.42].forEach((xFactor, index) => {
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.13, bladeHeight * 0.92, 0.045), insertMat);
+      stripe.position.set(bladeWidth * xFactor, 0.01, -bladeDepth / 2 - 0.055);
+      stripe.rotation.z = 0.48;
+      stripe.castShadow = PERFORMANCE_TUNING.shadows;
+      bladeGroup.add(stripe);
+      warningStripes.push(stripe);
+    });
+
+    const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
+    body.addShape(new CANNON.Box(colliderHalfExtents));
+    const obstacleCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, closedY, 0.02, yaw, pitch));
+    this.setSlopeBodyTransform(body, obstacleCenter, yaw, pitch);
+    this.addObstacleBody(body, group);
+
+    const obstacle = {
+      type: 'movingGate',
+      kind: 'movingGate',
+      trackSurface: trackSurface.clone(),
+      center: obstacleCenter,
+      radius: Math.max(PINBALL_PHYSICS.movingGateRadius, bladeWidth / 2 + 0.55),
+      impulse: PINBALL_PHYSICS.movingGateImpulse,
+      cooldown: new Map(),
+      group,
+      bladeGroup,
+      blade,
+      dangerGlow,
+      lowerLip,
+      warningStripes,
+      body,
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
+      visualStyle: 'floor-rising-wide-guillotine-gate',
+      textureStyle: 'white-warning-blade-rises-from-track-floor-dense-bright-front-danger-glow-no-frame-no-hit-ring',
+      movingGateMode: 'floor-rising-guillotine',
+      movingGateDimensions: {
+        gateWidth,
+        bladeWidth,
+        bladeHeight,
+        bladeDepth,
+        closedY,
+        openY,
+        liftAmplitude,
+        cycleSpeed,
+        timingWindow: 'blade-rises-from-track-floor-then-retracts-below-surface',
+        dangerGlowFacing: 'approach-negative-local-z',
+        laneOffset: placement.laneOffset ?? null,
+        requestedLaneOffset: placement.requestedLaneOffset ?? null,
+        localTrackWidth: placement.localTrackWidth ?? null,
+        railClearance: placement.railClearance ?? null,
+        railContainmentHalfWidth: placement.railContainmentHalfWidth ?? bladeWidth / 2,
+        containedWithinRails: placement.localTrackWidth
+          ? Math.abs(placement.laneOffset ?? 0) + bladeWidth / 2 <= placement.localTrackWidth / 2 - (placement.railClearance ?? 0)
+          : null,
+      },
+      swingDirection,
+      swingAmplitude: liftAmplitude,
+      sweepSpeed: cycleSpeed,
+      swingAngle: 0,
+      openAmount: 0,
+      bladeY: closedY,
+      pulse: 0,
+      lastHitBy: null,
+      lastSwingAngle: 0,
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
+  }
+
   createDropTargetObstacle(trackSurface, yaw, pitch, material, rubberMaterial) {
     const group = new THREE.Group();
     group.position.copy(trackSurface);
@@ -6576,6 +6727,32 @@ class MarbleRace {
           arm.rotation.y = obstacle.spinAngle + (Math.PI * 2 * index) / 3;
         });
       }
+      if (obstacle.type === 'movingGate') {
+        const dimensions = obstacle.movingGateDimensions || {};
+        const cycleSpeed = Math.abs(obstacle.sweepSpeed || dimensions.cycleSpeed || PINBALL_PHYSICS.movingGateSweepSpeed);
+        const phase = this.elapsed * cycleSpeed + (obstacle.distributionZoneIndex || 0) * 0.73;
+        const wave = (Math.sin(phase) + 1) / 2;
+        const openAmount = THREE.MathUtils.smoothstep(wave, 0.18, 0.86);
+        const closedY = dimensions.closedY ?? 0.48;
+        const openY = dimensions.openY ?? 1.42;
+        const bladeY = THREE.MathUtils.lerp(closedY, openY, openAmount);
+        obstacle.openAmount = openAmount;
+        obstacle.bladeY = bladeY;
+        obstacle.swingAngle = openAmount;
+        obstacle.lastSwingAngle = openAmount;
+        if (obstacle.bladeGroup) obstacle.bladeGroup.position.y = bladeY;
+        if (obstacle.body) {
+          obstacle.center.copy(obstacle.trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, bladeY, 0.02, obstacle.trackYaw || 0, obstacle.trackSlopePitch || 0)));
+          this.setSlopeBodyTransform(obstacle.body, obstacle.center, obstacle.trackYaw || 0, obstacle.trackSlopePitch || 0);
+          obstacle.body.aabbNeedsUpdate = true;
+        }
+        if (obstacle.dangerGlow?.material) {
+          obstacle.dangerGlow.material.opacity = 0.58 + (1 - openAmount) * 0.34;
+        }
+        obstacle.warningStripes?.forEach((stripe, index) => {
+          stripe.rotation.z = 0.48 + Math.sin(phase * 2.4 + index) * 0.04;
+        });
+      }
       if (obstacle.type === 'dropTarget') {
         this.updateDropTargetBank(obstacle, delta);
       }
@@ -6639,6 +6816,7 @@ class MarbleRace {
         if (obstacle.type === 'gongBumper') this.applyGongBumperImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'slingshot') this.applySlingshotImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'spinnerGate') this.applySpinnerGateImpulse(obstacle, data, dx, dz);
+        if (obstacle.type === 'movingGate') this.applyMovingGateImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'dropTarget') this.applyDropTargetHit(obstacle, data);
       });
     });
@@ -6805,6 +6983,34 @@ class MarbleRace {
     this.pinballInteractions.spinnerGate += 1;
     this.spawnImpactEffect(obstacle.center, 0xffd166, 'ring');
     this.pushBroadcastEvent('Spinner Snap', `${data.name} spinner boost`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} spinner boost`, `${data.name} catches spin`, `${data.name} snaps forward`] });
+  }
+
+  applyMovingGateImpulse(obstacle, data, dx, dz) {
+    const closest = this.findClosestProgress(data.body.position);
+    this.noteObstacleHit(data, obstacle, closest.distance);
+    const frame = this.getTrackFrameAt(Math.max(closest.distance, data.distance || 0) + this.finishDirectionAssist.lookAhead);
+    const openAmount = clamp(obstacle.openAmount ?? obstacle.swingAngle ?? 0, 0, 1);
+    const radialDistance = Math.max(0.001, Math.hypot(dx, dz));
+    const radial = new THREE.Vector3(dx / radialDistance, 0, dz / radialDistance);
+    const laneSide = Math.sign(radial.dot(frame.right)) || 1;
+    const sideClip = frame.right.clone().multiplyScalar(laneSide * obstacle.impulse * (0.32 + (1 - openAmount) * 0.58));
+    const forwardBias = frame.tangent.clone().multiplyScalar(obstacle.impulse * (0.18 + openAmount * 0.36));
+    const softRebound = radial.multiplyScalar(0.45 + (1 - openAmount) * 0.65);
+    const rawImpulse = sideClip.add(forwardBias).add(softRebound);
+    data.body.wakeUp();
+    this.applyFinishDirectedImpulse(data, rawImpulse, frame, 0.2);
+    obstacle.cooldown.set(data.id, this.elapsed);
+    obstacle.pulse = 1;
+    obstacle.lastHitBy = data.name;
+    obstacle.lastSwingAngle = openAmount;
+    this.pinballInteractions.movingGate += 1;
+    this.pushBroadcastEvent('Guillotine Gate', `${data.name} clips the timing gate`, {
+      kind: 'obstacle',
+      marbleId: data.id,
+      distance: data.lastObstacleHitDistance,
+      progress: data.lastObstacleHitProgress,
+      lines: [`${data.name} clips the timing gate`, `${data.name} sneaks under the gate`, `${data.name} catches the drop gate`],
+    });
   }
 
   updateDropTargetBank(obstacle, delta) {
@@ -9596,6 +9802,7 @@ class MarbleRace {
       dropTarget: { frequency: 180, duration: 0.12, type: 'sawtooth', gain: 0.12 },
       slingshot: { frequency: 260, duration: 0.09, type: 'square', gain: 0.09 },
       spinnerGate: { frequency: 320, duration: 0.08, type: 'triangle', gain: 0.08 },
+      movingGate: { frequency: 210, duration: 0.1, type: 'square', gain: 0.085 },
       popBumper: { frequency: 520, duration: 0.06, type: 'triangle', gain: 0.08 },
       gongBumper: { frequency: 142, duration: 0.34, type: 'sine', gain: 0.14 },
       impact: { frequency: 240, duration: 0.08, type: 'square', gain: 0.08 },
