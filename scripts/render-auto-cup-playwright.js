@@ -243,13 +243,35 @@ const sanitizeSingleLine = (value, fallback = '') => String(value || fallback)
 const sanitizeHashtags = (hashtags) => Array.isArray(hashtags)
   ? hashtags.map((tag) => sanitizeSingleLine(tag).toLowerCase()).filter((tag) => /^#[\w-]+$/i.test(tag))
   : [];
-const SHORTS_TITLE_HASHTAGS = ['#shorts', '#marblerace', '#marblerush', '#games', '#fun'];
-const appendTitleHashtags = (title, hashtags = []) => {
-  const cleanTitle = sanitizeSingleLine(title, 'Epic Marble Race').replace(/\s+#\w[\w-]*$/gi, '').trim();
+const SHORTS_TITLE_HASHTAGS = ['#shorts'];
+const SEO_TITLE_KEYWORDS = ['Marble Race', 'Marble Rush', 'Marble Run', 'Marble Battle', 'Marble Racing'];
+const SHORTS_TITLE_MAX_LENGTH = 70;
+const LONG_TITLE_MAX_LENGTH = 95;
+const normalizeTitleForDedupe = (value) => sanitizeSingleLine(value)
+  .toLowerCase()
+  .replace(/[’']/g, '')
+  .replace(/—/g, '-')
+  .replace(/#\w[\w-]*/g, '')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim();
+const stripShortsHashtags = (title) => sanitizeSingleLine(title, 'Epic Marble Race')
+  .replace(/\s+#\w[\w-]*/gi, '')
+  .trim();
+const trimTitleBase = (title, maxLength = SHORTS_TITLE_MAX_LENGTH) => {
+  const clean = stripShortsHashtags(title);
+  if (clean.length <= maxLength) return clean;
+  return clean
+    .slice(0, maxLength)
+    .replace(/\s+\S*$/g, '')
+    .replace(/[\s—:-]+$/g, '')
+    .trim() || clean.slice(0, maxLength).trim();
+};
+const appendTitleHashtags = (title, hashtags = [], maxLength = 100) => {
+  const cleanTitle = stripShortsHashtags(title);
   const cleanHashtags = sanitizeHashtags(hashtags);
-  if (!cleanHashtags.length) return cleanTitle.slice(0, 100);
+  if (!cleanHashtags.length) return cleanTitle.slice(0, maxLength);
   const suffix = ` ${cleanHashtags.join(' ')}`;
-  const maxBaseLength = Math.max(1, 100 - suffix.length);
+  const maxBaseLength = Math.max(1, maxLength - suffix.length);
   let base = cleanTitle.length > maxBaseLength ? cleanTitle.slice(0, maxBaseLength) : cleanTitle;
   base = base
     .replace(/\s+—\s+[^—]*$/g, '')
@@ -258,7 +280,7 @@ const appendTitleHashtags = (title, hashtags = []) => {
   if (!base || base.length < 20) {
     base = cleanTitle.slice(0, maxBaseLength).replace(/[\s—:-]+$/g, '').trim() || 'Epic Marble Race';
   }
-  return `${base}${suffix}`.slice(0, 100);
+  return `${base}${suffix}`.slice(0, maxLength);
 };
 const run = (command, args, options = {}) => {
   log(`$ ${command} ${args.join(' ')}`);
@@ -384,7 +406,14 @@ function readYoutubeTitleHistory(historyPath, limit = 10) {
         const parsed = JSON.parse(readFileSync(file.path, 'utf8'));
         const title = sanitizeSingleLine(parsed.title || parsed.videoTitle || parsed?.metadata?.title || '');
         if (!title) return null;
-        return { title, titleType: parsed.titleType || classifyYoutubeTitleType(title), path: file.path, mtimeMs: file.mtimeMs };
+        return {
+          title,
+          titleType: parsed.titleType || classifyYoutubeTitleType(title),
+          baseTitle: sanitizeSingleLine(parsed?.source?.baseTitle || parsed.baseTitle || ''),
+          titleStrategy: parsed.titleStrategy || parsed?.source?.titleStrategy || '',
+          path: file.path,
+          mtimeMs: file.mtimeMs,
+        };
       } catch {
         return null;
       }
@@ -410,13 +439,157 @@ function makeClickbaitVideoTitle(baseTitle, context = {}) {
   const directType = classifyYoutubeTitleType(title);
   const hasHype = /[!?]|\b(insane|crazy|chaos|shocking|epic|wild|unbelievable|last second)\b/i.test(title);
   if (hasHype && !recentTypes.has(directType)) {
-    return { title: title.slice(0, 100), titleType: directType };
+    return { title: title.slice(0, 100), titleType: directType, titleStrategy: 'legacy-direct-hype' };
   }
   const seed = [...title].reduce((sum, char) => sum + char.charCodeAt(0), 0);
   const rotated = templates.map((_, index) => templates[(seed + index) % templates.length]);
   const selected = rotated.find((template) => !recentTypes.has(template.type)) || rotated[0];
   const candidate = `${title} — ${selected.suffix}`;
-  return { title: (candidate.length <= 100 ? candidate : `${title}!`).slice(0, 100), titleType: selected.type };
+  return { title: (candidate.length <= 100 ? candidate : `${title}!`).slice(0, 100), titleType: selected.type, titleStrategy: 'legacy-clickbait-suffix', titleTemplate: selected.suffix };
+}
+
+function detectShortsEventKind(baseTitle, context = {}) {
+  const normalized = sanitizeSingleLine(baseTitle).toLowerCase();
+  const selectedKind = String(context.thumbnailEvent?.kind || context.thumbnailAudit?.selectedEvent?.kind || '').toLowerCase();
+  if (context.mode === 'survivor') return 'survivor';
+  if (/\b(trap|obstacle|spinner|bumper|hit|impact|smash|crash|collision|destroy|mayhem)\b/i.test(normalized) || ['obstacle', 'collision', 'crash'].includes(selectedKind)) return 'obstacle';
+  if (/\b(last second|finish|caught|comeback|pass|overtake|steals?|leader)\b/i.test(normalized) || ['overtake', 'battle'].includes(selectedKind)) return 'drama';
+  if (/\b(speed|fast|rush|sprint|dash|boost|flying|took off)\b/i.test(normalized) || selectedKind === 'speed') return 'speed';
+  if (/\b(win|winner|champion|victory|takes all|first)\b/i.test(normalized) || ['finish', 'winner'].includes(selectedKind)) return 'winner';
+  return 'general-hype';
+}
+
+function makeSeoShortsVideoTitle(baseTitle, context = {}) {
+  return makeSeoVideoTitle(baseTitle, { ...context, titleKind: 'shorts', maxLength: SHORTS_TITLE_MAX_LENGTH, hashtags: SHORTS_TITLE_HASHTAGS });
+}
+
+function makeSeoLongVideoTitle(baseTitle, context = {}) {
+  return makeSeoVideoTitle(baseTitle, { ...context, titleKind: 'long', maxLength: LONG_TITLE_MAX_LENGTH, hashtags: [] });
+}
+
+function makeSeoVideoTitle(baseTitle, context = {}) {
+  const isShorts = context.titleKind === 'shorts';
+  const maxLength = Number(context.maxLength) || (isShorts ? SHORTS_TITLE_MAX_LENGTH : LONG_TITLE_MAX_LENGTH);
+  const cleanBase = trimTitleBase(baseTitle || context.fallbackTitle || 'Marble Race Chaos', isShorts ? 42 : 52).replace(/[.!?]+$/g, '');
+  const recentTitles = (context.recentTitles || []).slice(0, 30);
+  const recentExact = new Set(recentTitles.map((item) => normalizeTitleForDedupe(item.title)));
+  const recentPhrases = new Set(recentTitles.slice(0, 10).map((item) => normalizeTitleForDedupe(item.baseTitle || item.source?.baseTitle || stripShortsHashtags(item.title).replace(/^marble\s+(race|rush|run|battle|racing)\s+/i, '').replace(/[!?]+$/g, ''))));
+  const eventKind = detectShortsEventKind(cleanBase, context);
+  const seedText = `${cleanBase}|${context.mode || ''}|${context.titleKind || ''}|${recentTitles.map((item) => item.titleType || '').join('|')}`;
+  const seed = [...seedText].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const survivorPool = isShorts ? [
+    { type: 'survivor', keyword: 'Survivor Marble Race', build: () => 'Survivor Marble Race Gets Brutal!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'Only One Marble Survives!' },
+    { type: 'survivor', keyword: 'Marble Battle', build: () => 'Last Marble Standing Challenge!' },
+    { type: 'survivor', keyword: 'Marble Rush', build: () => 'Marble Rush Elimination Battle!' },
+    { type: 'survivor', keyword: 'Marble League', build: () => 'Who Survives the Marble League?' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'This Marble Almost Got Eliminated!' },
+  ] : [
+    { type: 'survivor', keyword: 'Survivor Marble Race', build: () => 'Survivor Marble Race League: Last Marble Standing' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'Marble Race Elimination League: Who Survives?' },
+    { type: 'survivor', keyword: 'Marble Battle', build: () => 'Marble Battle Survivor League Gets Brutal' },
+    { type: 'survivor', keyword: 'Marble Rush', build: () => 'Marble Rush Survivor Challenge: Only One Wins' },
+    { type: 'survivor', keyword: 'Marble League', build: () => 'Marble League Survival Race With Chaos Obstacles' },
+  ];
+  const templatePools = {
+    survivor: survivorPool,
+    obstacle: isShorts ? [
+      { type: 'obstacle', keyword: 'Marble Race', build: () => 'Marble Race Chaos at the Trap!' },
+      { type: 'obstacle', keyword: 'Marble Run', build: () => 'This Marble Run Went Wrong Fast!' },
+      { type: 'obstacle', keyword: 'Marble Rush', build: () => 'Marble Rush Obstacle Mayhem!' },
+      { type: 'chaos', keyword: 'Marble Race', build: () => 'One Hit Changed the Marble Race!' },
+      { type: 'obstacle', keyword: 'Marble Race', build: () => `${SEO_TITLE_KEYWORDS[seed % 2]} ${cleanBase}!` },
+    ] : [
+      { type: 'obstacle', keyword: 'Marble Race', build: () => 'Marble Race Chaos With Brutal Obstacle Traps' },
+      { type: 'obstacle', keyword: 'Marble Run', build: () => 'Marble Run Obstacle Challenge Goes Wrong Fast' },
+      { type: 'chaos', keyword: 'Marble Rush', build: () => 'Marble Rush Chaos Race With Insane Impacts' },
+      { type: 'obstacle', keyword: 'Marble Battle', build: () => 'Marble Battle Obstacle Course: One Hit Changes Everything' },
+    ],
+    drama: isShorts ? [
+      { type: 'finish-drama', keyword: 'Marble Race', build: () => 'Marble Race Leader Gets Caught!' },
+      { type: 'finish-drama', keyword: 'Marble Race', build: () => 'Last Second Marble Race Pass!' },
+      { type: 'finish-drama', keyword: 'Marble Rush', build: () => 'Marble Rush Final Stretch Chaos!' },
+      { type: 'battle', keyword: 'Marble Battle', build: () => 'Marble Battle Changes in Seconds!' },
+      { type: 'finish-drama', keyword: 'Marble Race', build: () => `Marble Race ${cleanBase}!` },
+    ] : [
+      { type: 'finish-drama', keyword: 'Marble Race', build: () => 'Marble Race Comeback Battle With a Last Second Finish' },
+      { type: 'finish-drama', keyword: 'Marble Rush', build: () => 'Marble Rush Race: Leader Gets Caught at the Finish' },
+      { type: 'battle', keyword: 'Marble Battle', build: () => 'Marble Battle Race With Wild Overtakes and Chaos' },
+      { type: 'finish-drama', keyword: 'Marble Race', build: () => `Marble Race ${cleanBase} in a Wild Finish` },
+    ],
+    speed: isShorts ? [
+      { type: 'speed', keyword: 'Marble Rush', build: () => 'Marble Rush Speed Battle!' },
+      { type: 'speed', keyword: 'Marble Race', build: () => 'Fastest Marble Race Finish!' },
+      { type: 'speed', keyword: 'Marble Run', build: () => 'High Speed Marble Run Chaos!' },
+      { type: 'speed', keyword: 'Marble Race', build: () => `Marble Race ${cleanBase}!` },
+    ] : [
+      { type: 'speed', keyword: 'Marble Rush', build: () => 'Marble Rush High Speed Race With Chaos Finish' },
+      { type: 'speed', keyword: 'Marble Race', build: () => 'Fast Marble Race Battle Through a Wild Track' },
+      { type: 'speed', keyword: 'Marble Run', build: () => 'High Speed Marble Run Challenge With Close Finish' },
+    ],
+    winner: isShorts ? [
+      { type: 'winner', keyword: 'Marble Race', build: () => 'Only One Marble Can Win This!' },
+      { type: 'winner', keyword: 'Marble Race', build: () => 'Marble Race Winner Takes Everything!' },
+      { type: 'winner', keyword: 'Marble Rush', build: () => 'Unexpected Marble Rush Winner!' },
+      { type: 'winner', keyword: 'Marble Race', build: () => `Marble Race ${cleanBase}!` },
+    ] : [
+      { type: 'winner', keyword: 'Marble Race', build: () => 'Marble Race Championship: Winner Takes Everything' },
+      { type: 'winner', keyword: 'Marble Rush', build: () => 'Unexpected Marble Rush Winner After Total Chaos' },
+      { type: 'winner', keyword: 'Marble Battle', build: () => 'Marble Battle Final: Only One Marble Wins' },
+    ],
+    'general-hype': isShorts ? [
+      { type: 'general-hype', keyword: 'Marble Race', build: () => 'This Marble Race Was Too Close!' },
+      { type: 'chaos', keyword: 'Marble Race', build: () => 'The Marble Race Turned Insane!' },
+      { type: 'shock-reveal', keyword: 'Marble Race', build: () => 'You Won’t Believe This Marble Finish!' },
+      { type: 'general-hype', keyword: 'Marble Rush', build: () => `Marble Rush ${cleanBase}!` },
+    ] : [
+      { type: 'general-hype', keyword: 'Marble Race', build: () => 'Marble Race Chaos Challenge With Close Finishes' },
+      { type: 'chaos', keyword: 'Marble Rush', build: () => 'Marble Rush Full Race With Total Track Chaos' },
+      { type: 'shock-reveal', keyword: 'Marble Race', build: () => 'You Won’t Believe This Marble Race Finish' },
+      { type: 'general-hype', keyword: 'Marble Run', build: () => 'Marble Run Racing Challenge With Wild Moments' },
+    ],
+  };
+  const rawPool = eventKind === 'survivor'
+    ? [...(templatePools.survivor || [])]
+    : [...(templatePools[eventKind] || []), ...templatePools['general-hype']];
+  const rotated = rawPool.map((_, index) => rawPool[(seed + index) % rawPool.length]);
+  let selected = null;
+  let dedupeReason = 'unique';
+  const basePhraseKey = normalizeTitleForDedupe(cleanBase);
+  for (const template of rotated) {
+    const candidateBase = trimTitleBase(template.build(), maxLength);
+    const candidate = appendTitleHashtags(candidateBase, context.hashtags || [], maxLength);
+    const exactKey = normalizeTitleForDedupe(candidate);
+    const phrasePenalty = basePhraseKey && recentPhrases.has(basePhraseKey) && new RegExp(`\\b${basePhraseKey.replace(/\s+/g, '\\s+')}\\b`, 'i').test(exactKey);
+    if (!recentExact.has(exactKey) && !phrasePenalty) {
+      selected = { template, candidate, candidateBase, exactKey };
+      break;
+    }
+  }
+  if (!selected) {
+    dedupeReason = 'fallback-after-recent-title-collisions';
+    const fallbackTemplates = [
+      `Marble Race Chaos Moment ${seed % 97}!`,
+      `Marble Rush Wild Finish ${seed % 89}!`,
+      `Marble Battle Highlight ${seed % 83}!`,
+      `Marble Run Surprise Finish ${seed % 79}!`,
+    ];
+    const fallbackBase = fallbackTemplates.find((candidate) => !recentExact.has(normalizeTitleForDedupe(appendTitleHashtags(candidate, context.hashtags || [], maxLength)))) || fallbackTemplates[0];
+    selected = { template: { type: eventKind, keyword: 'Marble Race', build: () => fallbackBase }, candidateBase: fallbackBase, candidate: appendTitleHashtags(fallbackBase, context.hashtags || [], maxLength), exactKey: normalizeTitleForDedupe(fallbackBase) };
+  }
+  const titleType = selected.template.type || classifyYoutubeTitleType(selected.candidate);
+  return {
+    title: selected.candidate,
+    titleType,
+    titleStrategy: context.mode === 'survivor'
+      ? (isShorts ? 'seo-shorts-survivor-dedupe' : 'seo-long-survivor-dedupe')
+      : (isShorts ? 'seo-shorts-event-dedupe' : 'seo-long-event-dedupe'),
+    titleTemplate: selected.candidateBase,
+    titleKeyword: selected.template.keyword || SEO_TITLE_KEYWORDS[seed % SEO_TITLE_KEYWORDS.length],
+    titleEventKind: eventKind,
+    dedupeReason,
+    basePhrase: cleanBase,
+  };
 }
 
 function pickMidRaceThumbnailEvent(events = [], summary = {}) {
@@ -473,11 +646,22 @@ function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput
       : Number(renderSummary.raceCount || renderSummary.stageSummaries?.length || template.defaults.raceCount || 10));
   const marbleCount = Number(renderSummary.marbleCount || config.cupSize || template.defaults.marbleCount || 30);
   const baseTitle = config.thumbnailTitle || thumbnailAudit?.rawTitle || renderSummary.thumbnailTitle || renderSummary.title || renderSummary.cupName || config.cupName || template.defaults.fallbackTitle;
-  const recentTitles = readYoutubeTitleHistory(config.youtubeTitleHistory, config.youtubeTitleHistoryLimit);
-  const titleResult = makeClickbaitVideoTitle(baseTitle, { fallbackTitle: template.defaults.fallbackTitle, recentTitles, historyLimit: config.youtubeTitleHistoryLimit });
+  const recentTitleLimit = config.youtubeKind === 'shorts' ? Math.max(30, config.youtubeTitleHistoryLimit) : Math.max(20, config.youtubeTitleHistoryLimit);
+  const recentTitles = readYoutubeTitleHistory(config.youtubeTitleHistory, recentTitleLimit);
+  const titleContext = {
+    fallbackTitle: template.defaults.fallbackTitle,
+    recentTitles,
+    historyLimit: recentTitleLimit,
+    mode: config.mode,
+    thumbnailEvent,
+    thumbnailAudit,
+  };
+  const titleResult = config.youtubeKind === 'shorts'
+    ? makeSeoShortsVideoTitle(baseTitle, titleContext)
+    : makeSeoLongVideoTitle(baseTitle, titleContext);
   const titleHashtags = config.youtubeKind === 'shorts' ? SHORTS_TITLE_HASHTAGS : [];
   const title = config.youtubeKind === 'shorts'
-    ? appendTitleHashtags(titleResult.title, titleHashtags)
+    ? titleResult.title
     : titleResult.title;
   const titleType = titleResult.titleType || classifyYoutubeTitleType(title);
   const descriptionBody = template.descriptionTemplate
@@ -496,6 +680,11 @@ ${hashtags.join(' ')}`;
   return {
     title,
     titleType,
+    titleStrategy: titleResult.titleStrategy || (config.youtubeKind === 'shorts' ? 'seo-shorts-event-dedupe' : 'legacy-clickbait'),
+    titleTemplate: titleResult.titleTemplate || '',
+    titleKeyword: titleResult.titleKeyword || '',
+    titleEventKind: titleResult.titleEventKind || '',
+    dedupeReason: titleResult.dedupeReason || '',
     youtubeKind: config.youtubeKind || 'long',
     aspectRatio: config.outputAspectRatio || (config.videoCanvasLayout === 'vertical' ? '9:16' : '16:9'),
     videoCanvasLayout: config.videoCanvasLayout || 'horizontal',
@@ -504,6 +693,11 @@ ${hashtags.join(' ')}`;
     recentTitleTypesAvoided: [...new Set(recentTitles.map((item) => item.titleType))],
     source: {
       titleSource: thumbnailAudit?.titleSource || (config.thumbnailTitle ? 'manual-thumbnail-title' : (renderSummary.thumbnailTitle ? 'render-summary-thumbnail-title' : (renderSummary.title ? 'render-summary-title' : (renderSummary.cupName || config.cupName ? 'cup-name' : 'template-fallback')))),
+      titleStrategy: titleResult.titleStrategy || '',
+      titleTemplate: titleResult.titleTemplate || '',
+      titleKeyword: titleResult.titleKeyword || '',
+      titleEventKind: titleResult.titleEventKind || '',
+      dedupeReason: titleResult.dedupeReason || '',
       baseTitle,
       thumbnailTitle: config.thumbnailTitle || thumbnailAudit?.rawTitle || '',
       generatedThumbnailTitle: thumbnailAudit?.rawTitle || '',
@@ -522,7 +716,7 @@ ${hashtags.join(' ')}`;
       templateFound: template.templateFound,
       titleHistoryPath: config.youtubeTitleHistory,
       titleHistoryLimit: config.youtubeTitleHistoryLimit,
-      recentTitles: recentTitles.map((item) => ({ title: item.title, titleType: item.titleType, path: item.path })),
+      recentTitles: recentTitles.map((item) => ({ title: item.title, titleType: item.titleType, baseTitle: item.baseTitle || '', titleStrategy: item.titleStrategy || '', path: item.path })),
     },
   };
 }
@@ -2785,8 +2979,21 @@ async function main() {
 
 if (process.env.MARBLE_RENDER_TEST_TITLE_HISTORY === 'true') {
   const recentTitles = readYoutubeTitleHistory(process.env.MARBLE_RENDER_YOUTUBE_TITLE_HISTORY || recordingsDir, Number(process.env.MARBLE_RENDER_YOUTUBE_TITLE_HISTORY_LIMIT || 10));
-  const titleResult = makeClickbaitVideoTitle(process.env.MARBLE_RENDER_TEST_BASE_TITLE || '8 Races, 30 Marbles!', { fallbackTitle: '30 Marbles, 10 Races, Total Chaos!', recentTitles, historyLimit: 10 });
-  process.stdout.write(`${JSON.stringify({ title: titleResult.title, titleType: titleResult.titleType || classifyYoutubeTitleType(titleResult.title), recentTitleTypesAvoided: [...new Set(recentTitles.map((item) => item.titleType))] }, null, 2)}\n`);
+  const isShortsTest = process.env.MARBLE_RENDER_TEST_YOUTUBE_KIND === 'shorts' || process.env.MARBLE_RENDER_VIDEO_CANVAS === 'vertical';
+  const titleContext = { fallbackTitle: '30 Marbles, 10 Races, Total Chaos!', recentTitles, historyLimit: 30, mode: process.env.MARBLE_RENDER_MODE || 'continuous' };
+  const titleResult = isShortsTest
+    ? makeSeoShortsVideoTitle(process.env.MARBLE_RENDER_TEST_BASE_TITLE || '8 Races, 30 Marbles!', titleContext)
+    : makeSeoLongVideoTitle(process.env.MARBLE_RENDER_TEST_BASE_TITLE || '8 Races, 30 Marbles!', titleContext);
+  process.stdout.write(`${JSON.stringify({
+    title: titleResult.title,
+    titleType: titleResult.titleType || classifyYoutubeTitleType(titleResult.title),
+    titleStrategy: titleResult.titleStrategy || '',
+    titleTemplate: titleResult.titleTemplate || '',
+    titleKeyword: titleResult.titleKeyword || '',
+    titleEventKind: titleResult.titleEventKind || '',
+    dedupeReason: titleResult.dedupeReason || '',
+    recentTitleTypesAvoided: [...new Set(recentTitles.map((item) => item.titleType))],
+  }, null, 2)}\n`);
   process.exit(0);
 }
 
