@@ -486,6 +486,50 @@ function makeSeoVideoTitle(baseTitle, context = {}) {
     { type: 'survivor', keyword: 'Marble Rush', build: () => 'Marble Rush Elimination Battle!' },
     { type: 'survivor', keyword: 'Marble League', build: () => 'Who Survives the Marble League?' },
     { type: 'survivor', keyword: 'Marble Race', build: () => 'This Marble Almost Got Eliminated!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'Marble Race Elimination Gets Wild!' },
+    { type: 'survivor', keyword: 'Marble Rush', build: () => 'Marble Rush Survival Mode!' },
+    { type: 'survivor', keyword: 'Marble Battle', build: () => 'Brutal Marble Battle Survival!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'One Marble Escapes Elimination!' },
+    { type: 'survivor', keyword: 'Marble League', build: () => 'Marble League Survival Chaos!' },
+    { type: 'survivor', keyword: 'Marble Run', build: () => 'Marble Run Elimination Trap!' },
+    { type: 'survivor', keyword: 'Survivor Marble Race', build: () => 'Survivor Marble Race Final Duel!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'The Marble Race Turns Ruthless!' },
+    { type: 'survivor', keyword: 'Marble Rush', build: () => 'Marble Rush Knockout Round!' },
+    { type: 'survivor', keyword: 'Marble Battle', build: () => 'Marble Battle Last One Wins!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'One Marble Gets Sent Home!' },
+    { type: 'survivor', keyword: 'Marble Run', build: () => 'Marble Run Survival Challenge!' },
+    { type: 'survivor', keyword: 'Marble League', build: () => 'Who Gets Eliminated Next?' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'This Marble Barely Survived!' },
+    { type: 'survivor', keyword: 'Marble Rush', build: () => 'Marble Rush Danger Zone!' },
+    { type: 'survivor', keyword: 'Marble Battle', build: () => 'Marble Battle Gets Savage!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'Marble Race Survival Battle!' },
+    { type: 'survivor', keyword: 'Marble League', build: () => 'Last Marble in the League!' },
+    { type: 'survivor', keyword: 'Marble Run', build: () => 'Marble Run Knockout Chaos!' },
+    { type: 'survivor', keyword: 'Survivor Marble Race', build: () => 'Survivor Marble Race Trap Round!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'One Mistake Ends the Race!' },
+    { type: 'survivor', keyword: 'Marble Rush', build: () => 'Marble Rush Elimination Drama!' },
+    { type: 'survivor', keyword: 'Marble Battle', build: () => 'Marble Battle Survival Sprint!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'Can This Marble Stay Alive?' },
+    { type: 'survivor', keyword: 'Marble League', build: () => 'Marble League Knockout Chaos!' },
+    { type: 'survivor', keyword: 'Marble Run', build: () => 'Marble Run Survival Sprint!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'The Last Marble Keeps Moving!' },
+    { type: 'survivor', keyword: 'Marble Rush', build: () => 'Marble Rush Trap Survival!' },
+    { type: 'survivor', keyword: 'Marble Battle', build: () => 'Marble Battle Elimination Race!' },
+    { type: 'survivor', keyword: 'Survivor Marble Race', build: () => 'Survivor Marble Race Showdown!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'Marble Race Knockout Mayhem!' },
+    { type: 'survivor', keyword: 'Marble League', build: () => 'Only One Marble Moves On!' },
+    { type: 'survivor', keyword: 'Marble Run', build: () => 'Marble Run Elimination Mayhem!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'This Marble Dodged Disaster!' },
+    { type: 'survivor', keyword: 'Marble Rush', build: () => 'Marble Rush Final Survivor!' },
+    { type: 'survivor', keyword: 'Marble Battle', build: () => 'Marble Battle Sudden Death!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'Marble Race Elimination Panic!' },
+    { type: 'survivor', keyword: 'Survivor Marble Race', build: () => 'Survivor Marble Race Gets Intense!' },
+    { type: 'survivor', keyword: 'Marble League', build: () => 'Marble League Last Chance!' },
+    { type: 'survivor', keyword: 'Marble Run', build: () => 'Marble Run Danger Round!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'One Marble Beats the Knockout!' },
+    { type: 'survivor', keyword: 'Marble Rush', build: () => 'Marble Rush Last Chance Race!' },
+    { type: 'survivor', keyword: 'Marble Battle', build: () => 'Marble Battle Survival Chaos!' },
+    { type: 'survivor', keyword: 'Marble Race', build: () => 'Last Marble Standing Gets Wild!' },
   ] : [
     { type: 'survivor', keyword: 'Survivor Marble Race', build: () => 'Survivor Marble Race League: Last Marble Standing' },
     { type: 'survivor', keyword: 'Marble Race', build: () => 'Marble Race Elimination League: Who Survives?' },
@@ -554,6 +598,7 @@ function makeSeoVideoTitle(baseTitle, context = {}) {
   const rawPool = eventKind === 'survivor'
     ? [...(templatePools.survivor || [])]
     : [...(templatePools[eventKind] || []), ...templatePools['general-hype']];
+  const allowRecentRepeat = isShorts && eventKind === 'survivor';
   const rotated = rawPool.map((_, index) => rawPool[(seed + index) % rawPool.length]);
   let selected = null;
   let dedupeReason = 'unique';
@@ -563,8 +608,9 @@ function makeSeoVideoTitle(baseTitle, context = {}) {
     const candidate = appendTitleHashtags(candidateBase, context.hashtags || [], maxLength);
     const exactKey = normalizeTitleForDedupe(candidate);
     const phrasePenalty = basePhraseKey && recentPhrases.has(basePhraseKey) && new RegExp(`\\b${basePhraseKey.replace(/\s+/g, '\\s+')}\\b`, 'i').test(exactKey);
-    if (!recentExact.has(exactKey) && !phrasePenalty) {
+    if (allowRecentRepeat || (!recentExact.has(exactKey) && !phrasePenalty)) {
       selected = { template, candidate, candidateBase, exactKey };
+      if (allowRecentRepeat && (recentExact.has(exactKey) || phrasePenalty)) dedupeReason = 'survivor-repeat-allowed';
       break;
     }
   }
