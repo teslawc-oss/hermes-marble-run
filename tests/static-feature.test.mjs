@@ -106,11 +106,11 @@ assert.match(js, /const bladeHeight = 2/, 'moving gate blade should be tall enou
 assert.match(js, /const closedY = -1\.08/, 'moving gate blade should fully retract below the track when closed');
 assert.match(js, /dangerGlow\.position\.set\(0, 0, -bladeDepth \/ 2 - 0\.035\)/, 'moving gate danger glow should face the approach side');
 assert.match(js, /stripe\.position\.set\(bladeWidth \* xFactor, 0\.01, -bladeDepth \/ 2 - 0\.055\)/, 'moving gate warning stripes should be on the approach-facing side');
-assert.match(js, /color: 0xff0038/, 'moving gate front danger glow should use a stronger red');
-assert.match(js, /opacity: 0\.82/, 'moving gate front danger glow should start with higher opacity');
-assert.match(js, /depthTest: false/, 'moving gate front danger glow should stay visible from the approach side');
-assert.match(js, /0\.58 \+ \(1 - openAmount\) \* 0\.34/, 'moving gate animated danger glow should remain bright while open');
-assert.match(js, /white-warning-blade-rises-from-track-floor-dense-bright-front-danger-glow/, 'moving gate should use a white blade base with denser bright front danger glow');
+assert.match(js, /color: 0xff174f/, 'moving gate front danger glow should use the non-penetrating red glow color');
+assert.match(js, /opacity: 0\.48/, 'moving gate front danger glow should use the normal opacity');
+assert.doesNotMatch(js, /dangerGlowMat = new THREE\.MeshBasicMaterial\([^)]*depthTest: false/, 'moving gate front danger glow should not render through track geometry');
+assert.match(js, /0\.28 \+ \(1 - openAmount\) \* 0\.46/, 'moving gate animated danger glow should use the normal pulse range');
+assert.match(js, /white-warning-blade-rises-from-track-floor-dense-danger-glow/, 'moving gate should use a white blade base with dense non-penetrating danger glow');
 assert.match(js, /containedWithinRails/, 'moving gate debug should expose rail containment');
 assert.match(js, /movingGateDimensions/, 'debug state should expose moving gate dimensions and timing');
 assert.match(js, /movingGateOpenAmount/, 'debug state should expose moving gate open amount');

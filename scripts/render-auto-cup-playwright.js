@@ -36,8 +36,8 @@ const config = {
   trackLength: Number(args.get('track-length') || process.env.MARBLE_RENDER_TRACK_LENGTH || 600),
   targetSeconds: Number(args.get('target-seconds') || process.env.MARBLE_RENDER_TARGET_SECONDS || 600),
   lengthMode: args.get('length-mode') || process.env.MARBLE_RENDER_LENGTH_MODE || 'target-duration',
-  width: Number(args.get('width') || process.env.MARBLE_RENDER_WIDTH || 1920),
-  height: Number(args.get('height') || process.env.MARBLE_RENDER_HEIGHT || 1080),
+  width: Number(args.get('width') || process.env.MARBLE_RENDER_WIDTH || 1280),
+  height: Number(args.get('height') || process.env.MARBLE_RENDER_HEIGHT || 720),
   captureScale: Number(args.get('capture-scale') || process.env.MARBLE_RENDER_CAPTURE_SCALE || 1),
   fps: Number(args.get('fps') || process.env.MARBLE_RENDER_FPS || 60),
   videoCrf: Number(args.get('crf') || process.env.MARBLE_RENDER_CRF || 18),
@@ -111,8 +111,8 @@ const dynamicTimeoutSeconds = Math.ceil((timeoutRaceSecondsEstimate * estimatedR
 config.timeoutSeconds = hasExplicitTimeout && Number.isFinite(config.timeoutSeconds) && config.timeoutSeconds > 0
   ? Math.max(120, Math.min(7200, Math.round(config.timeoutSeconds)))
   : Math.max(120, Math.min(7200, dynamicTimeoutSeconds));
-if (config.videoCanvasLayout === 'vertical' && !args.has('width') && !process.env.MARBLE_RENDER_WIDTH) config.width = 1080;
-if (config.videoCanvasLayout === 'vertical' && !args.has('height') && !process.env.MARBLE_RENDER_HEIGHT) config.height = 1920;
+if (config.videoCanvasLayout === 'vertical' && !args.has('width') && !process.env.MARBLE_RENDER_WIDTH) config.width = 720;
+if (config.videoCanvasLayout === 'vertical' && !args.has('height') && !process.env.MARBLE_RENDER_HEIGHT) config.height = 1280;
 config.youtubeKind = config.videoCanvasLayout === 'vertical' ? 'shorts' : 'long';
 config.outputAspectRatio = config.videoCanvasLayout === 'vertical' ? '9:16' : '16:9';
 config.captureWidth = Math.round(config.width * config.captureScale);
@@ -346,6 +346,7 @@ function readYoutubeMetadataTemplate(templatePath) {
   const fallback = {
     descriptionTemplate: 'Get ready for {raceCountLabel} exciting races with {marbleCount} marbles competing for victory! Every race is full of speed, chaos, close finishes, and unpredictable moments as the marbles battle their way through the track. Watch to see which marble comes out on top and whether your favorite can win it all.\nComment below with your favorite marble, your predictions, or ideas for future race challenges. Your suggestions help make every video more fun and exciting.\nLike, subscribe, and stay tuned for more Marble Rush races!',
     hashtags: ['#marblerace', '#marblerush', '#12marbles', '#racechallenge', '#gameplay', '#games', '#fun', '#gameforkids', '#marblegame', '#racing', '#challenge', '#kidsvideos', '#obstacles', '#indiegame', '#gamedev'],
+    survivorDescriptionTemplate: 'Who will survive the Marble Race Survivor League? {marbleCount} marbles race through chaotic obstacle tracks, but only the strongest stay in the league.\n\nEvery race brings speed, crashes, moving gates, close finishes, and eliminations. Top racers survive, weaker marbles are replaced, and the league keeps getting tougher until one marble stands above the rest.\n\nComment your favorite marble and predict the next survivor!',
     defaults: { marbleCount: 12, raceCount: 10, fallbackTitle: '12 Marbles, 10 Races, Total Chaos!' },
   };
   const resolved = path.resolve(templatePath || path.join(rootDir, 'config/youtube-video-metadata-template.json'));
@@ -354,6 +355,7 @@ function readYoutubeMetadataTemplate(templatePath) {
     const parsed = JSON.parse(readFileSync(resolved, 'utf8'));
     return {
       descriptionTemplate: String(parsed.descriptionTemplate || fallback.descriptionTemplate),
+      survivorDescriptionTemplate: String(parsed.survivorDescriptionTemplate || parsed.descriptionTemplate || fallback.descriptionTemplate),
       hashtags: sanitizeHashtags(parsed.hashtags).length ? sanitizeHashtags(parsed.hashtags) : fallback.hashtags,
       defaults: { ...fallback.defaults, ...(parsed.defaults || {}) },
       templatePath: resolved,
@@ -664,7 +666,10 @@ function buildYoutubeVideoMetadata({ config, renderSummary = {}, thumbnailOutput
     ? titleResult.title
     : titleResult.title;
   const titleType = titleResult.titleType || classifyYoutubeTitleType(title);
-  const descriptionBody = template.descriptionTemplate
+  const selectedDescriptionTemplate = config.mode === 'survivor'
+    ? (template.survivorDescriptionTemplate || template.descriptionTemplate)
+    : template.descriptionTemplate;
+  const descriptionBody = selectedDescriptionTemplate
     .replace(/\{raceCount\}/g, String(raceCount))
     .replace(/\{raceCountLabel\}/g, raceCount === 1 ? '1 exciting race' : `${raceCount} exciting races`)
     .replace(/\{marbleCount\}/g, String(marbleCount))
@@ -698,6 +703,7 @@ ${hashtags.join(' ')}`;
       titleKeyword: titleResult.titleKeyword || '',
       titleEventKind: titleResult.titleEventKind || '',
       dedupeReason: titleResult.dedupeReason || '',
+      descriptionTemplate: config.mode === 'survivor' ? 'survivor-short' : 'default',
       baseTitle,
       thumbnailTitle: config.thumbnailTitle || thumbnailAudit?.rawTitle || '',
       generatedThumbnailTitle: thumbnailAudit?.rawTitle || '',
@@ -2984,6 +2990,15 @@ if (process.env.MARBLE_RENDER_TEST_TITLE_HISTORY === 'true') {
   const titleResult = isShortsTest
     ? makeSeoShortsVideoTitle(process.env.MARBLE_RENDER_TEST_BASE_TITLE || '8 Races, 30 Marbles!', titleContext)
     : makeSeoLongVideoTitle(process.env.MARBLE_RENDER_TEST_BASE_TITLE || '8 Races, 30 Marbles!', titleContext);
+  const metadata = buildYoutubeVideoMetadata({
+    config,
+    renderSummary: {
+      raceCount: config.multipleRaceCount,
+      marbleCount: config.cupSize,
+      cupName: config.cupName,
+      title: process.env.MARBLE_RENDER_TEST_BASE_TITLE || '8 Races, 30 Marbles!',
+    },
+  });
   process.stdout.write(`${JSON.stringify({
     title: titleResult.title,
     titleType: titleResult.titleType || classifyYoutubeTitleType(titleResult.title),
@@ -2992,6 +3007,9 @@ if (process.env.MARBLE_RENDER_TEST_TITLE_HISTORY === 'true') {
     titleKeyword: titleResult.titleKeyword || '',
     titleEventKind: titleResult.titleEventKind || '',
     dedupeReason: titleResult.dedupeReason || '',
+    description: metadata.description,
+    descriptionTemplate: metadata.source?.descriptionTemplate || '',
+    hashtags: metadata.hashtags || [],
     recentTitleTypesAvoided: [...new Set(recentTitles.map((item) => item.titleType))],
   }, null, 2)}\n`);
   process.exit(0);
