@@ -9,15 +9,15 @@ const VIDEO_CANVAS_LAYOUTS = {
   horizontal: {
     key: 'horizontal',
     label: 'Long / Horizontal Video Canvas',
-    width: 1920,
-    height: 1080,
+    width: 1280,
+    height: 720,
     fit: 'cover',
   },
   vertical: {
     key: 'vertical',
     label: 'Shorts / Vertical Video Canvas',
-    width: 1080,
-    height: 1920,
+    width: 720,
+    height: 1280,
     fit: 'cover',
   },
 };
@@ -528,9 +528,9 @@ const BROADCAST_CAMERA = {
     back: -9.2,
     side: 0.85,
     height: 25,
-    lookAhead: 9.5,
-    targetLookAheadScale: 0.2,
-    targetGuideBlend: 0.3,
+    lookAhead: 11.5,
+    targetLookAheadScale: 0.24,
+    targetGuideBlend: 0.36,
     targetLift: 1.2,
     dynamicLookAheadBySpeed: 6,
     maxSideWave: 0.12,
@@ -542,16 +542,16 @@ const BROADCAST_CAMERA = {
     obstaclePullback: 1.1,
     obstacleHeightBoost: 2.5,
     obstacleLookAheadBoost: 3,
-    label: 'mid/late-race leader chase shot: from 58% progress it follows P1 with a closer lower broadcast angle, moderate FOV, restrained side drift, and enough lookahead to keep the route readable',
+    label: 'mid/late-race leader chase shot: from 58% progress it follows P1 with a closer lower broadcast angle, moderate FOV, restrained side drift, and extra forward forecast so upcoming track stays readable',
   },
   leadPack: {
     back: -7.6,
     side: 0.82,
     height: 29,
     packHeightStep: 0.45,
-    lookAhead: 10,
-    targetLookAheadScale: 0.32,
-    targetGuideBlend: 0.34,
+    lookAhead: 12,
+    targetLookAheadScale: 0.38,
+    targetGuideBlend: 0.4,
     targetLift: 1.55,
     useTrackNormalHeight: true,
     flatTrackHeightBoost: 5,
@@ -566,7 +566,7 @@ const BROADCAST_CAMERA = {
     obstaclePullback: 2.7,
     obstacleHeightBoost: 2.5,
     obstacleLookAheadBoost: 4,
-    label: 'closer early-race cinematic lead-pack shot: keeps the pack and track readable while reducing the previous safe overhead feel for stronger marble presence',
+    label: 'closer early-race cinematic lead-pack shot: keeps the pack and more upcoming track readable while reducing the previous safe overhead feel for stronger marble presence',
   },
   leadBattle: {
     enabled: true,
@@ -1937,6 +1937,15 @@ class MarbleRace {
       return;
     }
 
+    const horizontalDesignWidth = 1920;
+    const horizontalDesignHeight = 1080;
+    const horizontalContentScale = Math.min(w / horizontalDesignWidth, h / horizontalDesignHeight);
+    const logicalW = w / horizontalContentScale;
+    const logicalH = h / horizontalContentScale;
+
+    ctx.save();
+    ctx.scale(horizontalContentScale, horizontalContentScale);
+
     // Live Event caption, top-left.
     const capX = 46;
     const capY = 38;
@@ -1958,7 +1967,7 @@ class MarbleRace {
     ctx.restore();
 
     // Live Standing, right side.
-    const boardX = w - 438;
+    const boardX = logicalW - 438;
     const boardY = 44;
     const boardW = 390;
     const rowH = 62;
@@ -1988,7 +1997,7 @@ class MarbleRace {
 
     // Bottom CTA and channel handle.
     const ctaX = 54;
-    const ctaY = h - 132;
+    const ctaY = logicalH - 132;
     const ctaW = 610;
     const ctaH = 86;
     this.drawViewerRoundedRect(ctx, ctaX, ctaY, ctaW, ctaH, 28);
@@ -2002,7 +2011,7 @@ class MarbleRace {
 
     // Time / progress / distance lower-third.
     const infoX = 690;
-    const infoY = h - 116;
+    const infoY = logicalH - 116;
     const infoW = 700;
     const infoH = 66;
     this.drawViewerRoundedRect(ctx, infoX, infoY, infoW, infoH, 22);
@@ -2021,6 +2030,7 @@ class MarbleRace {
     ctx.fill();
     this.drawViewerText(ctx, `PROGRESS ${Math.round(leaderProgress * 100)}%`, progressX + progressW + 18, infoY + 25, { font: '900 20px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, maxWidth: 168 });
     this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, progressX + progressW + 18, infoY + 50, { font: '800 17px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, maxWidth: 168 });
+    ctx.restore();
 
     this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
     const survivorSpotlightSummary = this.drawCanvasSurvivorSpotlight({ ctx, canvas, summaryTarget });
@@ -2035,6 +2045,9 @@ class MarbleRace {
       liveStandingCount: ranking.length,
       layout: 'horizontal',
       maxStandingRows: CANVAS_VIEWER_OVERLAY.maxStandingRows,
+      horizontalContentScale: Number(horizontalContentScale.toFixed(3)),
+      horizontalDesignSize: `${horizontalDesignWidth}x${horizontalDesignHeight}`,
+      logicalCanvasSize: `${Math.round(logicalW)}x${Math.round(logicalH)}`,
       channelHandle: CANVAS_VIEWER_OVERLAY.channelHandle,
       ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
       elapsed: Number(this.elapsed.toFixed(2)),
@@ -2048,91 +2061,92 @@ class MarbleRace {
   drawVerticalViewerCanvasOverlay({ ctx, canvas, ranking = [], leaderProgress = 0, leaderDistance = 0, caption = {}, summaryTarget = 'recording' } = {}) {
     const w = canvas.width;
     const h = canvas.height;
-    const margin = 42;
+    const verticalContentScale = 0.74;
+    const margin = 58;
 
     // Compact Shorts event card at the top.
     const capX = margin;
-    const capY = 54;
+    const capY = 42;
     const capW = w - margin * 2;
-    const capH = 172;
+    const capH = 124;
     ctx.save();
     const capGradient = ctx.createLinearGradient(capX, capY, capX + capW, capY + capH);
     capGradient.addColorStop(0, 'rgba(255, 128, 0, 0.94)');
     capGradient.addColorStop(1, 'rgba(255, 224, 80, 0.80)');
-    this.drawViewerRoundedRect(ctx, capX, capY, capW, capH, 34);
+    this.drawViewerRoundedRect(ctx, capX, capY, capW, capH, 24);
     ctx.fillStyle = 'rgba(0, 0, 0, 0.54)';
     ctx.fill();
-    this.drawViewerRoundedRect(ctx, capX + 18, capY + 18, 182, 44, 20);
+    this.drawViewerRoundedRect(ctx, capX + 14, capY + 13, 134, 32, 16);
     ctx.fillStyle = capGradient;
     ctx.fill();
-    this.drawViewerText(ctx, 'LIVE EVENT', capX + 109, capY + 41, { font: '900 25px Arial Black, Impact, sans-serif', fill: '#141414', strokeWidth: 0, align: 'center' });
-    this.drawViewerText(ctx, caption.title || 'MARBLE RUSH', capX + 34, capY + 100, { font: '900 54px Arial Black, Impact, sans-serif', fill: '#fff7b1', maxWidth: capW - 68 });
-    this.drawViewerText(ctx, caption.detail || 'Pick your winner', capX + 34, capY + 145, { font: '800 30px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: capW - 68 });
+    this.drawViewerText(ctx, 'LIVE EVENT', capX + 81, capY + 30, { font: '900 18px Arial Black, Impact, sans-serif', fill: '#141414', strokeWidth: 0, align: 'center' });
+    this.drawViewerText(ctx, caption.title || 'MARBLE RUSH', capX + 26, capY + 74, { font: '900 37px Arial Black, Impact, sans-serif', fill: '#fff7b1', maxWidth: capW - 52 });
+    this.drawViewerText(ctx, caption.detail || 'Pick your winner', capX + 26, capY + 106, { font: '800 21px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: capW - 52 });
     ctx.restore();
 
     // Shorts-friendly top-three standings card. Keep it compact so the middle race action stays visible.
     const boardW = w - margin * 2;
-    const rowH = 72;
-    const boardH = 92 + rowH * Math.max(1, ranking.length || 3);
+    const rowH = 48;
+    const boardH = 66 + rowH * Math.max(1, ranking.length || 3);
     const boardX = margin;
-    const boardY = Math.min(h - 720, 270);
-    this.drawViewerRoundedRect(ctx, boardX, boardY, boardW, boardH, 34);
+    const boardY = Math.min(h - 595, 196);
+    this.drawViewerRoundedRect(ctx, boardX, boardY, boardW, boardH, 24);
     ctx.fillStyle = 'rgba(3, 8, 18, 0.70)';
     ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,0.30)';
     ctx.lineWidth = 4;
     ctx.stroke();
-    this.drawViewerText(ctx, 'LIVE STANDING', boardX + 30, boardY + 42, { font: '900 38px Arial Black, Impact, sans-serif', fill: '#8df7ff', strokeWidth: 5 });
+    this.drawViewerText(ctx, 'LIVE STANDING', boardX + 22, boardY + 31, { font: '900 26px Arial Black, Impact, sans-serif', fill: '#8df7ff', strokeWidth: 5 });
     ranking.forEach((data, index) => {
-      const y = boardY + 76 + index * rowH;
+      const y = boardY + 54 + index * rowH;
       const color = `#${(data.color || 0xffffff).toString(16).padStart(6, '0')}`;
-      this.drawViewerRoundedRect(ctx, boardX + 24, y, boardW - 48, 56, 18);
+      this.drawViewerRoundedRect(ctx, boardX + 20, y, boardW - 40, 38, 14);
       ctx.fillStyle = index === 0 ? 'rgba(255, 214, 64, 0.30)' : 'rgba(255,255,255,0.11)';
       ctx.fill();
-      this.drawViewerText(ctx, `#${index + 1}`, boardX + 48, y + 28, { font: '900 28px Arial Black, Impact, sans-serif', fill: index === 0 ? '#ffdf3f' : '#ffffff', strokeWidth: 4 });
+      this.drawViewerText(ctx, `#${index + 1}`, boardX + 37, y + 19, { font: '900 19px Arial Black, Impact, sans-serif', fill: index === 0 ? '#ffdf3f' : '#ffffff', strokeWidth: 4 });
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(boardX + 130, y + 28, 14, 0, Math.PI * 2);
+      ctx.arc(boardX + 92, y + 19, 9, 0, Math.PI * 2);
       ctx.fill();
-      this.drawViewerText(ctx, data.name || `Marble ${data.id + 1}`, boardX + 160, y + 28, { font: '800 27px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: boardW - 340 });
+      this.drawViewerText(ctx, data.name || `Marble ${data.id + 1}`, boardX + 112, y + 19, { font: '800 18px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: boardW - 235 });
       const label = data.defeated ? 'DNF' : data.finished ? `${(data.finishTime || this.elapsed || 0).toFixed(1)}s` : `${Math.round((data.progress || 0) * 100)}%`;
-      this.drawViewerText(ctx, label, boardX + boardW - 52, y + 28, { font: '900 27px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, align: 'right' });
+      this.drawViewerText(ctx, label, boardX + boardW - 34, y + 19, { font: '900 18px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, align: 'right' });
     });
 
     // Bottom stacked CTA and progress lower-third.
     const ctaX = margin;
-    const ctaY = h - 292;
+    const ctaY = h - 216;
     const ctaW = w - margin * 2;
-    const ctaH = 94;
-    this.drawViewerRoundedRect(ctx, ctaX, ctaY, ctaW, ctaH, 32);
+    const ctaH = 64;
+    this.drawViewerRoundedRect(ctx, ctaX, ctaY, ctaW, ctaH, 22);
     ctx.fillStyle = 'rgba(255, 36, 66, 0.92)';
     ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,0.55)';
     ctx.lineWidth = 4;
     ctx.stroke();
-    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.ctaPrimary, ctaX + ctaW / 2, ctaY + 38, { font: '900 46px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 5, align: 'center', maxWidth: ctaW - 60 });
-    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.channelHandle, ctaX + ctaW / 2, ctaY + 73, { font: '800 27px Arial, system-ui, sans-serif', fill: '#fff3a0', strokeWidth: 4, align: 'center', maxWidth: ctaW - 60 });
+    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.ctaPrimary, ctaX + ctaW / 2, ctaY + 27, { font: '900 31px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 5, align: 'center', maxWidth: ctaW - 48 });
+    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.channelHandle, ctaX + ctaW / 2, ctaY + 51, { font: '800 19px Arial, system-ui, sans-serif', fill: '#fff3a0', strokeWidth: 4, align: 'center', maxWidth: ctaW - 48 });
 
     const infoX = margin;
-    const infoY = h - 172;
+    const infoY = h - 128;
     const infoW = w - margin * 2;
-    const infoH = 112;
-    this.drawViewerRoundedRect(ctx, infoX, infoY, infoW, infoH, 30);
+    const infoH = 78;
+    this.drawViewerRoundedRect(ctx, infoX, infoY, infoW, infoH, 20);
     ctx.fillStyle = 'rgba(0, 0, 0, 0.64)';
     ctx.fill();
-    this.drawViewerText(ctx, `TIME ${this.elapsed.toFixed(1)}s`, infoX + 34, infoY + 38, { font: '900 31px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 4 });
-    this.drawViewerText(ctx, `PROGRESS ${Math.round(leaderProgress * 100)}%`, infoX + infoW - 34, infoY + 38, { font: '900 29px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, align: 'right' });
-    const progressX = infoX + 34;
-    const progressY = infoY + 78;
+    this.drawViewerText(ctx, `TIME ${this.elapsed.toFixed(1)}s`, infoX + 24, infoY + 27, { font: '900 21px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 4 });
+    this.drawViewerText(ctx, `PROGRESS ${Math.round(leaderProgress * 100)}%`, infoX + infoW - 24, infoY + 27, { font: '900 20px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, align: 'right' });
+    const progressX = infoX + 24;
+    const progressY = infoY + 53;
     const progressW = infoW - 68;
-    const progressH = 16;
+    const progressH = 10;
     ctx.fillStyle = 'rgba(255,255,255,0.25)';
     this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, progressW, progressH, 8);
     ctx.fill();
     ctx.fillStyle = '#35f2ff';
     this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, Math.max(8, progressW * leaderProgress), progressH, 8);
     ctx.fill();
-    this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, infoX + infoW / 2, infoY + 102, { font: '800 23px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, align: 'center', maxWidth: infoW - 68 });
+    this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, infoX + infoW / 2, infoY + 69, { font: '800 16px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, align: 'center', maxWidth: infoW - 68 });
 
     this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
     const survivorSpotlightSummary = this.drawCanvasSurvivorSpotlight({ ctx, canvas, summaryTarget });
@@ -2143,6 +2157,14 @@ class MarbleRace {
       target: summaryTarget,
       layout: 'vertical',
       canvasSize: `${w}x${h}`,
+      verticalContentScale,
+      verticalLayoutMetrics: {
+        margin,
+        eventCard: { x: capX, y: capY, width: capW, height: capH },
+        standingCard: { x: boardX, y: boardY, width: boardW, height: boardH, rowHeight: rowH },
+        ctaCard: { x: ctaX, y: ctaY, width: ctaW, height: ctaH },
+        infoCard: { x: infoX, y: infoY, width: infoW, height: infoH },
+      },
       liveEventTitle: caption.title,
       liveEventDetail: caption.detail,
       liveStandingCount: ranking.length,
@@ -6515,8 +6537,8 @@ class MarbleRace {
     blade.receiveShadow = PERFORMANCE_TUNING.shadows;
     bladeGroup.add(blade);
 
-    const dangerGlowMat = new THREE.MeshBasicMaterial({ color: 0xff0038, transparent: true, opacity: 0.82, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending });
-    const dangerGlow = new THREE.Mesh(new THREE.BoxGeometry(bladeWidth + 0.72, bladeHeight + 0.52, 0.07), dangerGlowMat);
+    const dangerGlowMat = new THREE.MeshBasicMaterial({ color: 0xff174f, transparent: true, opacity: 0.48, depthWrite: false, blending: THREE.AdditiveBlending });
+    const dangerGlow = new THREE.Mesh(new THREE.BoxGeometry(bladeWidth + 0.44, bladeHeight + 0.28, 0.05), dangerGlowMat);
     dangerGlow.position.set(0, 0, -bladeDepth / 2 - 0.035);
     dangerGlow.renderOrder = 6;
     bladeGroup.add(dangerGlow);
@@ -6560,7 +6582,7 @@ class MarbleRace {
       trackSlopePitch: pitch,
       trackYaw: yaw,
       visualStyle: 'floor-rising-wide-guillotine-gate',
-      textureStyle: 'white-warning-blade-rises-from-track-floor-dense-bright-front-danger-glow-no-frame-no-hit-ring',
+      textureStyle: 'white-warning-blade-rises-from-track-floor-dense-danger-glow-no-frame-no-hit-ring',
       movingGateMode: 'floor-rising-guillotine',
       movingGateDimensions: {
         gateWidth,
@@ -6747,7 +6769,7 @@ class MarbleRace {
           obstacle.body.aabbNeedsUpdate = true;
         }
         if (obstacle.dangerGlow?.material) {
-          obstacle.dangerGlow.material.opacity = 0.58 + (1 - openAmount) * 0.34;
+          obstacle.dangerGlow.material.opacity = 0.28 + (1 - openAmount) * 0.46;
         }
         obstacle.warningStripes?.forEach((stripe, index) => {
           stripe.rotation.z = 0.48 + Math.sin(phase * 2.4 + index) * 0.04;
@@ -9939,8 +9961,8 @@ class MarbleRace {
   buildDisplayMediaOptions({ tabOnly = false, includeAudio = true } = {}) {
     const videoConstraints = {
       frameRate: { ideal: 60, max: 60 },
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
       displaySurface: 'browser',
       logicalSurface: true,
       cursor: RECORDING_CURSOR_SUPPRESSION.cursor,
@@ -13996,19 +14018,23 @@ class MarbleRace {
     const targetWidth = this.videoCompositeCanvas?.width || layout.width || sourceWidth;
     const targetHeight = this.videoCompositeCanvas?.height || layout.height || sourceHeight;
     const cropFactor = this.getVideoCompositeCameraCropFactor(sourceWidth, sourceHeight, targetWidth, targetHeight, layout.fit || 'cover');
-    const compensatedDesiredFov = cropFactor > 1.01
-      ? clamp(THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(desiredFov) / 2) * cropFactor)), desiredFov, 92)
+    const verticalRenderZoomOutFactor = (layout.key || this.videoCanvasLayoutKey) === 'vertical' ? 1.08 : 1;
+    const compensatedDesiredFov = (cropFactor > 1.01 || verticalRenderZoomOutFactor > 1)
+      ? clamp(THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(desiredFov) / 2) * cropFactor * verticalRenderZoomOutFactor)), desiredFov, 92)
       : desiredFov;
     this.videoCompositeCameraCropState = {
       layout: layout.key || this.videoCanvasLayoutKey || 'horizontal',
       fit: layout.fit || 'cover',
       sourceSize: `${sourceWidth}x${sourceHeight}`,
       targetSize: `${targetWidth}x${targetHeight}`,
+      verticalRenderZoomOutFactor: Number(verticalRenderZoomOutFactor.toFixed(2)),
       cropFactor: Number(cropFactor.toFixed(3)),
       baseFov: Number(desiredFov.toFixed(2)),
       compensatedFov: Number(compensatedDesiredFov.toFixed(2)),
-      active: cropFactor > 1.01,
-      label: cropFactor > 1.01 ? 'compensates vertical Shorts cover-crop by widening the live render FOV before compositing' : 'no video-crop camera compensation needed',
+      active: cropFactor > 1.01 || verticalRenderZoomOutFactor > 1,
+      label: verticalRenderZoomOutFactor > 1
+        ? 'vertical Shorts render zoom-out: widens live render FOV slightly after cover-crop compensation so fast leaders stay in frame'
+        : (cropFactor > 1.01 ? 'compensates vertical Shorts cover-crop by widening the live render FOV before compositing' : 'no video-crop camera compensation needed'),
     };
     if (Math.abs(this.camera.fov - compensatedDesiredFov) > 0.01) {
       this.camera.fov = lerp(this.camera.fov, compensatedDesiredFov, (activeCameraMode === 'cinematicLeader' || activeCameraMode === 'leadPack') ? 0.035 : 0.055);
