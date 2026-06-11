@@ -772,6 +772,10 @@ const PINBALL_PHYSICS = {
   movingGateImpulse: 4.9,
   movingGateSweepSpeed: 1.8,
   movingGateSwingAmplitude: 0.78,
+  tiltBridgeRadius: 3.8,
+  tiltBridgeImpulse: 3.8,
+  tiltBridgeSweepSpeed: 1.35,
+  tiltBridgeTiltAmplitude: 0.28,
 };
 
 const CURVE_PRESETS = {
@@ -3289,6 +3293,10 @@ class MarbleRace {
         movingGateBladeY: obstacle.type === 'movingGate' && obstacle.bladeY != null ? Number(obstacle.bladeY.toFixed(3)) : null,
         movingGateSweepSpeed: obstacle.type === 'movingGate' && obstacle.sweepSpeed != null ? Number(Math.abs(obstacle.sweepSpeed).toFixed(2)) : null,
         lastMovingGateHitBy: obstacle.type === 'movingGate' ? (obstacle.lastHitBy ?? null) : null,
+        tiltBridgeDimensions: obstacle.tiltBridgeDimensions ?? null,
+        tiltBridgeAngle: obstacle.type === 'tiltBridge' && obstacle.tiltAngle != null ? Number(obstacle.tiltAngle.toFixed(3)) : null,
+        tiltBridgeSweepSpeed: obstacle.type === 'tiltBridge' && obstacle.sweepSpeed != null ? Number(Math.abs(obstacle.sweepSpeed).toFixed(2)) : null,
+        lastTiltBridgeHitBy: obstacle.type === 'tiltBridge' ? (obstacle.lastHitBy ?? null) : null,
         gongPackRadius: obstacle.packRadius ?? null,
         gongPackImpulse: obstacle.packImpulse ?? null,
         gongShake: obstacle.shake != null ? Number(obstacle.shake.toFixed(2)) : null,
@@ -3389,6 +3397,10 @@ class MarbleRace {
         movingGateBladeY: obstacle.type === 'movingGate' && obstacle.bladeY != null ? Number(obstacle.bladeY.toFixed(3)) : null,
         movingGateSweepSpeed: obstacle.type === 'movingGate' && obstacle.sweepSpeed != null ? Number(Math.abs(obstacle.sweepSpeed).toFixed(2)) : null,
         lastMovingGateHitBy: obstacle.type === 'movingGate' ? (obstacle.lastHitBy ?? null) : null,
+        tiltBridgeDimensions: obstacle.tiltBridgeDimensions ?? null,
+        tiltBridgeAngle: obstacle.type === 'tiltBridge' && obstacle.tiltAngle != null ? Number(obstacle.tiltAngle.toFixed(3)) : null,
+        tiltBridgeSweepSpeed: obstacle.type === 'tiltBridge' && obstacle.sweepSpeed != null ? Number(Math.abs(obstacle.sweepSpeed).toFixed(2)) : null,
+        lastTiltBridgeHitBy: obstacle.type === 'tiltBridge' ? (obstacle.lastHitBy ?? null) : null,
         gongPackRadius: obstacle.packRadius ?? null,
         gongPackImpulse: obstacle.packImpulse ?? null,
         gongShake: obstacle.shake != null ? Number(obstacle.shake.toFixed(2)) : null,
@@ -5489,6 +5501,21 @@ class MarbleRace {
     body.userData = { ...(body.userData || {}), trackSlopePitch: pitch, trackYaw: yaw, localYaw };
   }
 
+  getTrackSlopeRollQuaternion(yaw, pitch = 0, localRoll = 0) {
+    const quaternion = this.getTrackSlopeQuaternion(yaw, pitch, 0);
+    if (localRoll) {
+      quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), localRoll));
+    }
+    return quaternion;
+  }
+
+  setSlopeRollBodyTransform(body, center, yaw, pitch = 0, localRoll = 0) {
+    body.position.copy(center);
+    const quaternion = this.getTrackSlopeRollQuaternion(yaw, pitch, localRoll);
+    body.quaternion.set(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
+    body.userData = { ...(body.userData || {}), trackSlopePitch: pitch, trackYaw: yaw, localRoll };
+  }
+
   addStaticBox(position, halfExtents, yaw, material) {
     const body = new CANNON.Body({ mass: 0, material });
     body.addShape(new CANNON.Box(new CANNON.Vec3(halfExtents.x, halfExtents.y, halfExtents.z)));
@@ -5696,6 +5723,7 @@ class MarbleRace {
       slingshot: new THREE.MeshPhysicalMaterial({ color: 0x12f0c8, roughness: 0.16, metalness: 0.06, clearcoat: 1, clearcoatRoughness: 0.07, emissive: 0x00685d, emissiveIntensity: 0.46 }),
       spinnerGate: new THREE.MeshPhysicalMaterial({ color: 0x8d7dff, roughness: 0.15, metalness: 0.16, clearcoat: 1, clearcoatRoughness: 0.06, emissive: 0x280090, emissiveIntensity: 0.38 }),
       movingGate: new THREE.MeshPhysicalMaterial({ color: 0x46f6ff, roughness: 0.13, metalness: 0.22, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0x005f75, emissiveIntensity: 0.48 }),
+      tiltBridge: new THREE.MeshPhysicalMaterial({ color: 0xff7ad9, roughness: 0.18, metalness: 0.08, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0x83115f, emissiveIntensity: 0.46 }),
       dropTarget: new THREE.MeshPhysicalMaterial({ color: 0xff8f3f, roughness: 0.17, metalness: 0.05, clearcoat: 1, clearcoatRoughness: 0.08, emissive: 0x5a1900, emissiveIntensity: 0.36 }),
       rubber: new THREE.MeshPhysicalMaterial({ color: 0x101422, roughness: 0.32, metalness: 0.02, clearcoat: 0.45, clearcoatRoughness: 0.18, emissive: 0x061020, emissiveIntensity: 0.26 }),
       chrome: new THREE.MeshPhysicalMaterial({ color: 0xe6f2ff, roughness: 0.12, metalness: 0.9, clearcoat: 1, clearcoatRoughness: 0.04 }),
@@ -5919,6 +5947,23 @@ class MarbleRace {
           localTrackWidth: localWidth,
           railClearance,
           railContainmentHalfWidth: movingGateWidth / 2,
+        });
+      }
+      case 'tiltBridge': {
+        palette.tiltBridge.userData.chromeMaterial = palette.chrome;
+        palette.tiltBridge.userData.yellowInsert = palette.yellowInsert;
+        palette.tiltBridge.userData.redInsert = palette.redInsert;
+        const bridgeWidth = Math.min(5.6, Math.max(4.2, localWidth - 1.25));
+        const railClearance = 0.45;
+        const maxCenterOffset = Math.max(0, localWidth / 2 - bridgeWidth / 2 - railClearance);
+        const safeLane = clamp(lane, -maxCenterOffset, maxCenterOffset);
+        const safeTrackSurface = new THREE.Vector3(frame.p.x + frame.right.x * safeLane, frame.p.y, frame.p.z + frame.right.z * safeLane);
+        return this.createTiltBridgeObstacle(safeTrackSurface, yaw, pitch, palette.tiltBridge, {
+          bridgeWidth,
+          laneOffset: safeLane,
+          requestedLaneOffset: lane,
+          localTrackWidth: localWidth,
+          railClearance,
         });
       }
       case 'dropTarget':
@@ -6509,6 +6554,133 @@ class MarbleRace {
     return obstacle;
   }
 
+  createTiltBridgeObstacle(trackSurface, yaw, pitch, material, placement = {}) {
+    const group = new THREE.Group();
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation(group, yaw, pitch);
+    group.userData.visualStyle = 'neon-suspension-tilting-bridge';
+    this.trackGroup.add(group);
+
+    const chromeMat = material.userData?.chromeMaterial || new THREE.MeshPhysicalMaterial({ color: 0xeaf7ff, roughness: 0.1, metalness: 0.92, clearcoat: 1 });
+    const amberMat = material.userData?.yellowInsert || new THREE.MeshPhysicalMaterial({ color: 0xffd166, roughness: 0.16, metalness: 0.04, clearcoat: 1, emissive: 0x7a4a00, emissiveIntensity: 0.4 });
+    const redMat = material.userData?.redInsert || new THREE.MeshPhysicalMaterial({ color: 0xff3864, roughness: 0.18, metalness: 0.04, clearcoat: 1, emissive: 0x79001c, emissiveIntensity: 0.4 });
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0xff7ad9, transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending });
+    const bridgeLength = 4.8;
+    const bridgeWidth = placement.bridgeWidth || 4.8;
+    const deckThickness = 0.18;
+    const deckY = 0.18;
+    const railHeight = 0.42;
+    const railThickness = 0.12;
+    const pivotRadius = 0.22;
+    const tiltAmplitude = PINBALL_PHYSICS.tiltBridgeTiltAmplitude;
+    const sweepSpeed = PINBALL_PHYSICS.tiltBridgeSweepSpeed * (this.rng() < 0.5 ? -1 : 1);
+
+    const bridgePivot = new THREE.Group();
+    bridgePivot.position.y = deckY;
+    group.add(bridgePivot);
+
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(bridgeWidth, deckThickness, bridgeLength), material);
+    deck.castShadow = PERFORMANCE_TUNING.shadows;
+    deck.receiveShadow = PERFORMANCE_TUNING.shadows;
+    bridgePivot.add(deck);
+
+    const centerGlow = new THREE.Mesh(new THREE.BoxGeometry(bridgeWidth * 0.82, 0.035, bridgeLength * 0.78), glowMat);
+    centerGlow.position.y = deckThickness / 2 + 0.03;
+    centerGlow.renderOrder = 35;
+    bridgePivot.add(centerGlow);
+
+    const planks = [];
+    for (let index = 0; index < 7; index += 1) {
+      const z = -bridgeLength * 0.38 + index * (bridgeLength * 0.76 / 6);
+      const plank = new THREE.Mesh(new THREE.BoxGeometry(bridgeWidth * 0.92, 0.04, 0.055), index % 2 ? amberMat : redMat);
+      plank.position.set(0, deckThickness / 2 + 0.055, z);
+      plank.castShadow = PERFORMANCE_TUNING.shadows;
+      bridgePivot.add(plank);
+      planks.push(plank);
+    }
+
+    const rails = [];
+    [-1, 1].forEach((side) => {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(railThickness, railHeight, bridgeLength * 0.96), chromeMat);
+      rail.position.set(side * (bridgeWidth / 2 + railThickness * 0.5), railHeight / 2 + deckThickness / 2, 0);
+      rail.castShadow = PERFORMANCE_TUNING.shadows;
+      bridgePivot.add(rail);
+      rails.push(rail);
+      const railGlow = new THREE.Mesh(new THREE.BoxGeometry(0.035, railHeight * 0.58, bridgeLength * 0.9), glowMat.clone());
+      railGlow.material.opacity = 0.2;
+      railGlow.position.set(side * (bridgeWidth / 2 + railThickness + 0.02), railHeight / 2 + deckThickness / 2, 0);
+      bridgePivot.add(railGlow);
+      rails.push(railGlow);
+    });
+
+    const pylons = [];
+    [-1, 1].forEach((side) => {
+      [-1, 1].forEach((end) => {
+        const pylon = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.11, 1.1, 14), chromeMat);
+        pylon.position.set(side * (bridgeWidth / 2 + 0.34), 0.55, end * (bridgeLength / 2 - 0.26));
+        pylon.castShadow = PERFORMANCE_TUNING.shadows;
+        group.add(pylon);
+        pylons.push(pylon);
+      });
+    });
+
+    const pivotBar = new THREE.Mesh(new THREE.CylinderGeometry(pivotRadius, pivotRadius, bridgeWidth + 0.82, 24), chromeMat);
+    pivotBar.position.y = deckY;
+    pivotBar.rotation.z = Math.PI / 2;
+    pivotBar.castShadow = PERFORMANCE_TUNING.shadows;
+    group.add(pivotBar);
+
+    const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
+    body.addShape(new CANNON.Box(new CANNON.Vec3(bridgeWidth / 2, deckThickness / 2, bridgeLength / 2)));
+    const obstacleCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, deckY, 0, yaw, pitch));
+    this.setSlopeRollBodyTransform(body, obstacleCenter, yaw, pitch, 0);
+    this.addObstacleBody(body, group);
+
+    const obstacle = {
+      type: 'tiltBridge',
+      kind: 'tiltBridge',
+      trackSurface: trackSurface.clone(),
+      center: obstacleCenter,
+      radius: PINBALL_PHYSICS.tiltBridgeRadius,
+      impulse: PINBALL_PHYSICS.tiltBridgeImpulse,
+      cooldown: new Map(),
+      group,
+      bridgePivot,
+      deck,
+      centerGlow,
+      planks,
+      rails,
+      pylons,
+      pivotBar,
+      body,
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
+      visualStyle: 'neon-suspension-tilting-bridge-wide-deck-side-rails',
+      textureStyle: 'magenta-glow-planked-bridge-with-chrome-pylons',
+      tiltBridgeDimensions: {
+        bridgeWidth,
+        bridgeLength,
+        deckThickness,
+        railHeight,
+        pivotRadius,
+        laneOffset: placement.laneOffset ?? null,
+        requestedLaneOffset: placement.requestedLaneOffset ?? null,
+        localTrackWidth: placement.localTrackWidth ?? null,
+        railClearance: placement.railClearance ?? null,
+        containedWithinRails: placement.localTrackWidth
+          ? Math.abs(placement.laneOffset ?? 0) + bridgeWidth / 2 <= placement.localTrackWidth / 2 - (placement.railClearance ?? 0)
+          : null,
+      },
+      tiltAmplitude,
+      sweepSpeed,
+      tiltAngle: 0,
+      pulse: 0,
+      lastHitBy: null,
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
+  }
+
   createMovingGateObstacle(trackSurface, yaw, pitch, swingDirection = 1, material, placement = {}) {
     const group = new THREE.Group();
     group.position.copy(trackSurface);
@@ -6778,6 +6950,22 @@ class MarbleRace {
       if (obstacle.type === 'dropTarget') {
         this.updateDropTargetBank(obstacle, delta);
       }
+      if (obstacle.type === 'tiltBridge') {
+        const phase = this.elapsed * Math.abs(obstacle.sweepSpeed || PINBALL_PHYSICS.tiltBridgeSweepSpeed) + (obstacle.distributionZoneIndex || 0) * 0.61;
+        const direction = Math.sign(obstacle.sweepSpeed || 1) || 1;
+        const tiltAngle = Math.sin(phase) * (obstacle.tiltAmplitude || PINBALL_PHYSICS.tiltBridgeTiltAmplitude) * direction;
+        obstacle.tiltAngle = tiltAngle;
+        if (obstacle.bridgePivot) obstacle.bridgePivot.rotation.z = tiltAngle;
+        if (obstacle.body) {
+          obstacle.center.copy(obstacle.trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, 0.18, 0, obstacle.trackYaw || 0, obstacle.trackSlopePitch || 0)));
+          this.setSlopeRollBodyTransform(obstacle.body, obstacle.center, obstacle.trackYaw || 0, obstacle.trackSlopePitch || 0, tiltAngle);
+          obstacle.body.aabbNeedsUpdate = true;
+        }
+        if (obstacle.centerGlow?.material) obstacle.centerGlow.material.opacity = 0.22 + Math.abs(Math.sin(phase)) * 0.22;
+        obstacle.planks?.forEach((plank, index) => {
+          plank.scale.y = 1 + Math.sin(phase * 2.2 + index * 0.7) * 0.18;
+        });
+      }
       if (obstacle.type === 'gongBumper') {
         if (obstacle.shake) {
           obstacle.shake = Math.max(0, obstacle.shake - delta * 4.8);
@@ -6839,6 +7027,7 @@ class MarbleRace {
         if (obstacle.type === 'slingshot') this.applySlingshotImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'spinnerGate') this.applySpinnerGateImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'movingGate') this.applyMovingGateImpulse(obstacle, data, dx, dz);
+        if (obstacle.type === 'tiltBridge') this.applyTiltBridgeImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'dropTarget') this.applyDropTargetHit(obstacle, data);
       });
     });
@@ -7032,6 +7221,34 @@ class MarbleRace {
       distance: data.lastObstacleHitDistance,
       progress: data.lastObstacleHitProgress,
       lines: [`${data.name} clips the timing gate`, `${data.name} sneaks under the gate`, `${data.name} catches the drop gate`],
+    });
+  }
+
+  applyTiltBridgeImpulse(obstacle, data, dx, dz) {
+    const closest = this.findClosestProgress(data.body.position);
+    this.noteObstacleHit(data, obstacle, closest.distance);
+    const frame = this.getTrackFrameAt(Math.max(closest.distance, data.distance || 0) + this.finishDirectionAssist.lookAhead);
+    const radialDistance = Math.max(0.001, Math.hypot(dx, dz));
+    const radial = new THREE.Vector3(dx / radialDistance, 0, dz / radialDistance);
+    const tiltAngle = obstacle.tiltAngle || 0;
+    const tiltSide = Math.sign(tiltAngle) || Math.sign(radial.dot(frame.right)) || 1;
+    const forwardBias = frame.tangent.clone().multiplyScalar(obstacle.impulse * 0.54);
+    const sideDrift = frame.right.clone().multiplyScalar(tiltSide * obstacle.impulse * Math.min(0.32, Math.abs(tiltAngle) * 0.9));
+    const softRebound = radial.multiplyScalar(0.42);
+    const rawImpulse = forwardBias.add(sideDrift).add(softRebound);
+    data.body.wakeUp();
+    this.applyFinishDirectedImpulse(data, rawImpulse, frame, 0.16);
+    obstacle.cooldown.set(data.id, this.elapsed);
+    obstacle.pulse = 1;
+    obstacle.lastHitBy = data.name;
+    this.pinballInteractions.tiltBridge += 1;
+    this.spawnImpactEffect(obstacle.center, 0xff7ad9, 'spark');
+    this.pushBroadcastEvent('Tilt Bridge', `${data.name} rides the tilting bridge`, {
+      kind: 'obstacle',
+      marbleId: data.id,
+      distance: data.lastObstacleHitDistance,
+      progress: data.lastObstacleHitProgress,
+      lines: [`${data.name} rides the tilt bridge`, `${data.name} balances across`, `${data.name} surfs the neon bridge`],
     });
   }
 
