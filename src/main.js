@@ -459,11 +459,27 @@ const OBSTACLE_DISTRIBUTION_MODES = {
   },
 };
 const OBSTACLE_PLACEMENT = {
-  minSpacingMeters: 8,
-  minSpacingFloorMeters: 4,
+  minSpacingMeters: 10,
+  minSpacingFloorMeters: 6,
+  pairClearanceMeters: 2,
   startPaddingMeters: 12,
   finishPaddingMeters: 16,
-  label: 'obstacle placements are sorted and relaxed along the track with a minimum distance gap so generated obstacles do not overlap or cluster on top of each other',
+  label: 'obstacle placements are sorted and relaxed with pair-aware spacing so large obstacles do not overlap or visually block each other',
+};
+const OBSTACLE_CATEGORY_TARGET_WEIGHTS = {
+  normal: 5,
+  buff: 1,
+  debuff: 1,
+};
+const OBSTACLE_TYPE_PLACEMENT = {
+  popBumper: { footprintMeters: 3.8, spawnWeight: 1.15 },
+  pinBumper: { footprintMeters: 4.8, spawnWeight: 1.05 },
+  gongBumper: { footprintMeters: 5.8, spawnWeight: 0.85 },
+  slingshot: { footprintMeters: 5.2, spawnWeight: 1.0 },
+  spinnerGate: { footprintMeters: 7.0, spawnWeight: 0.8 },
+  movingGate: { footprintMeters: 7.4, spawnWeight: 0.7 },
+  tiltBridge: { footprintMeters: 7.8, spawnWeight: 0.65 },
+  dropTarget: { footprintMeters: 7.0, spawnWeight: 0.72 },
 };
 const OBSTACLE_CATEGORIES = obstacleCatalogData.categories;
 const PINBALL_OBSTACLE_TYPE_ENTRIES = obstacleCatalogData.types;
@@ -3237,8 +3253,9 @@ class MarbleRace {
 
   getObstacleDebugEntries() {
     return this.pinballObstacles.map((obstacle, index) => {
-      const progress = this.findClosestProgress(obstacle.center);
-      const distance = progress.distance || 0;
+      const centerProgress = this.findClosestProgress(obstacle.center);
+      const centerDistance = centerProgress.distance || 0;
+      const distance = Number.isFinite(obstacle.placementDistance) ? obstacle.placementDistance : centerDistance;
       const frame = this.getTrackFrameAt(distance);
       const laneOffset = new THREE.Vector3(obstacle.center.x - frame.p.x, 0, obstacle.center.z - frame.p.z).dot(frame.right);
       const piece = this.trackPieces.find((trackPiece) => distance >= trackPiece.startD && distance <= trackPiece.endD);
@@ -3264,6 +3281,10 @@ class MarbleRace {
         distributionZoneStart: obstacle.distributionZoneStart != null ? Number(obstacle.distributionZoneStart.toFixed(2)) : null,
         distributionZoneEnd: obstacle.distributionZoneEnd != null ? Number(obstacle.distributionZoneEnd.toFixed(2)) : null,
         distance: Number(distance.toFixed(2)),
+        centerDistance: Number(centerDistance.toFixed(2)),
+        plannedDistance: obstacle.placementDistance != null ? Number(obstacle.placementDistance.toFixed(2)) : null,
+        placementMinSpacing: obstacle.placementMinSpacing != null ? Number(obstacle.placementMinSpacing.toFixed(2)) : null,
+        placementFootprint: Number((this.getObstacleTypePlacementConfig(obstacle.type).footprintMeters || 0).toFixed(2)),
         progress: this.trackLength ? Number((distance / this.trackLength).toFixed(4)) : 0,
         laneOffset: Number(laneOffset.toFixed(2)),
         radius: Number((obstacle.radius || obstacle.halfLength || obstacle.halfWidth || 0).toFixed(2)),
@@ -5763,6 +5784,8 @@ class MarbleRace {
       const obstacle = this.createPinballObstacle(type, frame, lane, localWidth, palette);
       const category = PINBALL_OBSTACLE_TYPE_METADATA[type]?.category || 'normal';
       if (obstacle) {
+        obstacle.placementDistance = d;
+        obstacle.placementMinSpacing = placement.minSpacing ?? null;
         obstacle.category = category;
         obstacle.categoryLabel = OBSTACLE_CATEGORIES[category]?.label || '普通障礙物';
         obstacle.distributionMode = mode;
@@ -5780,8 +5803,19 @@ class MarbleRace {
       .map((placement) => Number(placement.distance))
       .filter((distance) => Number.isFinite(distance))
       .sort((a, b) => a - b);
+    const sortedPlacements = placements
+      .filter((placement) => Number.isFinite(Number(placement.distance)))
+      .slice()
+      .sort((a, b) => a.distance - b.distance);
     const gaps = distances.slice(1).map((distance, index) => distance - distances[index]);
     const minObservedGap = gaps.length ? Math.min(...gaps) : null;
+    const pairGaps = sortedPlacements.slice(1).map((placement, index) => ({
+      gap: placement.distance - sortedPlacements[index].distance,
+      requiredGap: this.getObstaclePairSpacing(sortedPlacements[index].type, placement.type),
+    }));
+    const minObservedPairClearance = pairGaps.length
+      ? Math.min(...pairGaps.map((pair) => pair.gap - pair.requiredGap))
+      : null;
     const zoneGaps = new Map();
     placements.forEach((placement) => {
       if (placement.zoneIndex == null || !Number.isFinite(placement.distance)) return;
@@ -5797,62 +5831,108 @@ class MarbleRace {
     return {
       configuredMinSpacing: OBSTACLE_PLACEMENT.minSpacingMeters,
       minSpacingFloor: OBSTACLE_PLACEMENT.minSpacingFloorMeters,
+      pairClearance: OBSTACLE_PLACEMENT.pairClearanceMeters,
       startPadding: OBSTACLE_PLACEMENT.startPaddingMeters,
       finishPadding: OBSTACLE_PLACEMENT.finishPaddingMeters,
       minObservedGap: minObservedGap == null ? null : Number(minObservedGap.toFixed(2)),
+      minObservedPairClearance: minObservedPairClearance == null || !Number.isFinite(minObservedPairClearance) ? null : Number(minObservedPairClearance.toFixed(2)),
       minObservedZoneGap: Number.isFinite(minObservedZoneGap) ? Number(minObservedZoneGap.toFixed(2)) : null,
       sampleDistances: distances.slice(0, 20).map((distance) => Number(distance.toFixed(2))),
       label: OBSTACLE_PLACEMENT.label,
     };
   }
 
-  buildObstacleDistributionZones(enabledTypes) {
-    const usableStart = OBSTACLE_PLACEMENT.startPaddingMeters;
-    const usableEnd = Math.max(usableStart + 8, this.trackLength - OBSTACLE_PLACEMENT.finishPaddingMeters);
-    const usableLength = Math.max(1, usableEnd - usableStart);
-    const maxZonesByLength = Math.max(1, Math.floor(usableLength / (OBSTACLE_DISTRIBUTION_MODES.zoned.minZoneMeters || 70)));
-    const zoneCount = Math.max(1, Math.min(enabledTypes.length, maxZonesByLength));
-    return Array.from({ length: zoneCount }, (_, index) => {
-      const start = usableStart + (usableLength * index) / zoneCount;
-      const end = usableStart + (usableLength * (index + 1)) / zoneCount;
-      return { index, start, end, type: enabledTypes[index % enabledTypes.length] };
+  getObstacleTypePlacementConfig(type) {
+    return OBSTACLE_TYPE_PLACEMENT[type] || { footprintMeters: OBSTACLE_PLACEMENT.minSpacingFloorMeters, spawnWeight: 1 };
+  }
+
+  getObstaclePairSpacing(typeA, typeB) {
+    const footprintA = Number(this.getObstacleTypePlacementConfig(typeA).footprintMeters) || OBSTACLE_PLACEMENT.minSpacingFloorMeters;
+    const footprintB = Number(this.getObstacleTypePlacementConfig(typeB).footprintMeters) || OBSTACLE_PLACEMENT.minSpacingFloorMeters;
+    const visualGap = (footprintA + footprintB) / 2 + (Number(OBSTACLE_PLACEMENT.pairClearanceMeters) || 0);
+    return Math.max(Number(OBSTACLE_PLACEMENT.minSpacingFloorMeters) || 0, visualGap);
+  }
+
+  pickWeightedObstacleType(enabledTypes) {
+    const types = enabledTypes.filter((type) => PINBALL_OBSTACLE_TYPES.includes(type));
+    if (!types.length) return null;
+    const categoryAvailable = new Map();
+    types.forEach((type) => {
+      const category = PINBALL_OBSTACLE_TYPE_METADATA[type]?.category || 'normal';
+      categoryAvailable.set(category, (categoryAvailable.get(category) || 0) + 1);
     });
+    const weightedTypes = types.map((type) => {
+      const category = PINBALL_OBSTACLE_TYPE_METADATA[type]?.category || 'normal';
+      const categoryWeight = Number(OBSTACLE_CATEGORY_TARGET_WEIGHTS[category]) || 1;
+      const categoryShare = categoryWeight / Math.max(1, categoryAvailable.get(category) || 1);
+      const typeWeight = Number(this.getObstacleTypePlacementConfig(type).spawnWeight) || 1;
+      return { type, weight: Math.max(0.01, categoryShare * typeWeight) };
+    });
+    const total = weightedTypes.reduce((sum, entry) => sum + entry.weight, 0);
+    let roll = this.rng() * total;
+    for (const entry of weightedTypes) {
+      roll -= entry.weight;
+      if (roll <= 0) return entry.type;
+    }
+    return weightedTypes[weightedTypes.length - 1].type;
   }
 
   getObstaclePlacementMinSpacing(count, minD = OBSTACLE_PLACEMENT.startPaddingMeters, maxD = Math.max(minD + 0.5, this.trackLength - OBSTACLE_PLACEMENT.finishPaddingMeters)) {
     const usableLength = Math.max(0.5, maxD - minD);
-    const requested = Number(OBSTACLE_PLACEMENT.minSpacingMeters) || 8;
-    const floor = Number(OBSTACLE_PLACEMENT.minSpacingFloorMeters) || 4;
+    const requested = Number(OBSTACLE_PLACEMENT.minSpacingMeters) || 10;
+    const floor = Number(OBSTACLE_PLACEMENT.minSpacingFloorMeters) || 6;
     const maxEvenSpacing = count > 1 ? usableLength / (count - 1) : requested;
     return clamp(Math.min(requested, maxEvenSpacing * 0.92), Math.min(floor, maxEvenSpacing), requested);
   }
 
+  getObstaclePlacementRequiredSpacing(previous, next, fallbackSpacing) {
+    if (!previous || !next) return fallbackSpacing;
+    return Math.max(fallbackSpacing, this.getObstaclePairSpacing(previous.type, next.type));
+  }
+
   applyObstaclePlacementSpacing(placements, { minD = OBSTACLE_PLACEMENT.startPaddingMeters, maxD = Math.max(minD + 0.5, this.trackLength - OBSTACLE_PLACEMENT.finishPaddingMeters), minSpacing = null } = {}) {
     if (!placements.length) return placements;
-    const spacing = minSpacing ?? this.getObstaclePlacementMinSpacing(placements.length, minD, maxD);
+    const fallbackSpacing = minSpacing ?? this.getObstaclePlacementMinSpacing(placements.length, minD, maxD);
     const sorted = placements
       .map((placement, index) => ({ ...placement, originalIndex: index, distance: clamp(placement.distance, minD, maxD) }))
       .sort((a, b) => a.distance - b.distance);
     const span = Math.max(0.5, maxD - minD);
     let cursor = minD;
     sorted.forEach((placement, sortedIndex) => {
-      const remaining = sorted.length - sortedIndex - 1;
-      const upper = maxD - spacing * Math.max(0, remaining);
+      const following = sorted.slice(sortedIndex + 1);
+      const requiredAfter = following.reduce((sum, next, index) => {
+        const previous = index === 0 ? placement : following[index - 1];
+        return sum + this.getObstaclePlacementRequiredSpacing(previous, next, fallbackSpacing);
+      }, 0);
+      const upper = maxD - requiredAfter;
       const relaxed = clamp(placement.distance, cursor, Math.max(cursor, upper));
       placement.distance = clamp(relaxed, minD, maxD);
-      cursor = Math.min(maxD, placement.distance + spacing);
+      const next = sorted[sortedIndex + 1];
+      cursor = Math.min(maxD, placement.distance + this.getObstaclePlacementRequiredSpacing(placement, next, fallbackSpacing));
     });
-    if (sorted.length > 1 && sorted[sorted.length - 1].distance > maxD) {
-      const overflow = sorted[sorted.length - 1].distance - maxD;
-      sorted.forEach((placement) => { placement.distance -= overflow; });
+    if (sorted.length > 1) {
+      for (let i = sorted.length - 2; i >= 0; i -= 1) {
+        const required = this.getObstaclePlacementRequiredSpacing(sorted[i], sorted[i + 1], fallbackSpacing);
+        if (sorted[i + 1].distance - sorted[i].distance < required) {
+          sorted[i].distance = Math.max(minD, sorted[i + 1].distance - required);
+        }
+      }
     }
-    const minGap = sorted.length > 1
-      ? sorted.slice(1).reduce((gap, placement, index) => Math.min(gap, placement.distance - sorted[index].distance), Infinity)
-      : null;
+    const pairGaps = sorted.slice(1).map((placement, index) => {
+      const previous = sorted[index];
+      const gap = placement.distance - previous.distance;
+      const requiredGap = this.getObstaclePlacementRequiredSpacing(previous, placement, fallbackSpacing);
+      return { gap, requiredGap };
+    });
+    const minGap = pairGaps.length ? Math.min(...pairGaps.map((pair) => pair.gap)) : null;
+    const minPairClearance = pairGaps.length ? Math.min(...pairGaps.map((pair) => pair.gap - pair.requiredGap)) : null;
     this.obstaclePlacementSpacingState = {
       configuredMinSpacing: OBSTACLE_PLACEMENT.minSpacingMeters,
-      appliedMinSpacing: Number(spacing.toFixed(2)),
+      minSpacingFloor: OBSTACLE_PLACEMENT.minSpacingFloorMeters,
+      pairClearance: OBSTACLE_PLACEMENT.pairClearanceMeters,
+      appliedMinSpacing: Number(fallbackSpacing.toFixed(2)),
       minObservedGap: minGap == null || !Number.isFinite(minGap) ? null : Number(minGap.toFixed(2)),
+      minObservedPairClearance: minPairClearance == null || !Number.isFinite(minPairClearance) ? null : Number(minPairClearance.toFixed(2)),
       startPadding: OBSTACLE_PLACEMENT.startPaddingMeters,
       finishPadding: OBSTACLE_PLACEMENT.finishPaddingMeters,
       placementCount: sorted.length,
@@ -5861,6 +5941,25 @@ class MarbleRace {
       label: OBSTACLE_PLACEMENT.label,
     };
     return sorted.sort((a, b) => a.originalIndex - b.originalIndex).map(({ originalIndex, ...placement }) => placement);
+  }
+
+  buildObstacleDistributionZones(enabledTypes) {
+    const usableStart = OBSTACLE_PLACEMENT.startPaddingMeters;
+    const usableEnd = Math.max(usableStart + 8, this.trackLength - OBSTACLE_PLACEMENT.finishPaddingMeters);
+    const usableLength = Math.max(1, usableEnd - usableStart);
+    const maxZonesByLength = Math.max(1, Math.floor(usableLength / (OBSTACLE_DISTRIBUTION_MODES.zoned.minZoneMeters || 70)));
+    const zoneCount = Math.max(1, Math.min(enabledTypes.length, maxZonesByLength));
+    const zoneTypes = [];
+    for (let index = 0; index < zoneCount; index += 1) {
+      const previousType = zoneTypes[index - 1] || null;
+      const candidates = enabledTypes.filter((type) => type !== previousType);
+      zoneTypes.push(this.pickWeightedObstacleType(candidates.length ? candidates : enabledTypes) || enabledTypes[index % enabledTypes.length]);
+    }
+    return Array.from({ length: zoneCount }, (_, index) => {
+      const start = usableStart + (usableLength * index) / zoneCount;
+      const end = usableStart + (usableLength * (index + 1)) / zoneCount;
+      return { index, start, end, type: zoneTypes[index] };
+    });
   }
 
   buildObstaclePlacements(count, enabledTypes, mode = this.obstacleDistributionMode) {
@@ -5872,7 +5971,7 @@ class MarbleRace {
       Array.from({ length: count }, (_, i) => zones[i % zones.length]).forEach((zone) => {
         zoneCounts.set(zone.index, (zoneCounts.get(zone.index) || 0) + 1);
       });
-      return Array.from({ length: count }, (_, i) => {
+      const zonePlacements = Array.from({ length: count }, (_, i) => {
         const zone = zones[i % zones.length];
         const zonePadding = Math.min(5, Math.max(1.2, (zone.end - zone.start) * 0.12));
         const minD = Math.min(zone.end - 0.5, zone.start + zonePadding);
@@ -5894,11 +5993,21 @@ class MarbleRace {
           minSpacing: spacing,
         };
       });
+      return [...zoneCounts.keys()].flatMap((zoneIndex) => {
+        const zone = zones.find((entry) => entry.index === zoneIndex);
+        const zonePadding = Math.min(5, Math.max(1.2, (zone.end - zone.start) * 0.12));
+        const minD = Math.min(zone.end - 0.5, zone.start + zonePadding);
+        const maxD = Math.max(minD + 0.5, zone.end - zonePadding);
+        return this.applyObstaclePlacementSpacing(
+          zonePlacements.filter((placement) => placement.zoneIndex === zoneIndex),
+          { minD, maxD, minSpacing: this.getObstaclePlacementMinSpacing(zoneCounts.get(zoneIndex) || 1, minD, maxD) },
+        );
+      });
     }
     const minD = OBSTACLE_PLACEMENT.startPaddingMeters;
     const maxD = Math.max(minD + 0.5, this.trackLength - OBSTACLE_PLACEMENT.finishPaddingMeters);
     const placements = Array.from({ length: count }, () => ({
-      type: enabledTypes[Math.floor(this.rng() * enabledTypes.length)] || enabledTypes[0],
+      type: this.pickWeightedObstacleType(enabledTypes) || enabledTypes[0],
       distance: minD + this.rng() * Math.max(0.5, maxD - minD),
       zoneIndex: null,
       zoneStart: null,
