@@ -1216,7 +1216,7 @@ class MarbleRace {
     this.pinballObstacleCategories = OBSTACLE_CATEGORIES;
     this.pinballObstacleTypeMetadata = PINBALL_OBSTACLE_TYPE_METADATA;
     this.pinballObstacleCatalog = PINBALL_OBSTACLE_CATALOG;
-    this.enabledObstacleTypes = new Set(PINBALL_OBSTACLE_TYPES);
+    this.enabledObstacleTypes = new Set();
     this.pinballObstacles = [];
     this.showGuidePoints = false;
     this.guidePointGroup = new THREE.Group();
@@ -3005,7 +3005,7 @@ class MarbleRace {
       const body = types.length
         ? types.map((type) => {
           const metadata = PINBALL_OBSTACLE_TYPE_METADATA[type] || { label: type, category: categoryKey };
-          return `<label><span>${escapeHtml(metadata.label)}</span><input type="checkbox" data-obstacle-type="${escapeHtml(type)}" data-obstacle-category="${escapeHtml(categoryKey)}" checked /></label>`;
+          return `<label><span>${escapeHtml(metadata.label)}</span><input type="checkbox" data-obstacle-type="${escapeHtml(type)}" data-obstacle-category="${escapeHtml(categoryKey)}" /></label>`;
         }).join('')
         : `<small>暫未有現有障礙物；預留給之後${escapeHtml(category.description || '新效果')}。</small>`;
       return `<fieldset class="obstacle-category" data-obstacle-category="${escapeHtml(categoryKey)}"><legend>${escapeHtml(category.label)}</legend>${body}</fieldset>`;
@@ -3021,7 +3021,7 @@ class MarbleRace {
       .filter((toggle) => toggle.checked)
       .map((toggle) => toggle.dataset.obstacleType)
       .filter((type) => PINBALL_OBSTACLE_TYPES.includes(type));
-    const nextTypes = checkedTypes.length ? checkedTypes : [...PINBALL_OBSTACLE_TYPES];
+    const nextTypes = checkedTypes;
     this.enabledObstacleTypes = new Set(nextTypes);
     (this.ui.obstacleTypeToggles || []).forEach((toggle) => {
       toggle.checked = this.enabledObstacleTypes.has(toggle.dataset.obstacleType);
@@ -5826,7 +5826,7 @@ class MarbleRace {
       redInsert: new THREE.MeshPhysicalMaterial({ color: 0xff3864, roughness: 0.18, metalness: 0.04, clearcoat: 1, clearcoatRoughness: 0.07, emissive: 0x79001c, emissiveIntensity: 0.44 }),
     };
 
-    const enabledTypes = (this.enabledObstacleTypes?.size ? [...this.enabledObstacleTypes] : [...PINBALL_OBSTACLE_TYPES])
+    const enabledTypes = [...(this.enabledObstacleTypes || new Set())]
       .filter((type) => PINBALL_OBSTACLE_TYPES.includes(type));
     if (!enabledTypes.length) return;
 
