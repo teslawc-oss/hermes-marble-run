@@ -479,6 +479,7 @@ const OBSTACLE_TYPE_PLACEMENT = {
   spinnerGate: { footprintMeters: 7.0, spawnWeight: 0.8 },
   movingGate: { footprintMeters: 7.4, spawnWeight: 0.7 },
   tiltBridge: { footprintMeters: 7.8, spawnWeight: 0.65 },
+  orbitRing: { footprintMeters: 8.2, spawnWeight: 0.72 },
   dropTarget: { footprintMeters: 7.0, spawnWeight: 0.72 },
 };
 const OBSTACLE_CATEGORIES = obstacleCatalogData.categories;
@@ -792,6 +793,10 @@ const PINBALL_PHYSICS = {
   tiltBridgeImpulse: 3.8,
   tiltBridgeSweepSpeed: 1.35,
   tiltBridgeTiltAmplitude: 0.28,
+  orbitRingRadius: 1.95,
+  orbitRingImpulse: 2.35,
+  orbitRingGuideStrength: 0.18,
+  orbitRingForwardBias: 1.18,
 };
 
 const CURVE_PRESETS = {
@@ -3320,6 +3325,11 @@ class MarbleRace {
         tiltBridgeRightLift: obstacle.type === 'tiltBridge' && obstacle.rightPanelLift != null ? Number(obstacle.rightPanelLift.toFixed(3)) : null,
         tiltBridgeSweepSpeed: obstacle.type === 'tiltBridge' && obstacle.sweepSpeed != null ? Number(Math.abs(obstacle.sweepSpeed).toFixed(2)) : null,
         lastTiltBridgeHitBy: obstacle.type === 'tiltBridge' ? (obstacle.lastHitBy ?? null) : null,
+        orbitRingDimensions: obstacle.orbitRingDimensions ?? null,
+        orbitRingDirection: obstacle.type === 'orbitRing' ? (obstacle.orbitDirection ?? null) : null,
+        orbitRingGuideStrength: obstacle.type === 'orbitRing' ? (obstacle.orbitGuideStrength ?? null) : null,
+        lastOrbitRingHitBy: obstacle.type === 'orbitRing' ? (obstacle.lastHitBy ?? null) : null,
+        lastOrbitSegmentIndex: obstacle.type === 'orbitRing' ? (obstacle.lastOrbitSegmentIndex ?? null) : null,
         gongPackRadius: obstacle.packRadius ?? null,
         gongPackImpulse: obstacle.packImpulse ?? null,
         gongShake: obstacle.shake != null ? Number(obstacle.shake.toFixed(2)) : null,
@@ -3426,6 +3436,11 @@ class MarbleRace {
         tiltBridgeRightLift: obstacle.type === 'tiltBridge' && obstacle.rightPanelLift != null ? Number(obstacle.rightPanelLift.toFixed(3)) : null,
         tiltBridgeSweepSpeed: obstacle.type === 'tiltBridge' && obstacle.sweepSpeed != null ? Number(Math.abs(obstacle.sweepSpeed).toFixed(2)) : null,
         lastTiltBridgeHitBy: obstacle.type === 'tiltBridge' ? (obstacle.lastHitBy ?? null) : null,
+        orbitRingDimensions: obstacle.orbitRingDimensions ?? null,
+        orbitRingDirection: obstacle.type === 'orbitRing' ? (obstacle.orbitDirection ?? null) : null,
+        orbitRingGuideStrength: obstacle.type === 'orbitRing' ? (obstacle.orbitGuideStrength ?? null) : null,
+        lastOrbitRingHitBy: obstacle.type === 'orbitRing' ? (obstacle.lastHitBy ?? null) : null,
+        lastOrbitSegmentIndex: obstacle.type === 'orbitRing' ? (obstacle.lastOrbitSegmentIndex ?? null) : null,
         gongPackRadius: obstacle.packRadius ?? null,
         gongPackImpulse: obstacle.packImpulse ?? null,
         gongShake: obstacle.shake != null ? Number(obstacle.shake.toFixed(2)) : null,
@@ -5789,6 +5804,7 @@ class MarbleRace {
       spinnerGate: new THREE.MeshPhysicalMaterial({ color: 0x8d7dff, roughness: 0.15, metalness: 0.16, clearcoat: 1, clearcoatRoughness: 0.06, emissive: 0x280090, emissiveIntensity: 0.38 }),
       movingGate: new THREE.MeshPhysicalMaterial({ color: 0x46f6ff, roughness: 0.13, metalness: 0.22, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0x005f75, emissiveIntensity: 0.48 }),
       tiltBridge: new THREE.MeshPhysicalMaterial({ color: 0xff7ad9, roughness: 0.18, metalness: 0.08, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0x83115f, emissiveIntensity: 0.46 }),
+      orbitRing: new THREE.MeshPhysicalMaterial({ color: 0x5bffdf, roughness: 0.13, metalness: 0.2, clearcoat: 1, clearcoatRoughness: 0.04, emissive: 0x008d8f, emissiveIntensity: 0.52 }),
       dropTarget: new THREE.MeshPhysicalMaterial({ color: 0xff8f3f, roughness: 0.17, metalness: 0.05, clearcoat: 1, clearcoatRoughness: 0.08, emissive: 0x5a1900, emissiveIntensity: 0.36 }),
       rubber: new THREE.MeshPhysicalMaterial({ color: 0x101422, roughness: 0.32, metalness: 0.02, clearcoat: 0.45, clearcoatRoughness: 0.18, emissive: 0x061020, emissiveIntensity: 0.26 }),
       chrome: new THREE.MeshPhysicalMaterial({ color: 0xe6f2ff, roughness: 0.12, metalness: 0.9, clearcoat: 1, clearcoatRoughness: 0.04 }),
@@ -6130,6 +6146,22 @@ class MarbleRace {
             spanStartDistance: bridgeFrame.spanStartDistance ?? null,
             spanEndDistance: bridgeFrame.spanEndDistance ?? null,
           },
+        });
+      }
+      case 'orbitRing': {
+        palette.orbitRing.userData.chromeMaterial = palette.chrome;
+        palette.orbitRing.userData.insertMaterial = palette.yellowInsert;
+        const ringWidth = 5.2;
+        const railClearance = 0.42;
+        const maxCenterOffset = Math.max(0, localWidth / 2 - ringWidth / 2 - railClearance);
+        const safeLane = clamp(lane, -maxCenterOffset, maxCenterOffset);
+        const safeTrackSurface = new THREE.Vector3(frame.p.x + frame.right.x * safeLane, frame.p.y, frame.p.z + frame.right.z * safeLane);
+        return this.createOrbitRingObstacle(safeTrackSurface, yaw, pitch, palette.orbitRing, {
+          laneOffset: safeLane,
+          requestedLaneOffset: lane,
+          localTrackWidth: localWidth,
+          railClearance,
+          railContainmentHalfWidth: ringWidth / 2,
         });
       }
       case 'dropTarget':
@@ -6886,6 +6918,133 @@ class MarbleRace {
     return obstacle;
   }
 
+  createOrbitRingObstacle(trackSurface, yaw, pitch, material, placement = {}) {
+    const group = new THREE.Group();
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation(group, yaw, pitch);
+    group.userData.visualStyle = 'open-half-orbit-guide-ring';
+    this.trackGroup.add(group);
+
+    const chromeMaterial = material.userData?.chromeMaterial || material;
+    const insertMaterial = material.userData?.insertMaterial || material;
+    const orbitRadius = 1.8;
+    const arcDegrees = 170;
+    const arcRadians = THREE.MathUtils.degToRad(arcDegrees);
+    const segmentCount = 7;
+    const railTubeRadius = 0.08;
+    const railY = 0.78;
+    const guideY = 0.22;
+    const colliderWidth = 0.24;
+    const colliderHeight = 0.18;
+    const colliderDepth = 0.42;
+    const entranceGapRadians = THREE.MathUtils.degToRad(34);
+    const direction = this.rng() < 0.5 ? -1 : 1;
+    const bodies = [];
+    const guideSegments = [];
+    const orbitPoints = [];
+
+    for (let index = 0; index < segmentCount; index += 1) {
+      const t = segmentCount === 1 ? 0.5 : index / (segmentCount - 1);
+      const angle = -arcRadians / 2 + t * arcRadians;
+      const x = Math.sin(angle) * orbitRadius;
+      const z = (Math.cos(angle) - 0.15) * orbitRadius;
+      orbitPoints.push(new THREE.Vector3(x, railY, z));
+      const segment = new THREE.Mesh(new THREE.BoxGeometry(colliderWidth, colliderHeight, colliderDepth), material);
+      segment.position.set(x, guideY, z);
+      segment.rotation.y = angle * direction;
+      segment.castShadow = PERFORMANCE_TUNING.shadows;
+      segment.receiveShadow = PERFORMANCE_TUNING.shadows;
+      group.add(segment);
+
+      const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
+      const shape = new CANNON.Box(new CANNON.Vec3(colliderWidth / 2, colliderHeight / 2, colliderDepth / 2));
+      shape.collisionResponse = false;
+      body.addShape(shape);
+      body.collisionResponse = false;
+      const bodyCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(x, guideY, z, yaw, pitch));
+      this.setSlopeBodyTransform(body, bodyCenter, yaw, pitch, segment.rotation.y);
+      this.world.addBody(body);
+      this.obstacleBodies.push(body);
+      guideSegments.push({ index, mesh: segment, body, localX: x, localY: guideY, localZ: z, localYaw: segment.rotation.y, center: bodyCenter });
+      bodies.push(body);
+    }
+
+    const curve = new THREE.CatmullRomCurve3(orbitPoints);
+    const railGeometry = new THREE.TubeGeometry(curve, 48, railTubeRadius, 10, false);
+    const rail = new THREE.Mesh(railGeometry, chromeMaterial);
+    rail.castShadow = PERFORMANCE_TUNING.shadows;
+    group.add(rail);
+
+    const glowMaterial = new THREE.MeshBasicMaterial({ color: 0x50ffe7, transparent: true, opacity: 0.34, depthWrite: false, blending: THREE.AdditiveBlending });
+    const glow = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, railTubeRadius * 1.9, 10, false), glowMaterial);
+    glow.renderOrder = 5;
+    group.add(glow);
+
+    [-1, 1].forEach((side) => {
+      const marker = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.52, 20), insertMaterial);
+      const angle = side * (arcRadians / 2 + entranceGapRadians * 0.18);
+      marker.position.set(Math.sin(angle) * orbitRadius, railY + 0.08, (Math.cos(angle) - 0.15) * orbitRadius);
+      marker.rotation.set(Math.PI / 2, angle, 0, 'YXZ');
+      marker.castShadow = PERFORMANCE_TUNING.shadows;
+      group.add(marker);
+    });
+
+    this.obstacleMeshes.push(group);
+    const obstacleCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, guideY, orbitRadius * 0.34, yaw, pitch));
+    const orbitRingDimensions = {
+      orbitRadius,
+      arcDegrees,
+      segmentCount,
+      colliderWidth,
+      colliderHeight,
+      colliderDepth,
+      railTubeRadius,
+      guideY,
+      railY,
+      colliderSensor: true,
+      collisionResponse: false,
+      entranceGapDegrees: Number(THREE.MathUtils.radToDeg(entranceGapRadians).toFixed(1)),
+      direction,
+      laneOffset: placement.laneOffset ?? null,
+      requestedLaneOffset: placement.requestedLaneOffset ?? null,
+      localTrackWidth: placement.localTrackWidth ?? null,
+      railClearance: placement.railClearance ?? null,
+      railContainmentHalfWidth: placement.railContainmentHalfWidth ?? orbitRadius + colliderWidth / 2,
+      containedWithinRails: placement.localTrackWidth
+        ? Math.abs(placement.laneOffset ?? 0) + (placement.railContainmentHalfWidth ?? orbitRadius + colliderWidth / 2) <= placement.localTrackWidth / 2 - (placement.railClearance ?? 0)
+        : null,
+    };
+    const obstacle = {
+      type: 'orbitRing',
+      kind: 'orbitRing',
+      trackSurface: trackSurface.clone(),
+      center: obstacleCenter,
+      radius: PINBALL_PHYSICS.orbitRingRadius,
+      impulse: PINBALL_PHYSICS.orbitRingImpulse,
+      cooldown: new Map(),
+      group,
+      rail,
+      glow,
+      guideSegments,
+      body: bodies[0] || null,
+      bodies,
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
+      orbitRingDimensions,
+      orbitDirection: direction,
+      orbitGuideStrength: PINBALL_PHYSICS.orbitRingGuideStrength,
+      orbitForwardBias: PINBALL_PHYSICS.orbitRingForwardBias,
+      cooldownSeconds: 1.2,
+      visualStyle: 'open-half-orbit-guide-ring-with-neon-rail',
+      textureStyle: 'cyan-chrome-half-ring-sensor-guide-open-exits-low-nonblocking-colliders',
+      pulse: 0,
+      lastHitBy: null,
+      lastOrbitSegmentIndex: null,
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
+  }
+
   createMovingGateObstacle(trackSurface, yaw, pitch, swingDirection = 1, material, placement = {}) {
     const group = new THREE.Group();
     group.position.copy(trackSurface);
@@ -7241,11 +7400,21 @@ class MarbleRace {
           obstacle.rim?.scale.setScalar(1 + obstacle.pulse * 0.16);
           obstacle.glow?.scale.setScalar(1 + obstacle.pulse * 0.32);
         }
+        if (obstacle.type === 'orbitRing') {
+          const ringScale = 1 + obstacle.pulse * 0.08;
+          obstacle.rail?.scale.set(ringScale, 1 + obstacle.pulse * 0.05, ringScale);
+          obstacle.glow?.scale.set(ringScale + obstacle.pulse * 0.08, 1 + obstacle.pulse * 0.06, ringScale + obstacle.pulse * 0.08);
+          if (obstacle.glow?.material) obstacle.glow.material.opacity = 0.22 + obstacle.pulse * 0.36;
+          obstacle.guideSegments?.forEach((segment) => {
+            const segmentPulse = segment.index === obstacle.lastOrbitSegmentIndex ? obstacle.pulse : obstacle.pulse * 0.42;
+            segment.mesh?.scale.set(1 + segmentPulse * 0.1, 1 + segmentPulse * 0.08, 1 + segmentPulse * 0.1);
+          });
+        }
       }
       this.marbleData.forEach((data) => {
         if (data.finished) return;
         const lastHit = obstacle.cooldown?.get(data.id) || -Infinity;
-        if (this.elapsed - lastHit < 0.32) return;
+        if (this.elapsed - lastHit < (obstacle.cooldownSeconds ?? 0.32)) return;
         const dx = data.body.position.x - obstacle.center.x;
         const dz = data.body.position.z - obstacle.center.z;
         const distSq = dx * dx + dz * dz;
@@ -7257,6 +7426,7 @@ class MarbleRace {
         if (obstacle.type === 'spinnerGate') this.applySpinnerGateImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'movingGate') this.applyMovingGateImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'tiltBridge') this.applyTiltBridgeImpulse(obstacle, data, dx, dz);
+        if (obstacle.type === 'orbitRing') this.applyOrbitRingImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'dropTarget') this.applyDropTargetHit(obstacle, data);
       });
     });
@@ -7477,6 +7647,59 @@ class MarbleRace {
       distance: data.lastObstacleHitDistance,
       progress: data.lastObstacleHitProgress,
       lines: [`${data.name} rides the tilt bridge`, `${data.name} balances across`, `${data.name} surfs the neon bridge`],
+    });
+  }
+
+  applyOrbitRingImpulse(obstacle, data, dx, dz) {
+    const closest = this.findClosestProgress(data.body.position);
+    this.noteObstacleHit(data, obstacle, closest.distance);
+    const frame = this.getTrackFrameAt(Math.max(closest.distance, data.distance || 0) + this.finishDirectionAssist.lookAhead);
+    let nearestSegment = null;
+    let nearestDistanceSq = Infinity;
+    (obstacle.guideSegments || []).forEach((segment) => {
+      const sx = data.body.position.x - segment.center.x;
+      const sz = data.body.position.z - segment.center.z;
+      const distSq = sx * sx + sz * sz;
+      if (distSq < nearestDistanceSq) {
+        nearestDistanceSq = distSq;
+        nearestSegment = segment;
+      }
+    });
+    const source = nearestSegment?.center || obstacle.center;
+    const sx = data.body.position.x - source.x;
+    const sz = data.body.position.z - source.z;
+    const radialDistance = Math.max(0.001, Math.hypot(sx || dx, sz || dz));
+    const radial = new THREE.Vector3((sx || dx) / radialDistance, 0, (sz || dz) / radialDistance);
+    const orbitSide = Math.sign(radial.dot(frame.right)) || obstacle.orbitDirection || 1;
+    const guideStrength = obstacle.orbitGuideStrength ?? PINBALL_PHYSICS.orbitRingGuideStrength;
+    const forwardStrength = obstacle.orbitForwardBias ?? PINBALL_PHYSICS.orbitRingForwardBias;
+    const tangentGuide = frame.right.clone().multiplyScalar(orbitSide * obstacle.impulse * guideStrength);
+    const forwardBias = frame.tangent.clone().multiplyScalar(obstacle.impulse * forwardStrength);
+    const softRebound = radial.multiplyScalar(obstacle.impulse * 0.08);
+    const rawImpulse = tangentGuide.add(forwardBias).add(softRebound);
+    data.body.wakeUp();
+    this.applyFinishDirectedImpulse(data, rawImpulse, frame, 0.08);
+    const forwardSpeed = data.body.velocity.x * frame.tangent.x + data.body.velocity.y * frame.tangent.y + data.body.velocity.z * frame.tangent.z;
+    if (forwardSpeed < 1.35) {
+      const velocityBoost = 1.35 - forwardSpeed;
+      data.body.velocity.x += frame.tangent.x * velocityBoost;
+      data.body.velocity.y += Math.min(0.18, Math.max(0, frame.tangent.y * velocityBoost));
+      data.body.velocity.z += frame.tangent.z * velocityBoost;
+      data.lastMovementTime = this.elapsed;
+      data.lastDriveMovementTime = this.elapsed;
+    }
+    obstacle.cooldown.set(data.id, this.elapsed);
+    obstacle.pulse = 1;
+    obstacle.lastHitBy = data.name;
+    obstacle.lastOrbitSegmentIndex = nearestSegment?.index ?? null;
+    this.pinballInteractions.orbitRing += 1;
+    this.spawnImpactEffect(source, 0x50ffe7, 'ring');
+    this.pushBroadcastEvent('Orbit Ring', `${data.name} rides the orbit ring`, {
+      kind: 'obstacle',
+      marbleId: data.id,
+      distance: data.lastObstacleHitDistance,
+      progress: data.lastObstacleHitProgress,
+      lines: [`${data.name} rides the orbit ring`, `${data.name} glides the neon arc`, `${data.name} exits the curve`],
     });
   }
 
