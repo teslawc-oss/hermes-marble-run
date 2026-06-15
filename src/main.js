@@ -346,6 +346,18 @@ const DROP_TARGET_FINAL_BOOST = {
   label: 'final drop-target clearer gets a 5s golden aura and x2 top-speed override; after expiry aura vanishes and normal max-speed cap resumes',
 };
 
+const ORBIT_RING_SPEED_BOOST = {
+  enabled: true,
+  durationSeconds: 3,
+  speedMultiplier: 1.3,
+  allowExceedMaxSpeed: true,
+  auraColor: 0x50ffe7,
+  auraOpacity: 0.24,
+  auraRadiusMultiplier: 1.45,
+  auraPulseScale: 0.07,
+  label: 'orbit ring grants a 3s x1.3 maximum-speed override, then normal max-speed cap resumes',
+};
+
 const LANDING_REBOUND_ABSORBER = {
   enabled: true,
   label: 'no-bounce landing absorber: after airborne marble lands on track, remove upward rebound velocity without hidden impulse',
@@ -3369,6 +3381,7 @@ class MarbleRace {
       obstacleDistributionLabel: OBSTACLE_DISTRIBUTION_MODES[this.obstacleDistributionMode]?.label || OBSTACLE_DISTRIBUTION_MODES.random.label,
       obstacleDistributionSummary: this.obstacleDistributionSummary,
       obstaclePlacement: OBSTACLE_PLACEMENT,
+      orbitRingSpeedBoost: ORBIT_RING_SPEED_BOOST,
       obstacleCategories: OBSTACLE_CATEGORIES,
       obstacleTypeMetadata: PINBALL_OBSTACLE_TYPE_METADATA,
       obstacleCatalog: PINBALL_OBSTACLE_CATALOG,
@@ -3605,10 +3618,11 @@ class MarbleRace {
   }
 
   clearMarbles() {
-    this.marbleData.forEach(({ mesh, body, labelSprite, dropTargetBoostAura }) => {
+    this.marbleData.forEach(({ mesh, body, labelSprite, dropTargetBoostAura, orbitRingBoostAura }) => {
       this.scene.remove(mesh);
       if (labelSprite) this.scene.remove(labelSprite);
       if (dropTargetBoostAura) this.scene.remove(dropTargetBoostAura);
+      if (orbitRingBoostAura) this.scene.remove(orbitRingBoostAura);
       this.world.removeBody(body);
     });
     this.clearSpectacleEffects({ clearTrails: false });
@@ -6975,8 +6989,8 @@ class MarbleRace {
     rail.castShadow = PERFORMANCE_TUNING.shadows;
     group.add(rail);
 
-    const glowMaterial = new THREE.MeshBasicMaterial({ color: 0x50ffe7, transparent: true, opacity: 0.34, depthWrite: false, blending: THREE.AdditiveBlending });
-    const glow = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, railTubeRadius * 1.9, 10, false), glowMaterial);
+    const glowMaterial = new THREE.MeshBasicMaterial({ color: 0x50ffe7, transparent: true, opacity: 0.58, depthWrite: false, blending: THREE.AdditiveBlending });
+    const glow = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, railTubeRadius * 2.8, 12, false), glowMaterial);
     glow.renderOrder = 5;
     group.add(glow);
 
@@ -7036,7 +7050,10 @@ class MarbleRace {
       orbitForwardBias: PINBALL_PHYSICS.orbitRingForwardBias,
       cooldownSeconds: 1.2,
       visualStyle: 'open-half-orbit-guide-ring-with-neon-rail',
-      textureStyle: 'cyan-chrome-half-ring-sensor-guide-open-exits-low-nonblocking-colliders',
+      textureStyle: 'bright-cyan-chrome-half-ring-sensor-guide-boost-category-open-exits-low-nonblocking-colliders',
+      glowBaseOpacity: 0.42,
+      glowPulseOpacity: 0.56,
+      glowPulseScale: 0.18,
       pulse: 0,
       lastHitBy: null,
       lastOrbitSegmentIndex: null,
@@ -7401,10 +7418,11 @@ class MarbleRace {
           obstacle.glow?.scale.setScalar(1 + obstacle.pulse * 0.32);
         }
         if (obstacle.type === 'orbitRing') {
-          const ringScale = 1 + obstacle.pulse * 0.08;
+          const ringScale = 1 + obstacle.pulse * 0.12;
+          const glowPulseScale = obstacle.glowPulseScale ?? 0.18;
           obstacle.rail?.scale.set(ringScale, 1 + obstacle.pulse * 0.05, ringScale);
-          obstacle.glow?.scale.set(ringScale + obstacle.pulse * 0.08, 1 + obstacle.pulse * 0.06, ringScale + obstacle.pulse * 0.08);
-          if (obstacle.glow?.material) obstacle.glow.material.opacity = 0.22 + obstacle.pulse * 0.36;
+          obstacle.glow?.scale.set(ringScale + obstacle.pulse * glowPulseScale, 1 + obstacle.pulse * 0.1, ringScale + obstacle.pulse * glowPulseScale);
+          if (obstacle.glow?.material) obstacle.glow.material.opacity = (obstacle.glowBaseOpacity ?? 0.42) + obstacle.pulse * (obstacle.glowPulseOpacity ?? 0.56);
           obstacle.guideSegments?.forEach((segment) => {
             const segmentPulse = segment.index === obstacle.lastOrbitSegmentIndex ? obstacle.pulse : obstacle.pulse * 0.42;
             segment.mesh?.scale.set(1 + segmentPulse * 0.1, 1 + segmentPulse * 0.08, 1 + segmentPulse * 0.1);
@@ -7688,9 +7706,14 @@ class MarbleRace {
       data.lastMovementTime = this.elapsed;
       data.lastDriveMovementTime = this.elapsed;
     }
+    const boost = this.activateOrbitRingSpeedBoost(data, obstacle);
     obstacle.cooldown.set(data.id, this.elapsed);
     obstacle.pulse = 1;
     obstacle.lastHitBy = data.name;
+    obstacle.lastBoostBy = data.name;
+    obstacle.lastBoostStartedAt = this.elapsed;
+    obstacle.lastBoostDurationSeconds = boost?.durationSeconds ?? ORBIT_RING_SPEED_BOOST.durationSeconds;
+    obstacle.lastBoostMultiplier = boost?.multiplier ?? ORBIT_RING_SPEED_BOOST.speedMultiplier;
     obstacle.lastOrbitSegmentIndex = nearestSegment?.index ?? null;
     this.pinballInteractions.orbitRing += 1;
     this.spawnImpactEffect(source, 0x50ffe7, 'ring');
@@ -7701,6 +7724,64 @@ class MarbleRace {
       progress: data.lastObstacleHitProgress,
       lines: [`${data.name} rides the orbit ring`, `${data.name} glides the neon arc`, `${data.name} exits the curve`],
     });
+  }
+
+  activateOrbitRingSpeedBoost(data, obstacle = null) {
+    const config = ORBIT_RING_SPEED_BOOST;
+    if (!config.enabled || !data?.body) return null;
+    const duration = config.durationSeconds || 3;
+    const multiplier = config.speedMultiplier || 1.3;
+    data.orbitRingBoostActive = true;
+    data.orbitRingBoostUntil = this.elapsed + duration;
+    data.orbitRingBoostMultiplier = multiplier;
+    data.orbitRingBoostAllowExceedMaxSpeed = Boolean(config.allowExceedMaxSpeed);
+    data.orbitRingBoostLastStartedAt = this.elapsed;
+    data.orbitRingBoostLastExpiredAt = null;
+    data.orbitRingBoostSource = obstacle?.type || 'orbitRing';
+    if (!data.orbitRingBoostAura) data.orbitRingBoostAura = this.createOrbitRingBoostAura(data);
+    data.orbitRingBoostAura.visible = true;
+    data.orbitRingBoostAuraVisible = true;
+    return {
+      active: true,
+      until: data.orbitRingBoostUntil,
+      durationSeconds: duration,
+      multiplier,
+      allowExceedMaxSpeed: data.orbitRingBoostAllowExceedMaxSpeed,
+    };
+  }
+
+  expireOrbitRingSpeedBoost(data) {
+    if (!data?.orbitRingBoostActive) return false;
+    data.orbitRingBoostActive = false;
+    data.orbitRingBoostUntil = null;
+    data.orbitRingBoostMultiplier = 1;
+    data.orbitRingBoostAllowExceedMaxSpeed = false;
+    data.orbitRingBoostEffectiveMaxSpeed = data.orbitRingBoostNormalMaxSpeed ?? null;
+    data.orbitRingBoostSecondsRemaining = 0;
+    data.orbitRingBoostAuraVisible = false;
+    if (data.orbitRingBoostAura) data.orbitRingBoostAura.visible = false;
+    data.orbitRingBoostLastExpiredAt = this.elapsed;
+    return true;
+  }
+
+  getOrbitRingSpeedLimit(data, normalMaxSpeed) {
+    const config = ORBIT_RING_SPEED_BOOST;
+    if (!data?.orbitRingBoostActive) return normalMaxSpeed;
+    if (this.elapsed >= (data.orbitRingBoostUntil ?? -Infinity)) {
+      this.expireOrbitRingSpeedBoost(data);
+      return normalMaxSpeed;
+    }
+    const multiplier = data.orbitRingBoostMultiplier || config.speedMultiplier || 1.3;
+    const boostedMaxSpeed = normalMaxSpeed * multiplier;
+    data.orbitRingBoostNormalMaxSpeed = normalMaxSpeed;
+    data.orbitRingBoostEffectiveMaxSpeed = boostedMaxSpeed;
+    data.orbitRingBoostSecondsRemaining = Math.max(0, (data.orbitRingBoostUntil ?? this.elapsed) - this.elapsed);
+    return data.orbitRingBoostAllowExceedMaxSpeed ? boostedMaxSpeed : normalMaxSpeed;
+  }
+
+  getObstacleBoostSpeedLimit(data, normalMaxSpeed) {
+    const orbitMaxSpeed = this.getOrbitRingSpeedLimit(data, normalMaxSpeed);
+    return this.getDropTargetSpeedLimit(data, orbitMaxSpeed);
   }
 
   updateDropTargetBank(obstacle, delta) {
@@ -7838,6 +7919,26 @@ class MarbleRace {
     return aura;
   }
 
+  createOrbitRingBoostAura(data) {
+    const config = ORBIT_RING_SPEED_BOOST;
+    const radius = Math.max(0.24, (data?.radius || 0.36) * (config.auraRadiusMultiplier || 1.45));
+    const geometry = new THREE.SphereGeometry(radius, 20, 12);
+    const material = new THREE.MeshBasicMaterial({
+      color: config.auraColor,
+      transparent: true,
+      opacity: config.auraOpacity,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const aura = new THREE.Mesh(geometry, material);
+    aura.frustumCulled = false;
+    aura.visible = false;
+    aura.renderOrder = 35;
+    aura.userData.style = 'orbit-ring-speed-boost-aura';
+    this.scene.add(aura);
+    return aura;
+  }
+
   activateDropTargetFinalBoost(data, obstacle = null) {
     const config = DROP_TARGET_FINAL_BOOST;
     if (!config.enabled || !data?.body) return null;
@@ -7888,17 +7989,37 @@ class MarbleRace {
       if (data.dropTargetBoostActive && this.elapsed >= (data.dropTargetBoostUntil ?? -Infinity)) {
         this.expireDropTargetFinalBoost(data);
       }
-      if (!data.dropTargetBoostAura) return;
-      const active = Boolean(data.dropTargetBoostActive);
-      data.dropTargetBoostAura.visible = active;
-      data.dropTargetBoostAuraVisible = active;
-      if (!active) return;
-      data.dropTargetBoostAura.position.copy(data.mesh?.position || data.body.position);
-      const remaining = Math.max(0, (data.dropTargetBoostUntil ?? this.elapsed) - this.elapsed);
-      const pulse = 1 + Math.sin((this.elapsed + data.id * 0.17) * 14) * 0.08;
-      data.dropTargetBoostAura.scale.setScalar(pulse);
-      if (data.dropTargetBoostAura.material) {
-        data.dropTargetBoostAura.material.opacity = Math.max(0.08, (DROP_TARGET_FINAL_BOOST.auraOpacity || 0.36) * Math.min(1, remaining / 0.75));
+      if (data.dropTargetBoostAura) {
+        const active = Boolean(data.dropTargetBoostActive);
+        data.dropTargetBoostAura.visible = active;
+        data.dropTargetBoostAuraVisible = active;
+        if (active) {
+          data.dropTargetBoostAura.position.copy(data.mesh?.position || data.body.position);
+          const remaining = Math.max(0, (data.dropTargetBoostUntil ?? this.elapsed) - this.elapsed);
+          const pulse = 1 + Math.sin((this.elapsed + data.id * 0.17) * 14) * 0.08;
+          data.dropTargetBoostAura.scale.setScalar(pulse);
+          if (data.dropTargetBoostAura.material) {
+            data.dropTargetBoostAura.material.opacity = Math.max(0.08, (DROP_TARGET_FINAL_BOOST.auraOpacity || 0.36) * Math.min(1, remaining / 0.75));
+          }
+        }
+      }
+
+      if (data.orbitRingBoostActive && this.elapsed >= (data.orbitRingBoostUntil ?? -Infinity)) {
+        this.expireOrbitRingSpeedBoost(data);
+      }
+      if (data.orbitRingBoostAura) {
+        const orbitActive = Boolean(data.orbitRingBoostActive);
+        data.orbitRingBoostAura.visible = orbitActive;
+        data.orbitRingBoostAuraVisible = orbitActive;
+        if (orbitActive) {
+          data.orbitRingBoostAura.position.copy(data.mesh?.position || data.body.position);
+          const orbitRemaining = Math.max(0, (data.orbitRingBoostUntil ?? this.elapsed) - this.elapsed);
+          const orbitPulse = 1 + Math.sin((this.elapsed + data.id * 0.23) * 18) * (ORBIT_RING_SPEED_BOOST.auraPulseScale || 0.07);
+          data.orbitRingBoostAura.scale.setScalar(orbitPulse);
+          if (data.orbitRingBoostAura.material) {
+            data.orbitRingBoostAura.material.opacity = Math.max(0.05, (ORBIT_RING_SPEED_BOOST.auraOpacity || 0.24) * Math.min(1, orbitRemaining / 0.45));
+          }
+        }
       }
     });
   }
@@ -9997,6 +10118,18 @@ class MarbleRace {
         dropTargetBoostLastStartedAt: null,
         dropTargetBoostLastExpiredAt: null,
         dropTargetBoostSource: null,
+        orbitRingBoostActive: false,
+        orbitRingBoostUntil: null,
+        orbitRingBoostMultiplier: 1,
+        orbitRingBoostAllowExceedMaxSpeed: false,
+        orbitRingBoostNormalMaxSpeed: null,
+        orbitRingBoostEffectiveMaxSpeed: null,
+        orbitRingBoostSecondsRemaining: 0,
+        orbitRingBoostAura: null,
+        orbitRingBoostAuraVisible: false,
+        orbitRingBoostLastStartedAt: null,
+        orbitRingBoostLastExpiredAt: null,
+        orbitRingBoostSource: null,
       };
       body.addEventListener('collide', (event) => {
         const otherBody = event?.body;
@@ -12442,8 +12575,11 @@ class MarbleRace {
       const slopeTopSpeed = speedPresetMax * (this.slopeDrive?.maxSpeedRatio ?? 1);
       const baseMaxSpeed = progress > 0.88 ? slopeTopSpeed * (this.finalApproachAssist?.maxSpeedRatio || 1.02) : slopeTopSpeed;
       const catchupMaxSpeed = this.getCatchupSpeedLimit(data, baseMaxSpeed, leaderDistance, guide);
-      const maxSpeed = this.getDropTargetSpeedLimit(data, catchupMaxSpeed);
+      const maxSpeed = this.getObstacleBoostSpeedLimit(data, catchupMaxSpeed);
       data.catchupMaxSpeed = catchupMaxSpeed;
+      data.orbitRingBoostNormalMaxSpeed = catchupMaxSpeed;
+      data.orbitRingBoostEffectiveMaxSpeed = this.getOrbitRingSpeedLimit(data, catchupMaxSpeed);
+      data.orbitRingBoostCapOverrideActive = Boolean(data.orbitRingBoostActive && data.orbitRingBoostAllowExceedMaxSpeed && data.orbitRingBoostEffectiveMaxSpeed > catchupMaxSpeed);
       data.dropTargetBoostNormalMaxSpeed = catchupMaxSpeed;
       data.dropTargetBoostEffectiveMaxSpeed = maxSpeed;
       data.dropTargetBoostCapOverrideActive = Boolean(data.dropTargetBoostActive && data.dropTargetBoostAllowExceedMaxSpeed && maxSpeed > catchupMaxSpeed);
@@ -13092,6 +13228,7 @@ class MarbleRace {
       obstacleDistributionLabel: OBSTACLE_DISTRIBUTION_MODES[this.obstacleDistributionMode]?.label || OBSTACLE_DISTRIBUTION_MODES.random.label,
       obstacleDistributionSummary: this.obstacleDistributionSummary,
       obstaclePlacement: OBSTACLE_PLACEMENT,
+      orbitRingSpeedBoost: ORBIT_RING_SPEED_BOOST,
       obstacleCategories: OBSTACLE_CATEGORIES,
       obstacleTypeMetadata: PINBALL_OBSTACLE_TYPE_METADATA,
       obstacleCatalog: PINBALL_OBSTACLE_CATALOG,
@@ -13217,6 +13354,14 @@ class MarbleRace {
         dropTargetBoostAuraVisible: Boolean(data.dropTargetBoostAuraVisible),
         dropTargetBoostLastStartedAt: data.dropTargetBoostLastStartedAt ?? null,
         dropTargetBoostLastExpiredAt: data.dropTargetBoostLastExpiredAt ?? null,
+        orbitRingBoostActive: Boolean(data.orbitRingBoostActive),
+        orbitRingBoostSecondsRemaining: data.orbitRingBoostActive ? Number(Math.max(0, (data.orbitRingBoostUntil ?? this.elapsed) - this.elapsed).toFixed(2)) : 0,
+        orbitRingBoostMultiplier: data.orbitRingBoostMultiplier || 1,
+        orbitRingBoostNormalMaxSpeed: data.orbitRingBoostNormalMaxSpeed ?? null,
+        orbitRingBoostEffectiveMaxSpeed: data.orbitRingBoostEffectiveMaxSpeed ?? null,
+        orbitRingBoostCapOverrideActive: Boolean(data.orbitRingBoostCapOverrideActive),
+        orbitRingBoostLastStartedAt: data.orbitRingBoostLastStartedAt ?? null,
+        orbitRingBoostLastExpiredAt: data.orbitRingBoostLastExpiredAt ?? null,
         midTrackSpeedAssistForceCount: data.midTrackSpeedAssistForceCount || 0,
         midTrackSpeedAssistForceOnly: data.midTrackSpeedAssistForceOnly ?? (this.midTrackSpeedAssist?.impulseScale <= 0),
         midTrackSpeedAssistProgress: data.midTrackSpeedAssistProgress ?? null,
@@ -13485,6 +13630,18 @@ class MarbleRace {
         bodyType: data.body?.type ?? null,
         mass: data.body?.mass ?? null,
         speed: data.body ? Math.hypot(data.body.velocity.x, data.body.velocity.y, data.body.velocity.z) : null,
+        orbitRingBoost: {
+          active: Boolean(data.orbitRingBoostActive),
+          secondsRemaining: Number((data.orbitRingBoostSecondsRemaining || 0).toFixed(2)),
+          multiplier: data.orbitRingBoostMultiplier || 1,
+          normalMaxSpeed: data.orbitRingBoostNormalMaxSpeed ?? null,
+          effectiveMaxSpeed: data.orbitRingBoostEffectiveMaxSpeed ?? null,
+          auraVisible: Boolean(data.orbitRingBoostAuraVisible),
+          auraOpacity: data.orbitRingBoostAura?.material?.opacity ?? null,
+          capOverrideActive: Boolean(data.orbitRingBoostCapOverrideActive),
+          lastStartedAt: data.orbitRingBoostLastStartedAt ?? null,
+          lastExpiredAt: data.orbitRingBoostLastExpiredAt ?? null,
+        },
       })),
       variableTrackWidth: true,
       trackWidthProfile: this.trackWidthProfile,
