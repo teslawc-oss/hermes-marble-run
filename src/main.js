@@ -490,6 +490,7 @@ const OBSTACLE_TYPE_PLACEMENT = {
   slingshot: { footprintMeters: 5.2, spawnWeight: 1.0 },
   spinnerGate: { footprintMeters: 7.0, spawnWeight: 0.8 },
   movingGate: { footprintMeters: 7.4, spawnWeight: 0.7 },
+  splitterFork: { footprintMeters: 6.8, spawnWeight: 0.86 },
   tiltBridge: { footprintMeters: 7.8, spawnWeight: 0.65 },
   orbitRing: { footprintMeters: 8.2, spawnWeight: 0.72 },
   dropTarget: { footprintMeters: 7.0, spawnWeight: 0.72 },
@@ -801,6 +802,10 @@ const PINBALL_PHYSICS = {
   movingGateImpulse: 4.9,
   movingGateSweepSpeed: 1.8,
   movingGateSwingAmplitude: 0.78,
+  splitterForkRadius: 2.8,
+  splitterForkImpulse: 4.4,
+  splitterForkForwardBias: 1.08,
+  splitterForkSideBias: 0.24,
   tiltBridgeRadius: 3.8,
   tiltBridgeImpulse: 3.8,
   tiltBridgeSweepSpeed: 1.35,
@@ -3342,6 +3347,15 @@ class MarbleRace {
         orbitRingGuideStrength: obstacle.type === 'orbitRing' ? (obstacle.orbitGuideStrength ?? null) : null,
         lastOrbitRingHitBy: obstacle.type === 'orbitRing' ? (obstacle.lastHitBy ?? null) : null,
         lastOrbitSegmentIndex: obstacle.type === 'orbitRing' ? (obstacle.lastOrbitSegmentIndex ?? null) : null,
+        splitterForkDimensions: obstacle.splitterForkDimensions ?? null,
+        splitterForkRailCount: obstacle.type === 'splitterFork' ? (obstacle.rails?.length ?? 0) : null,
+        splitterForkBodyCount: obstacle.type === 'splitterFork' ? (obstacle.bodies?.length ?? (obstacle.body ? 1 : 0)) : null,
+        lastSplitterForkHitBy: obstacle.type === 'splitterFork' ? (obstacle.lastHitBy ?? null) : null,
+        lastSplitterBranch: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterBranch ?? null) : null,
+        lastSplitterRailIndex: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterRailIndex ?? null) : null,
+        lastSplitterForwardSpeed: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterForwardSpeed ?? null) : null,
+        lastSplitterRescueApplied: obstacle.type === 'splitterFork' ? Boolean(obstacle.lastSplitterRescueApplied) : null,
+        orbitRingBoostConfig: obstacle.type === 'orbitRing' ? ORBIT_RING_SPEED_BOOST : null,
         gongPackRadius: obstacle.packRadius ?? null,
         gongPackImpulse: obstacle.packImpulse ?? null,
         gongShake: obstacle.shake != null ? Number(obstacle.shake.toFixed(2)) : null,
@@ -3454,6 +3468,15 @@ class MarbleRace {
         orbitRingGuideStrength: obstacle.type === 'orbitRing' ? (obstacle.orbitGuideStrength ?? null) : null,
         lastOrbitRingHitBy: obstacle.type === 'orbitRing' ? (obstacle.lastHitBy ?? null) : null,
         lastOrbitSegmentIndex: obstacle.type === 'orbitRing' ? (obstacle.lastOrbitSegmentIndex ?? null) : null,
+        splitterForkDimensions: obstacle.splitterForkDimensions ?? null,
+        splitterForkRailCount: obstacle.type === 'splitterFork' ? (obstacle.rails?.length ?? 0) : null,
+        splitterForkBodyCount: obstacle.type === 'splitterFork' ? (obstacle.bodies?.length ?? (obstacle.body ? 1 : 0)) : null,
+        lastSplitterForkHitBy: obstacle.type === 'splitterFork' ? (obstacle.lastHitBy ?? null) : null,
+        lastSplitterBranch: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterBranch ?? null) : null,
+        lastSplitterRailIndex: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterRailIndex ?? null) : null,
+        lastSplitterForwardSpeed: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterForwardSpeed ?? null) : null,
+        lastSplitterRescueApplied: obstacle.type === 'splitterFork' ? Boolean(obstacle.lastSplitterRescueApplied) : null,
+        orbitRingBoostConfig: obstacle.type === 'orbitRing' ? ORBIT_RING_SPEED_BOOST : null,
         gongPackRadius: obstacle.packRadius ?? null,
         gongPackImpulse: obstacle.packImpulse ?? null,
         gongShake: obstacle.shake != null ? Number(obstacle.shake.toFixed(2)) : null,
@@ -6132,6 +6155,24 @@ class MarbleRace {
           railContainmentHalfWidth: movingGateWidth / 2,
         });
       }
+      case 'splitterFork': {
+        palette.slingshot.userData.chromeMaterial = palette.chrome;
+        palette.slingshot.userData.yellowInsert = palette.yellowInsert;
+        palette.slingshot.userData.redInsert = palette.redInsert;
+        const splitterWidth = Math.min(5.4, Math.max(4.1, localWidth - 1.2));
+        const railClearance = 0.48;
+        const maxCenterOffset = Math.max(0, localWidth / 2 - splitterWidth / 2 - railClearance - 0.02);
+        const safeLane = clamp(lane, -maxCenterOffset, maxCenterOffset);
+        const safeTrackSurface = new THREE.Vector3(frame.p.x + frame.right.x * safeLane, frame.p.y, frame.p.z + frame.right.z * safeLane);
+        return this.createSplitterForkObstacle(safeTrackSurface, yaw, pitch, palette.slingshot, {
+          splitterWidth,
+          laneOffset: safeLane,
+          requestedLaneOffset: lane,
+          localTrackWidth: localWidth,
+          railClearance,
+          railContainmentHalfWidth: splitterWidth / 2,
+        });
+      }
       case 'tiltBridge': {
         palette.tiltBridge.userData.chromeMaterial = palette.chrome;
         palette.tiltBridge.userData.yellowInsert = palette.yellowInsert;
@@ -6932,6 +6973,157 @@ class MarbleRace {
     return obstacle;
   }
 
+  createSplitterForkObstacle(trackSurface, yaw, pitch, material, placement = {}) {
+    const group = new THREE.Group();
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation(group, yaw, pitch);
+    group.userData.visualStyle = 'y-shaped-neon-splitter-fork-two-exit-guide-rails';
+    this.trackGroup.add(group);
+
+    const chromeMat = material.userData?.chromeMaterial || new THREE.MeshPhysicalMaterial({ color: 0xe6f2ff, roughness: 0.1, metalness: 0.92, clearcoat: 1, clearcoatRoughness: 0.04 });
+    const cyanMat = new THREE.MeshPhysicalMaterial({ color: 0x23f7ff, roughness: 0.12, metalness: 0.08, clearcoat: 1, clearcoatRoughness: 0.04, emissive: 0x00a5c8, emissiveIntensity: 0.62 });
+    const magentaMat = new THREE.MeshPhysicalMaterial({ color: 0xff4ecb, roughness: 0.13, metalness: 0.06, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0x8f145f, emissiveIntensity: 0.58 });
+    const yellowMat = material.userData?.yellowInsert || new THREE.MeshPhysicalMaterial({ color: 0xffd166, roughness: 0.16, metalness: 0.06, clearcoat: 1, emissive: 0x7a4a00, emissiveIntensity: 0.46 });
+    const redMat = material.userData?.redInsert || new THREE.MeshPhysicalMaterial({ color: 0xff3864, roughness: 0.16, metalness: 0.06, clearcoat: 1, emissive: 0x79001c, emissiveIntensity: 0.46 });
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0x5bfff2, transparent: true, opacity: 0.24, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+
+    const splitterWidth = placement.splitterWidth || 4.8;
+    const stemLength = 2.35;
+    const branchLength = 2.55;
+    const railHeight = 0.5;
+    const railDepth = 0.2;
+    const railY = 0.34;
+    const branchAngle = 0.5;
+    const branchForwardZ = 1.0;
+    const branchSideX = 1.08;
+    const noseRadius = 0.34;
+    const floorWidth = splitterWidth;
+    const floorDepth = 4.85;
+    const floorHeight = 0.08;
+    const exitMarkerZ = 2.26;
+    const bodies = [];
+    const rails = [];
+
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(floorWidth, floorHeight, floorDepth), new THREE.MeshPhysicalMaterial({ color: 0x101827, roughness: 0.34, metalness: 0.18, clearcoat: 0.55, clearcoatRoughness: 0.12, emissive: 0x071525, emissiveIntensity: 0.26 }));
+    floor.position.set(0, floorHeight / 2 + 0.01, 0.24);
+    floor.receiveShadow = PERFORMANCE_TUNING.shadows;
+    group.add(floor);
+
+    const centerGuide = new THREE.Mesh(new THREE.ConeGeometry(noseRadius, 0.82, 3), yellowMat);
+    centerGuide.position.set(0, 0.39, -0.42);
+    centerGuide.rotation.set(Math.PI / 2, 0, Math.PI / 6);
+    centerGuide.castShadow = PERFORMANCE_TUNING.shadows;
+    group.add(centerGuide);
+
+    const makeRail = (spec) => {
+      const railGroup = new THREE.Group();
+      railGroup.position.set(spec.x, railY, spec.z);
+      railGroup.rotation.y = spec.localYaw;
+      group.add(railGroup);
+
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(spec.length, railHeight, railDepth), spec.material);
+      rail.castShadow = PERFORMANCE_TUNING.shadows;
+      rail.receiveShadow = PERFORMANCE_TUNING.shadows;
+      railGroup.add(rail);
+
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(spec.length * 0.94, 0.08, railDepth * 1.28), chromeMat);
+      cap.position.y = railHeight / 2 + 0.06;
+      cap.castShadow = PERFORMANCE_TUNING.shadows;
+      railGroup.add(cap);
+
+      const glow = new THREE.Mesh(new THREE.PlaneGeometry(spec.length * 0.92, railHeight * 1.25), glowMat.clone());
+      glow.position.set(0, 0.02, -railDepth / 2 - 0.012);
+      glow.rotation.x = -Math.PI / 2;
+      glow.renderOrder = 36;
+      railGroup.add(glow);
+
+      const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
+      const shape = new CANNON.Box(new CANNON.Vec3(spec.length / 2, railHeight / 2, railDepth / 2));
+      shape.collisionResponse = false;
+      body.addShape(shape);
+      body.collisionResponse = false;
+      const bodyCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(spec.x, railY, spec.z, yaw, pitch));
+      this.setSlopeBodyTransform(body, bodyCenter, yaw, pitch, spec.localYaw);
+      this.addObstacleBody(body, group);
+      bodies.push(body);
+      const record = { ...spec, group: railGroup, mesh: rail, cap, glow, body, center: bodyCenter };
+      rails.push(record);
+      return record;
+    };
+
+    makeRail({ index: 0, role: 'left-entry', x: -0.88, z: -0.76, length: stemLength, localYaw: 0, branchSide: -1, material: cyanMat });
+    makeRail({ index: 1, role: 'right-entry', x: 0.88, z: -0.76, length: stemLength, localYaw: 0, branchSide: 1, material: cyanMat });
+    makeRail({ index: 2, role: 'left-exit', x: -branchSideX, z: branchForwardZ, length: branchLength, localYaw: -branchAngle, branchSide: -1, material: magentaMat });
+    makeRail({ index: 3, role: 'right-exit', x: branchSideX, z: branchForwardZ, length: branchLength, localYaw: branchAngle, branchSide: 1, material: magentaMat });
+
+    [-1, 1].forEach((side) => {
+      const marker = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.58, 24), side < 0 ? yellowMat : redMat);
+      marker.position.set(side * Math.min(splitterWidth * 0.34, 1.85), 0.55, exitMarkerZ);
+      marker.rotation.set(Math.PI / 2, 0, 0);
+      marker.castShadow = PERFORMANCE_TUNING.shadows;
+      group.add(marker);
+    });
+
+    const center = trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, railY, 0.34, yaw, pitch));
+    this.obstacleMeshes.push(group);
+    const splitterForkDimensions = {
+      splitterWidth,
+      floorWidth,
+      floorDepth,
+      stemLength,
+      branchLength,
+      railHeight,
+      railDepth,
+      railY,
+      branchAngle,
+      branchAngleDegrees: Number(THREE.MathUtils.radToDeg(branchAngle).toFixed(1)),
+      exitCount: 2,
+      railCount: rails.length,
+      colliderCount: bodies.length,
+      colliderSensor: true,
+      collisionResponse: false,
+      branchRoles: rails.map((rail) => rail.role),
+      laneOffset: placement.laneOffset ?? null,
+      requestedLaneOffset: placement.requestedLaneOffset ?? null,
+      localTrackWidth: placement.localTrackWidth ?? null,
+      railClearance: placement.railClearance ?? null,
+      railContainmentHalfWidth: placement.railContainmentHalfWidth ?? splitterWidth / 2,
+      containedWithinRails: placement.localTrackWidth
+        ? Math.abs(placement.laneOffset ?? 0) + splitterWidth / 2 <= placement.localTrackWidth / 2 - (placement.railClearance ?? 0)
+        : null,
+    };
+    const obstacle = {
+      type: 'splitterFork',
+      kind: 'splitterFork',
+      trackSurface: trackSurface.clone(),
+      center,
+      radius: PINBALL_PHYSICS.splitterForkRadius,
+      impulse: PINBALL_PHYSICS.splitterForkImpulse,
+      cooldown: new Map(),
+      group,
+      floor,
+      centerGuide,
+      rails,
+      body: bodies[0] || null,
+      bodies,
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
+      splitterForkDimensions,
+      splitterForwardBias: PINBALL_PHYSICS.splitterForkForwardBias,
+      splitterSideBias: PINBALL_PHYSICS.splitterForkSideBias,
+      cooldownSeconds: 0.18,
+      rescueForwardSpeed: 3.2,
+      visualStyle: 'y-shaped-neon-splitter-fork-two-exit-guide-rails',
+      textureStyle: 'cyan-entry-magenta-y-fork-chrome-caps-yellow-red-exit-markers',
+      pulse: 0,
+      lastHitBy: null,
+      lastSplitterBranch: null,
+      lastSplitterRailIndex: null,
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
+  }
+
   createOrbitRingObstacle(trackSurface, yaw, pitch, material, placement = {}) {
     const group = new THREE.Group();
     group.position.copy(trackSurface);
@@ -7428,15 +7620,30 @@ class MarbleRace {
             segment.mesh?.scale.set(1 + segmentPulse * 0.1, 1 + segmentPulse * 0.08, 1 + segmentPulse * 0.1);
           });
         }
+        if (obstacle.type === 'splitterFork') {
+          obstacle.rails?.forEach((rail) => {
+            const railPulse = rail.index === obstacle.lastSplitterRailIndex ? obstacle.pulse : obstacle.pulse * 0.38;
+            rail.group?.scale.set(1 + railPulse * 0.08, 1 + railPulse * 0.12, 1 + railPulse * 0.08);
+            if (rail.glow?.material) rail.glow.material.opacity = 0.24 + railPulse * 0.42;
+          });
+          const guideScale = 1 + obstacle.pulse * 0.16;
+          obstacle.centerGuide?.scale.set(guideScale, guideScale, guideScale);
+        }
       }
       this.marbleData.forEach((data) => {
         if (data.finished) return;
-        const lastHit = obstacle.cooldown?.get(data.id) || -Infinity;
-        if (this.elapsed - lastHit < (obstacle.cooldownSeconds ?? 0.32)) return;
         const dx = data.body.position.x - obstacle.center.x;
         const dz = data.body.position.z - obstacle.center.z;
         const distSq = dx * dx + dz * dz;
         if (distSq > obstacle.radius * obstacle.radius) return;
+        const lastHit = obstacle.cooldown?.get(data.id) || -Infinity;
+        if (this.elapsed - lastHit < (obstacle.cooldownSeconds ?? 0.32)) {
+          if (obstacle.type !== 'splitterFork') return;
+          const frame = this.getTrackFrameAt(Math.max(this.findClosestProgress(data.body.position).distance, data.distance || 0) + this.finishDirectionAssist.lookAhead);
+          const forwardSpeed = data.body.velocity.x * frame.tangent.x + data.body.velocity.y * frame.tangent.y + data.body.velocity.z * frame.tangent.z;
+          const horizontalSpeed = Math.hypot(data.body.velocity.x, data.body.velocity.z);
+          if (forwardSpeed >= (obstacle.rescueForwardSpeed ?? 3.2) || horizontalSpeed >= 1.1) return;
+        }
         if (obstacle.type === 'popBumper') this.applyPopBumperImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'pinBumper') this.applyPinBumperImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'gongBumper') this.applyGongBumperImpulse(obstacle, data, dx, dz);
@@ -7445,6 +7652,7 @@ class MarbleRace {
         if (obstacle.type === 'movingGate') this.applyMovingGateImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'tiltBridge') this.applyTiltBridgeImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'orbitRing') this.applyOrbitRingImpulse(obstacle, data, dx, dz);
+        if (obstacle.type === 'splitterFork') this.applySplitterForkImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'dropTarget') this.applyDropTargetHit(obstacle, data);
       });
     });
@@ -7723,6 +7931,58 @@ class MarbleRace {
       distance: data.lastObstacleHitDistance,
       progress: data.lastObstacleHitProgress,
       lines: [`${data.name} rides the orbit ring`, `${data.name} glides the neon arc`, `${data.name} exits the curve`],
+    });
+  }
+
+  applySplitterForkImpulse(obstacle, data, dx, dz) {
+    const closest = this.findClosestProgress(data.body.position);
+    this.noteObstacleHit(data, obstacle, closest.distance);
+    const frame = this.getTrackFrameAt(Math.max(closest.distance, data.distance || 0) + this.finishDirectionAssist.lookAhead);
+    let nearestRail = null;
+    let nearestDistanceSq = Infinity;
+    (obstacle.rails || []).forEach((rail) => {
+      const rx = data.body.position.x - rail.center.x;
+      const rz = data.body.position.z - rail.center.z;
+      const distSq = rx * rx + rz * rz;
+      if (distSq < nearestDistanceSq) {
+        nearestDistanceSq = distSq;
+        nearestRail = rail;
+      }
+    });
+    const localSide = Math.sign(new THREE.Vector3(dx, 0, dz).dot(frame.right)) || nearestRail?.branchSide || 1;
+    const exitSide = nearestRail?.role?.includes('left') ? -1 : (nearestRail?.role?.includes('right') ? 1 : localSide);
+    const forwardBias = frame.tangent.clone().multiplyScalar(obstacle.impulse * (obstacle.splitterForwardBias ?? PINBALL_PHYSICS.splitterForkForwardBias));
+    const sideBias = frame.right.clone().multiplyScalar(exitSide * obstacle.impulse * (obstacle.splitterSideBias ?? PINBALL_PHYSICS.splitterForkSideBias));
+    const softReboundDistance = Math.max(0.001, Math.hypot(dx, dz));
+    const softRebound = new THREE.Vector3(dx / softReboundDistance, 0, dz / softReboundDistance).multiplyScalar(0.52);
+    const rawImpulse = forwardBias.add(sideBias).add(softRebound);
+    data.body.wakeUp();
+    this.applyFinishDirectedImpulse(data, rawImpulse, frame, 0.18);
+    const forwardSpeed = data.body.velocity.x * frame.tangent.x + data.body.velocity.y * frame.tangent.y + data.body.velocity.z * frame.tangent.z;
+    const rescueForwardSpeed = obstacle.rescueForwardSpeed ?? 3.2;
+    if (forwardSpeed < rescueForwardSpeed) {
+      const velocityBoost = rescueForwardSpeed - forwardSpeed;
+      data.body.velocity.x += frame.tangent.x * velocityBoost;
+      data.body.velocity.y += Math.max(0, Math.min(0.12, frame.tangent.y * velocityBoost));
+      data.body.velocity.z += frame.tangent.z * velocityBoost;
+      data.lastMovementTime = this.elapsed;
+      data.lastDriveMovementTime = this.elapsed;
+    }
+    obstacle.cooldown.set(data.id, this.elapsed);
+    obstacle.pulse = 1;
+    obstacle.lastHitBy = data.name;
+    obstacle.lastSplitterBranch = exitSide < 0 ? 'left-exit' : 'right-exit';
+    obstacle.lastSplitterRailIndex = nearestRail?.index ?? null;
+    obstacle.lastSplitterForwardSpeed = Number(forwardSpeed.toFixed(3));
+    obstacle.lastSplitterRescueApplied = forwardSpeed < rescueForwardSpeed;
+    this.pinballInteractions.splitterFork += 1;
+    this.spawnImpactEffect(nearestRail?.center || obstacle.center, exitSide < 0 ? 0xffd166 : 0xff4ecb, 'spark');
+    this.pushBroadcastEvent('Splitter Fork', `${data.name} chooses the ${exitSide < 0 ? 'left' : 'right'} fork`, {
+      kind: 'obstacle',
+      marbleId: data.id,
+      distance: data.lastObstacleHitDistance,
+      progress: data.lastObstacleHitProgress,
+      lines: [`${data.name} splits ${exitSide < 0 ? 'left' : 'right'}`, `${data.name} takes the fork`, `${data.name} changes lane`],
     });
   }
 
