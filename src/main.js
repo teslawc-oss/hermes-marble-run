@@ -555,48 +555,48 @@ const BROADCAST_CAMERA = {
     label: 'auto camera applies a bounded lift on real line-of-sight blockers; lead-pack and 60%+ cinematic leader only use the smaller passed-track guard so the shot stays readable without being blocked by old track sections',
   },
   leader: {
-    back: -9.2,
-    side: 0.85,
-    height: 25,
-    lookAhead: 11.5,
+    back: -9.9,
+    side: 0.92,
+    height: 27,
+    lookAhead: 12.4,
     targetLookAheadScale: 0.24,
     targetGuideBlend: 0.36,
     targetLift: 1.2,
-    dynamicLookAheadBySpeed: 6,
+    dynamicLookAheadBySpeed: 6.5,
     maxSideWave: 0.12,
     sideWaveSpeed: 0.24,
     positionSmoothing: 0.065,
     targetSmoothing: 0.13,
-    fov: 28,
-    obstacleAwareDistance: 28,
-    obstaclePullback: 1.1,
-    obstacleHeightBoost: 2.5,
-    obstacleLookAheadBoost: 3,
-    label: 'mid/late-race leader chase shot: from 58% progress it follows P1 with a closer lower broadcast angle, moderate FOV, restrained side drift, and extra forward forecast so upcoming track stays readable',
+    fov: 30.2,
+    obstacleAwareDistance: 30.2,
+    obstaclePullback: 1.2,
+    obstacleHeightBoost: 2.7,
+    obstacleLookAheadBoost: 3.2,
+    label: 'mid/late-race leader chase shot: zoomed out about 8% so P1 and more upcoming track stay visible without feeling too distant',
   },
   leadPack: {
-    back: -7.6,
-    side: 0.82,
-    height: 29,
-    packHeightStep: 0.45,
-    lookAhead: 12,
+    back: -8.2,
+    side: 0.89,
+    height: 31.3,
+    packHeightStep: 0.49,
+    lookAhead: 13,
     targetLookAheadScale: 0.38,
     targetGuideBlend: 0.4,
     targetLift: 1.55,
     useTrackNormalHeight: true,
-    flatTrackHeightBoost: 5,
+    flatTrackHeightBoost: 5.4,
     flatSlopeYThreshold: 0.18,
-    dynamicLookAheadBySpeed: 4.5,
+    dynamicLookAheadBySpeed: 4.9,
     maxSideWave: 0.22,
     sideWaveSpeed: 0.26,
     positionSmoothing: 0.04,
     targetSmoothing: 0.085,
-    fov: 30,
-    obstacleAwareDistance: 34,
-    obstaclePullback: 2.7,
-    obstacleHeightBoost: 2.5,
-    obstacleLookAheadBoost: 4,
-    label: 'closer early-race cinematic lead-pack shot: keeps the pack and more upcoming track readable while reducing the previous safe overhead feel for stronger marble presence',
+    fov: 32.4,
+    obstacleAwareDistance: 36.7,
+    obstaclePullback: 2.9,
+    obstacleHeightBoost: 2.7,
+    obstacleLookAheadBoost: 4.3,
+    label: 'zoomed-out early-race cinematic lead-pack shot: about 8% wider/farther so the pack and more upcoming track remain readable without feeling too distant',
   },
   leadBattle: {
     enabled: true,
@@ -774,6 +774,15 @@ const UI_THROTTLE_PROFILES = {
   },
 };
 
+const OBSTACLE_ANIMATION_CULLING = {
+  enabled: true,
+  lookAheadProgress: 0.05,
+  minLookAheadMeters: 25,
+  maxLookAheadMeters: 80,
+  passedBufferMeters: 8,
+  animatedTypes: new Set(['spinnerGate', 'movingGate', 'tiltBridge', 'dropTarget', 'gongBumper']),
+};
+
 const PINBALL_PHYSICS = {
   popBumperRadius: 1.55,
   popBumperImpulse: 7.2,
@@ -802,10 +811,11 @@ const PINBALL_PHYSICS = {
   movingGateImpulse: 4.9,
   movingGateSweepSpeed: 1.8,
   movingGateSwingAmplitude: 0.78,
-  splitterForkRadius: 2.8,
-  splitterForkImpulse: 4.4,
-  splitterForkForwardBias: 1.08,
-  splitterForkSideBias: 0.24,
+  splitterForkRadius: 3.45,
+  splitterForkImpulse: 5.4,
+  splitterForkForwardBias: 1.04,
+  splitterForkSideBias: 0.58,
+  splitterForkMinSideSpeed: 2.75,
   tiltBridgeRadius: 3.8,
   tiltBridgeImpulse: 3.8,
   tiltBridgeSweepSpeed: 1.35,
@@ -3273,7 +3283,73 @@ class MarbleRace {
     return meters;
   }
 
+  getObstacleAnimationCullingWindow() {
+    const activeDistances = this.marbleData
+      .filter((data) => !data.finished && !data.defeated)
+      .map((data) => {
+        const fallbackPosition = data.body?.position || data.mesh?.position || new THREE.Vector3();
+        const fallbackDistance = this.findClosestProgress(fallbackPosition).distance || 0;
+        return Number(data.driveDistance ?? data.distance ?? fallbackDistance);
+      })
+      .filter(Number.isFinite);
+    const frontDistance = activeDistances.length ? Math.max(...activeDistances) : this.trackLength || 0;
+    const backDistance = activeDistances.length ? Math.min(...activeDistances) : this.trackLength || 0;
+    const lookAheadMeters = clamp(
+      (this.trackLength || 0) * OBSTACLE_ANIMATION_CULLING.lookAheadProgress,
+      OBSTACLE_ANIMATION_CULLING.minLookAheadMeters,
+      OBSTACLE_ANIMATION_CULLING.maxLookAheadMeters,
+    );
+    return {
+      frontDistance,
+      backDistance,
+      lookAheadMeters,
+      passedBufferMeters: OBSTACLE_ANIMATION_CULLING.passedBufferMeters,
+      activeMarbleCount: activeDistances.length,
+    };
+  }
+
+  getObstacleAnimationState(obstacle, window = this.getObstacleAnimationCullingWindow()) {
+    if (!OBSTACLE_ANIMATION_CULLING.enabled || !OBSTACLE_ANIMATION_CULLING.animatedTypes.has(obstacle.type)) {
+      return { state: 'always-active', active: true, distanceAhead: null, distanceBehindBack: null };
+    }
+    const obstacleDistance = Number.isFinite(obstacle.placementDistance)
+      ? obstacle.placementDistance
+      : this.findClosestProgress(obstacle.center).distance || 0;
+    const distanceAhead = obstacleDistance - window.frontDistance;
+    const distanceBehindBack = window.backDistance - obstacleDistance;
+    let state = 'sleeping';
+    if (distanceBehindBack > window.passedBufferMeters) state = 'passed';
+    else if (distanceAhead <= window.lookAheadMeters) state = 'active';
+    return {
+      state,
+      active: state === 'active',
+      obstacleDistance,
+      distanceAhead,
+      distanceBehindBack,
+    };
+  }
+
+  getObstacleAnimationCullingDebug(window = this.getObstacleAnimationCullingWindow()) {
+    const counts = { active: 0, sleeping: 0, passed: 0, alwaysActive: 0 };
+    this.pinballObstacles.forEach((obstacle) => {
+      const state = this.getObstacleAnimationState(obstacle, window).state;
+      const key = state === 'always-active' ? 'alwaysActive' : state;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return {
+      ...OBSTACLE_ANIMATION_CULLING,
+      animatedTypes: [...OBSTACLE_ANIMATION_CULLING.animatedTypes],
+      frontDistance: Number(window.frontDistance.toFixed(2)),
+      backDistance: Number(window.backDistance.toFixed(2)),
+      lookAheadMeters: Number(window.lookAheadMeters.toFixed(2)),
+      passedBufferMeters: Number(window.passedBufferMeters.toFixed(2)),
+      activeMarbleCount: window.activeMarbleCount,
+      counts,
+    };
+  }
+
   getObstacleDebugEntries() {
+    const animationWindow = this.getObstacleAnimationCullingWindow();
     return this.pinballObstacles.map((obstacle, index) => {
       const centerProgress = this.findClosestProgress(obstacle.center);
       const centerDistance = centerProgress.distance || 0;
@@ -3281,6 +3357,7 @@ class MarbleRace {
       const frame = this.getTrackFrameAt(distance);
       const laneOffset = new THREE.Vector3(obstacle.center.x - frame.p.x, 0, obstacle.center.z - frame.p.z).dot(frame.right);
       const piece = this.trackPieces.find((trackPiece) => distance >= trackPiece.startD && distance <= trackPiece.endD);
+      const animationState = this.getObstacleAnimationState(obstacle, animationWindow);
       return {
         index,
         type: obstacle.type,
@@ -3310,6 +3387,10 @@ class MarbleRace {
         progress: this.trackLength ? Number((distance / this.trackLength).toFixed(4)) : 0,
         laneOffset: Number(laneOffset.toFixed(2)),
         radius: Number((obstacle.radius || obstacle.halfLength || obstacle.halfWidth || 0).toFixed(2)),
+        animationState: animationState.state,
+        animationActive: animationState.active,
+        animationDistanceAhead: animationState.distanceAhead != null ? Number(animationState.distanceAhead.toFixed(2)) : null,
+        animationDistanceBehindBack: animationState.distanceBehindBack != null ? Number(animationState.distanceBehindBack.toFixed(2)) : null,
         impulse: Number((obstacle.impulse || obstacle.boostImpulse || 0).toFixed(2)),
         singleUseBounce: Boolean(obstacle.singleUseBounce),
         bouncedMarbleId: obstacle.bouncedMarbleId ?? null,
@@ -3350,10 +3431,13 @@ class MarbleRace {
         splitterForkDimensions: obstacle.splitterForkDimensions ?? null,
         splitterForkRailCount: obstacle.type === 'splitterFork' ? (obstacle.rails?.length ?? 0) : null,
         splitterForkBodyCount: obstacle.type === 'splitterFork' ? (obstacle.bodies?.length ?? (obstacle.body ? 1 : 0)) : null,
+        splitterForkMinSideSpeed: obstacle.type === 'splitterFork' ? (obstacle.splitterMinSideSpeed ?? null) : null,
         lastSplitterForkHitBy: obstacle.type === 'splitterFork' ? (obstacle.lastHitBy ?? null) : null,
         lastSplitterBranch: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterBranch ?? null) : null,
         lastSplitterRailIndex: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterRailIndex ?? null) : null,
         lastSplitterForwardSpeed: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterForwardSpeed ?? null) : null,
+        lastSplitterSideSpeed: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterSideSpeed ?? null) : null,
+        lastSplitterSideSpeedBoost: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterSideSpeedBoost ?? null) : null,
         lastSplitterRescueApplied: obstacle.type === 'splitterFork' ? Boolean(obstacle.lastSplitterRescueApplied) : null,
         orbitRingBoostConfig: obstacle.type === 'orbitRing' ? ORBIT_RING_SPEED_BOOST : null,
         gongPackRadius: obstacle.packRadius ?? null,
@@ -3377,6 +3461,7 @@ class MarbleRace {
   }
 
   getTrackDebugPayload() {
+    const animationWindow = this.getObstacleAnimationCullingWindow();
     return {
       version: 1,
       app: 'marble-race',
@@ -3395,6 +3480,7 @@ class MarbleRace {
       obstacleDistributionLabel: OBSTACLE_DISTRIBUTION_MODES[this.obstacleDistributionMode]?.label || OBSTACLE_DISTRIBUTION_MODES.random.label,
       obstacleDistributionSummary: this.obstacleDistributionSummary,
       obstaclePlacement: OBSTACLE_PLACEMENT,
+      obstacleAnimationCulling: this.getObstacleAnimationCullingDebug(animationWindow),
       orbitRingSpeedBoost: ORBIT_RING_SPEED_BOOST,
       obstacleCategories: OBSTACLE_CATEGORIES,
       obstacleTypeMetadata: PINBALL_OBSTACLE_TYPE_METADATA,
@@ -3471,10 +3557,13 @@ class MarbleRace {
         splitterForkDimensions: obstacle.splitterForkDimensions ?? null,
         splitterForkRailCount: obstacle.type === 'splitterFork' ? (obstacle.rails?.length ?? 0) : null,
         splitterForkBodyCount: obstacle.type === 'splitterFork' ? (obstacle.bodies?.length ?? (obstacle.body ? 1 : 0)) : null,
+        splitterForkMinSideSpeed: obstacle.type === 'splitterFork' ? (obstacle.splitterMinSideSpeed ?? null) : null,
         lastSplitterForkHitBy: obstacle.type === 'splitterFork' ? (obstacle.lastHitBy ?? null) : null,
         lastSplitterBranch: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterBranch ?? null) : null,
         lastSplitterRailIndex: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterRailIndex ?? null) : null,
         lastSplitterForwardSpeed: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterForwardSpeed ?? null) : null,
+        lastSplitterSideSpeed: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterSideSpeed ?? null) : null,
+        lastSplitterSideSpeedBoost: obstacle.type === 'splitterFork' ? (obstacle.lastSplitterSideSpeedBoost ?? null) : null,
         lastSplitterRescueApplied: obstacle.type === 'splitterFork' ? Boolean(obstacle.lastSplitterRescueApplied) : null,
         orbitRingBoostConfig: obstacle.type === 'orbitRing' ? ORBIT_RING_SPEED_BOOST : null,
         gongPackRadius: obstacle.packRadius ?? null,
@@ -6997,17 +7086,9 @@ class MarbleRace {
     const branchForwardZ = 1.0;
     const branchSideX = 1.08;
     const noseRadius = 0.34;
-    const floorWidth = splitterWidth;
-    const floorDepth = 4.85;
-    const floorHeight = 0.08;
     const exitMarkerZ = 2.26;
     const bodies = [];
     const rails = [];
-
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(floorWidth, floorHeight, floorDepth), new THREE.MeshPhysicalMaterial({ color: 0x101827, roughness: 0.34, metalness: 0.18, clearcoat: 0.55, clearcoatRoughness: 0.12, emissive: 0x071525, emissiveIntensity: 0.26 }));
-    floor.position.set(0, floorHeight / 2 + 0.01, 0.24);
-    floor.receiveShadow = PERFORMANCE_TUNING.shadows;
-    group.add(floor);
 
     const centerGuide = new THREE.Mesh(new THREE.ConeGeometry(noseRadius, 0.82, 3), yellowMat);
     centerGuide.position.set(0, 0.39, -0.42);
@@ -7068,8 +7149,6 @@ class MarbleRace {
     this.obstacleMeshes.push(group);
     const splitterForkDimensions = {
       splitterWidth,
-      floorWidth,
-      floorDepth,
       stemLength,
       branchLength,
       railHeight,
@@ -7101,7 +7180,6 @@ class MarbleRace {
       impulse: PINBALL_PHYSICS.splitterForkImpulse,
       cooldown: new Map(),
       group,
-      floor,
       centerGuide,
       rails,
       body: bodies[0] || null,
@@ -7111,7 +7189,8 @@ class MarbleRace {
       splitterForkDimensions,
       splitterForwardBias: PINBALL_PHYSICS.splitterForkForwardBias,
       splitterSideBias: PINBALL_PHYSICS.splitterForkSideBias,
-      cooldownSeconds: 0.18,
+      splitterMinSideSpeed: PINBALL_PHYSICS.splitterForkMinSideSpeed,
+      cooldownSeconds: 0.16,
       rescueForwardSpeed: 3.2,
       visualStyle: 'y-shaped-neon-splitter-fork-two-exit-guide-rails',
       textureStyle: 'cyan-entry-magenta-y-fork-chrome-caps-yellow-red-exit-markers',
@@ -7487,14 +7566,22 @@ class MarbleRace {
 
   updatePinballObstacles(delta) {
     if (!this.pinballObstacles.length) return;
+    const animationWindow = this.getObstacleAnimationCullingWindow();
+    this.lastObstacleAnimationCullingDebug = this.getObstacleAnimationCullingDebug(animationWindow);
     this.pinballObstacles.forEach((obstacle) => {
-      if (obstacle.type === 'spinnerGate') {
+      const animationState = this.getObstacleAnimationState(obstacle, animationWindow);
+      const animationActive = animationState.active;
+      obstacle.animationState = animationState.state;
+      obstacle.animationActive = animationActive;
+      obstacle.animationDistanceAhead = animationState.distanceAhead;
+      obstacle.animationDistanceBehindBack = animationState.distanceBehindBack;
+      if (animationActive && obstacle.type === 'spinnerGate') {
         obstacle.spinAngle = (obstacle.spinAngle || 0) + delta * obstacle.spinnerSpeed;
         obstacle.spinnerArms?.forEach((arm, index) => {
           arm.rotation.y = obstacle.spinAngle + (Math.PI * 2 * index) / 3;
         });
       }
-      if (obstacle.type === 'movingGate') {
+      if (animationActive && obstacle.type === 'movingGate') {
         const dimensions = obstacle.movingGateDimensions || {};
         const cycleSpeed = Math.abs(obstacle.sweepSpeed || dimensions.cycleSpeed || PINBALL_PHYSICS.movingGateSweepSpeed);
         const phase = this.elapsed * cycleSpeed + (obstacle.distributionZoneIndex || 0) * 0.73;
@@ -7520,10 +7607,10 @@ class MarbleRace {
           stripe.rotation.z = 0.48 + Math.sin(phase * 2.4 + index) * 0.04;
         });
       }
-      if (obstacle.type === 'dropTarget') {
+      if (animationActive && obstacle.type === 'dropTarget') {
         this.updateDropTargetBank(obstacle, delta);
       }
-      if (obstacle.type === 'tiltBridge') {
+      if (animationActive && obstacle.type === 'tiltBridge') {
         const phase = this.elapsed * Math.abs(obstacle.sweepSpeed || PINBALL_PHYSICS.tiltBridgeSweepSpeed) + (obstacle.distributionZoneIndex || 0) * 0.61;
         const direction = Math.sign(obstacle.sweepSpeed || 1) || 1;
         const motionPhase = phase * direction;
@@ -7563,7 +7650,7 @@ class MarbleRace {
           }
         }
       }
-      if (obstacle.type === 'gongBumper') {
+      if (animationActive && obstacle.type === 'gongBumper') {
         if (obstacle.shake) {
           obstacle.shake = Math.max(0, obstacle.shake - delta * 4.8);
           obstacle.malletSwing = Math.max(0, (obstacle.malletSwing || 0) - delta * 3.6);
@@ -7591,7 +7678,7 @@ class MarbleRace {
           if (obstacle.glow?.material) obstacle.glow.material.opacity = 0.28;
         }
       }
-      if (obstacle.pulse) {
+      if (animationActive && obstacle.pulse) {
         obstacle.pulse = Math.max(0, obstacle.pulse - delta * 5.5);
         const scale = 1 + obstacle.pulse * 0.18;
         obstacle.mesh?.scale.set(scale, 1 + obstacle.pulse * 0.08, scale);
@@ -7959,6 +8046,15 @@ class MarbleRace {
     data.body.wakeUp();
     this.applyFinishDirectedImpulse(data, rawImpulse, frame, 0.18);
     const forwardSpeed = data.body.velocity.x * frame.tangent.x + data.body.velocity.y * frame.tangent.y + data.body.velocity.z * frame.tangent.z;
+    const minSideSpeed = obstacle.splitterMinSideSpeed ?? PINBALL_PHYSICS.splitterForkMinSideSpeed ?? 0;
+    const sideSpeed = data.body.velocity.x * frame.right.x + data.body.velocity.y * frame.right.y + data.body.velocity.z * frame.right.z;
+    const targetSideSpeed = exitSide * minSideSpeed;
+    const sideSpeedBoost = targetSideSpeed - sideSpeed;
+    if (minSideSpeed > 0 && exitSide * sideSpeed < minSideSpeed) {
+      data.body.velocity.x += frame.right.x * sideSpeedBoost;
+      data.body.velocity.y += Math.max(-0.08, Math.min(0.08, frame.right.y * sideSpeedBoost));
+      data.body.velocity.z += frame.right.z * sideSpeedBoost;
+    }
     const rescueForwardSpeed = obstacle.rescueForwardSpeed ?? 3.2;
     if (forwardSpeed < rescueForwardSpeed) {
       const velocityBoost = rescueForwardSpeed - forwardSpeed;
@@ -7974,6 +8070,8 @@ class MarbleRace {
     obstacle.lastSplitterBranch = exitSide < 0 ? 'left-exit' : 'right-exit';
     obstacle.lastSplitterRailIndex = nearestRail?.index ?? null;
     obstacle.lastSplitterForwardSpeed = Number(forwardSpeed.toFixed(3));
+    obstacle.lastSplitterSideSpeed = Number(sideSpeed.toFixed(3));
+    obstacle.lastSplitterSideSpeedBoost = Number((minSideSpeed > 0 && exitSide * sideSpeed < minSideSpeed ? sideSpeedBoost : 0).toFixed(3));
     obstacle.lastSplitterRescueApplied = forwardSpeed < rescueForwardSpeed;
     this.pinballInteractions.splitterFork += 1;
     this.spawnImpactEffect(nearestRail?.center || obstacle.center, exitSide < 0 ? 0xffd166 : 0xff4ecb, 'spark');
@@ -13488,6 +13586,7 @@ class MarbleRace {
       obstacleDistributionLabel: OBSTACLE_DISTRIBUTION_MODES[this.obstacleDistributionMode]?.label || OBSTACLE_DISTRIBUTION_MODES.random.label,
       obstacleDistributionSummary: this.obstacleDistributionSummary,
       obstaclePlacement: OBSTACLE_PLACEMENT,
+      obstacleAnimationCulling: this.lastObstacleAnimationCullingDebug || this.getObstacleAnimationCullingDebug(),
       orbitRingSpeedBoost: ORBIT_RING_SPEED_BOOST,
       obstacleCategories: OBSTACLE_CATEGORIES,
       obstacleTypeMetadata: PINBALL_OBSTACLE_TYPE_METADATA,
