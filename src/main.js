@@ -4814,29 +4814,75 @@ class MarbleRace {
 
   detectToyParkTrackOverlapBridgeZones(pathPoints, pieceMetadata) {
     const minPieceGap = 2;
-    const bridgePadding = 3.2;
-    const minCrossingAngleSin = 0.18;
+    const bridgePadding = 8.5;
+    const minCrossingAngleSin = 0.12;
+    const roadFootprintOverlapDistance = Math.max(1.2, this.trackWidth * 0.95);
     const segments = [];
     const cross2d = (ax, az, bx, bz) => ax * bz - az * bx;
-    const intersects = (a, b) => {
+    const clampUnit = (value) => clamp(value, 0, 1);
+    const closestPointOnSegment = (px, pz, segment) => {
+      const vx = segment.x2 - segment.x1;
+      const vz = segment.z2 - segment.z1;
+      const lenSq = Math.max(0.000001, vx * vx + vz * vz);
+      const t = clampUnit(((px - segment.x1) * vx + (pz - segment.z1) * vz) / lenSq);
+      return {
+        t,
+        x: segment.x1 + vx * t,
+        z: segment.z1 + vz * t,
+        d: segment.d1 + (segment.d2 - segment.d1) * t,
+      };
+    };
+    const nearEndpoint = (t) => t <= 0.04 || t >= 0.96;
+    const crossingOrNearestApproach = (a, b) => {
       const rx = a.x2 - a.x1;
       const rz = a.z2 - a.z1;
       const sx = b.x2 - b.x1;
       const sz = b.z2 - b.z1;
       const denominator = cross2d(rx, rz, sx, sz);
       const lengthProduct = Math.hypot(rx, rz) * Math.hypot(sx, sz);
-      if (Math.abs(denominator) < Math.max(0.0001, lengthProduct * minCrossingAngleSin)) return null;
+      const angleSin = Math.abs(denominator) / Math.max(0.0001, lengthProduct);
       const qpx = b.x1 - a.x1;
       const qpz = b.z1 - a.z1;
-      const t = cross2d(qpx, qpz, sx, sz) / denominator;
-      const u = cross2d(qpx, qpz, rx, rz) / denominator;
-      if (t <= 0.05 || t >= 0.95 || u <= 0.05 || u >= 0.95) return null;
+      if (angleSin >= minCrossingAngleSin && Math.abs(denominator) >= Math.max(0.0001, lengthProduct * 0.0001)) {
+        const t = cross2d(qpx, qpz, sx, sz) / denominator;
+        const u = cross2d(qpx, qpz, rx, rz) / denominator;
+        if (t > 0.04 && t < 0.96 && u > 0.04 && u < 0.96) {
+          return {
+            dA: a.d1 + (a.d2 - a.d1) * t,
+            dB: b.d1 + (b.d2 - b.d1) * u,
+            x: a.x1 + rx * t,
+            z: a.z1 + rz * t,
+            angleSin,
+            planarDistance: 0,
+            detectionMode: 'centerline-crossing',
+          };
+        }
+      }
+
+      const candidates = [
+        { from: 'a1', a: { t: 0, x: a.x1, z: a.z1, d: a.d1 }, b: closestPointOnSegment(a.x1, a.z1, b) },
+        { from: 'a-mid', a: { t: 0.5, x: (a.x1 + a.x2) / 2, z: (a.z1 + a.z2) / 2, d: (a.d1 + a.d2) / 2 }, b: closestPointOnSegment((a.x1 + a.x2) / 2, (a.z1 + a.z2) / 2, b) },
+        { from: 'a2', a: { t: 1, x: a.x2, z: a.z2, d: a.d2 }, b: closestPointOnSegment(a.x2, a.z2, b) },
+        { from: 'b1', a: closestPointOnSegment(b.x1, b.z1, a), b: { t: 0, x: b.x1, z: b.z1, d: b.d1 } },
+        { from: 'b-mid', a: closestPointOnSegment((b.x1 + b.x2) / 2, (b.z1 + b.z2) / 2, a), b: { t: 0.5, x: (b.x1 + b.x2) / 2, z: (b.z1 + b.z2) / 2, d: (b.d1 + b.d2) / 2 } },
+        { from: 'b2', a: closestPointOnSegment(b.x2, b.z2, a), b: { t: 1, x: b.x2, z: b.z2, d: b.d2 } },
+      ].map((candidate) => ({
+        ...candidate,
+        distance: Math.hypot(candidate.a.x - candidate.b.x, candidate.a.z - candidate.b.z),
+      })).filter((candidate) => !(nearEndpoint(candidate.a.t) && nearEndpoint(candidate.b.t)))
+        .sort((left, right) => left.distance - right.distance);
+      const nearest = candidates[0];
+      if (!nearest || nearest.distance > roadFootprintOverlapDistance) return null;
       return {
-        dA: a.d1 + (a.d2 - a.d1) * t,
-        dB: b.d1 + (b.d2 - b.d1) * u,
-        x: a.x1 + rx * t,
-        z: a.z1 + rz * t,
-        angleSin: Math.abs(denominator) / Math.max(0.0001, lengthProduct),
+        dA: nearest.a.d,
+        dB: nearest.b.d,
+        x: (nearest.a.x + nearest.b.x) / 2,
+        z: (nearest.a.z + nearest.b.z) / 2,
+        angleSin,
+        planarDistance: nearest.distance,
+        detectionMode: 'road-footprint-proximity-overlap',
+        nearestSource: nearest.from,
+        footprintThreshold: roadFootprintOverlapDistance,
       };
     };
 
@@ -4863,12 +4909,12 @@ class MarbleRace {
         const a = segments[aIndex];
         const b = segments[bIndex];
         if (Math.abs(a.pieceIndex - b.pieceIndex) <= minPieceGap) continue;
-        const crossing = intersects(a, b);
+        const crossing = crossingOrNearestApproach(a, b);
         if (!crossing) continue;
         const overPieceIndex = Math.max(a.pieceIndex, b.pieceIndex);
         const overDistance = overPieceIndex === a.pieceIndex ? crossing.dA : crossing.dB;
         const underPieceIndex = Math.min(a.pieceIndex, b.pieceIndex);
-        const key = `${overPieceIndex}:${Math.round(overDistance * 10)}`;
+        const key = `${overPieceIndex}:${Math.round(overDistance * 4)}`;
         if (seen.has(key)) continue;
         seen.add(key);
         const overPiece = pieceMetadata[overPieceIndex] || null;
@@ -4885,18 +4931,42 @@ class MarbleRace {
           crossingX: crossing.x,
           crossingZ: crossing.z,
           crossingAngleSin: crossing.angleSin,
-          reason: 'toy-park-planar-road-overlap-raise-later-piece-as-bridge',
+          planarDistance: crossing.planarDistance,
+          footprintThreshold: crossing.footprintThreshold ?? roadFootprintOverlapDistance,
+          detectionMode: crossing.detectionMode,
+          nearestSource: crossing.nearestSource || null,
+          reason: 'toy-park-road-footprint-overlap-raise-later-piece-as-visible-bridge',
         });
       }
     }
     zones.sort((left, right) => left.centerD - right.centerD);
-    return zones;
+    const mergedZones = [];
+    zones.forEach((zone) => {
+      const previous = mergedZones[mergedZones.length - 1];
+      if (previous
+        && previous.overPieceIndex === zone.overPieceIndex
+        && previous.underPieceIndex === zone.underPieceIndex
+        && zone.startD <= previous.endD + 0.75) {
+        previous.centerD = (previous.centerD + zone.centerD) / 2;
+        previous.startD = Math.min(previous.startD, zone.startD);
+        previous.endD = Math.max(previous.endD, zone.endD);
+        previous.crossingX = (previous.crossingX + zone.crossingX) / 2;
+        previous.crossingZ = (previous.crossingZ + zone.crossingZ) / 2;
+        previous.crossingAngleSin = Math.max(previous.crossingAngleSin, zone.crossingAngleSin);
+        previous.planarDistance = Math.min(previous.planarDistance ?? zone.planarDistance, zone.planarDistance ?? previous.planarDistance ?? 0);
+        previous.detectionMode = previous.detectionMode === zone.detectionMode ? previous.detectionMode : 'mixed-centerline-and-footprint-overlap';
+        previous.mergedZoneCount = (previous.mergedZoneCount || 1) + 1;
+        return;
+      }
+      mergedZones.push({ ...zone, index: mergedZones.length, mergedZoneCount: 1 });
+    });
+    return mergedZones.map((zone, index) => ({ ...zone, index, centerD: (zone.startD + zone.endD) / 2 }));
   }
 
   applyToyParkOverlapBridgeHeights(pathPoints, pieceMetadata) {
     if (this.physicsMechanicKey !== 'toyPark') return { enabled: false, zones: [], raisedPointCount: 0, maxHeightOffset: 0 };
     const zones = this.detectToyParkTrackOverlapBridgeZones(pathPoints, pieceMetadata);
-    const bridgeClearance = 3.2;
+    const bridgeClearance = 4.6;
     let raisedPointCount = 0;
     let maxHeightOffset = 0;
     pathPoints.forEach((point) => {
@@ -4931,6 +5001,8 @@ class MarbleRace {
         crossingX: Number(zone.crossingX.toFixed(3)),
         crossingZ: Number(zone.crossingZ.toFixed(3)),
         crossingAngleSin: Number(zone.crossingAngleSin.toFixed(3)),
+        planarDistance: Number((zone.planarDistance ?? 0).toFixed(3)),
+        footprintThreshold: Number((zone.footprintThreshold ?? 0).toFixed(3)),
       })),
     };
   }
