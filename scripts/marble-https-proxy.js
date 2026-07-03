@@ -98,13 +98,33 @@ function sendBadGateway(res, error) {
   res.end(`Marble Rush dev server is unavailable: ${error.message}\n`);
 }
 
+function normalizePreviewPath(req) {
+  const rawUrl = String(req.url || '/');
+  let parsed;
+  try {
+    parsed = new URL(rawUrl, 'https://marble.local');
+  } catch {
+    return rawUrl;
+  }
+  if (parsed.pathname.toLowerCase() === '/toypark') {
+    parsed.pathname = '/';
+    parsed.searchParams.set('physicsMechanic', 'toyPark');
+    parsed.searchParams.set('visualTheme', 'toyPark');
+    parsed.searchParams.set('obstacleTypes', 'pendulumHammer');
+    parsed.searchParams.set('obstaclePreset', 'many');
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  }
+  return rawUrl;
+}
+
 function handleRequest(req, res) {
   if (!requireAuth(req, res)) return;
+  const upstreamPath = normalizePreviewPath(req);
   const upstream = http.request({
     host: TARGET_HOST,
     port: TARGET_PORT,
     method: req.method,
-    path: req.url,
+    path: upstreamPath,
     headers: proxyHeaders(req),
   }, (upstreamRes) => {
     const responseHeaders = { ...upstreamRes.headers };
@@ -140,7 +160,7 @@ server.on('upgrade', (req, socket, head) => {
     host: TARGET_HOST,
     port: TARGET_PORT,
     method: req.method,
-    path: req.url,
+    path: normalizePreviewPath(req),
     headers: {
       ...proxyHeaders(req),
       connection: 'Upgrade',

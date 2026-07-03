@@ -2,6 +2,30 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import obstacleCatalogData from './obstacle-catalog.json';
+import {
+  TOY_PARK_MARBLE_VISUAL_THEME,
+  TOY_PARK_SOLID_BACKGROUND,
+  TOY_PARK_START_GATE_OVERRIDES,
+  TOY_PARK_TRACK_TILE_LIBRARY,
+  TOY_PARK_TRACK_WIDTH_SCALE,
+  TOY_PARK_WORLD_VISUAL_THEME_STYLE,
+  buildToyParkPhysicsMechanicProfile,
+} from './toypark/config.js';
+import {
+  buildToyParkDefaultTilePieces,
+  buildToyParkTrackTileSummary,
+  getToyParkTileLabel,
+  getToyParkTrackRoadLength,
+  TOY_PARK_START_BOARD_ENTRANCE_OFFSET_FROM_EXIT,
+} from './toypark/trackTiles.js';
+import {
+  addToyParkFinishBoard,
+  addToyParkMarbleGuardRails,
+  addToyParkTrackTileRibbons,
+  buildToyParkHalfRoundRailMesh,
+  createToyParkRailMaterialSet,
+  createToyParkStartRailPastelMaterialSet,
+} from './toypark/visuals.js';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -32,7 +56,7 @@ const CANVAS_START_HOOK = {
   enabled: true,
   style: 'canvas-only-start-countdown-horizontal-and-vertical',
   preRaceTagline: '12 MARBLES. 1 CHAMPION.',
-  gateLabel: 'GATE OPENS IN',
+  gateLabel: 'RACE STARTS IN',
   goLabel: 'RUSH!',
   postStartHoldSeconds: 1.8,
   goFadeStartSeconds: 1.15,
@@ -151,7 +175,7 @@ const START_RAMP = {
 };
 
 const START_GATE_DESIGN = {
-  style: 'track-aligned-gravity-staging-chute-with-lane-stalls-and-lift-gate',
+  ...TOY_PARK_START_GATE_OVERRIDES,
   chuteWidthPadding: 6.4,
   chuteDepth: 12.6,
   laneRailHeight: 0.7,
@@ -172,7 +196,7 @@ const START_GATE_DESIGN = {
   minStallWidth: 1.28,
   freezeMarblesUntilGateOpen: true,
   allowPreGateSlideToGate: false,
-  slotFillMode: 'fill-all-lane-slots-before-starting-next-row',
+  slotFillMode: TOY_PARK_START_GATE_OVERRIDES.slotFillMode,
   highCountStaging: {
     enabled: true,
     maxRowsBeforeHoldingPattern: 3,
@@ -327,6 +351,33 @@ const NO_ROLLING_SLOWDOWN = {
   label: '滾動不減速：波子 linear/angular damping = 0，賽道/波子/障礙接觸摩擦設為 0，只保留重力、碰撞同 top-speed cap',
 };
 
+const DEFAULT_PHYSICS_MECHANIC_KEY = 'classic';
+const PHYSICS_MECHANIC_PROFILES = {
+  classic: {
+    key: 'classic',
+    label: 'Classic Marble Rush',
+    renderSafeDefault: true,
+    isolatedPreviewOnly: false,
+    worldGravityY: -16,
+    speedScale: 1,
+    accelScale: 1,
+    startImpulseScale: 1,
+    maxSpeedScale: 1,
+    unstuckScale: 1,
+    marbleMassScale: 1,
+    marbleRadiusScale: 1,
+    linearDamping: NO_ROLLING_SLOWDOWN.marbleLinearDamping,
+    angularDamping: NO_ROLLING_SLOWDOWN.marbleAngularDamping,
+    maxAngularSpeed: NO_ROLLING_SLOWDOWN.maxAngularSpeed,
+    trackContact: NO_ROLLING_SLOWDOWN.trackContact,
+    marbleContact: NO_ROLLING_SLOWDOWN.marbleContact,
+    obstacleContact: NO_ROLLING_SLOWDOWN.obstacleContact,
+    slopeDriveOverrides: {},
+    contactLabel: 'classic render-safe physics profile; existing render defaults remain unchanged',
+  },
+  toyPark: buildToyParkPhysicsMechanicProfile(NO_ROLLING_SLOWDOWN),
+};
+
 const DROP_TARGET_FINAL_BOOST = {
   enabled: true,
   durationSeconds: 5,
@@ -452,7 +503,6 @@ const WIDTH_PRESETS = {
   normal: { label: 'Normal', min: 14.0, max: 20.0, minFactor: 0.42, absoluteMin: 5.2 },
   wide: { label: 'Wide', min: 21.0, max: 27.0, minFactor: 0.48, absoluteMin: 8.5 },
 };
-
 const OBSTACLE_PRESETS = [
   { label: 'None', multiplier: 0 },
   { label: 'Standard', multiplier: 1 },
@@ -491,6 +541,7 @@ const OBSTACLE_TYPE_PLACEMENT = {
   spinnerGate: { footprintMeters: 7.0, spawnWeight: 0.8 },
   movingGate: { footprintMeters: 7.4, spawnWeight: 0.7 },
   splitterFork: { footprintMeters: 6.8, spawnWeight: 0.86 },
+  pendulumHammer: { footprintMeters: 7.6, spawnWeight: 0.68 },
   tiltBridge: { footprintMeters: 7.8, spawnWeight: 0.65 },
   orbitRing: { footprintMeters: 8.2, spawnWeight: 0.72 },
   dropTarget: { footprintMeters: 7.0, spawnWeight: 0.72 },
@@ -780,7 +831,7 @@ const OBSTACLE_ANIMATION_CULLING = {
   minLookAheadMeters: 25,
   maxLookAheadMeters: 80,
   passedBufferMeters: 8,
-  animatedTypes: new Set(['spinnerGate', 'movingGate', 'tiltBridge', 'dropTarget', 'gongBumper']),
+  animatedTypes: new Set(['spinnerGate', 'movingGate', 'tiltBridge', 'pendulumHammer', 'dropTarget', 'gongBumper']),
 };
 
 const PINBALL_PHYSICS = {
@@ -816,6 +867,10 @@ const PINBALL_PHYSICS = {
   splitterForkForwardBias: 1.04,
   splitterForkSideBias: 0.58,
   splitterForkMinSideSpeed: 2.75,
+  pendulumHammerRadius: 3.65,
+  pendulumHammerImpulse: 5.6,
+  pendulumHammerSweepSpeed: 1.18,
+  pendulumHammerSwingAmplitude: 0.72,
   tiltBridgeRadius: 3.8,
   tiltBridgeImpulse: 3.8,
   tiltBridgeSweepSpeed: 1.35,
@@ -972,6 +1027,7 @@ const MARBLE_VISUAL_THEMES = {
     colorLabels: ['Tiger Jade', 'Lava Obsidian', 'Emerald Amethyst Duo', 'Amber Spark', 'Pearl White', 'Sunlit Gold'],
     patternKeys: ['marble-vein', 'storm', 'rings', 'flame', 'speckle'],
   },
+  toyPark: TOY_PARK_MARBLE_VISUAL_THEME,
 };
 
 const DEFAULT_MARBLE_VISUAL_THEME_KEY = 'mixed';
@@ -1014,6 +1070,7 @@ const WORLD_VISUAL_THEME_STYLES = {
     rail: { base: '#1f2937', mid: '#374151', accent: '#10b981', secondary: '#f59e0b', pattern: 'weathered-rail', roughness: 0.42, metalness: 0.18, clearcoat: 0.25 },
     gate: { base: '#1f2937', panel: '#10b981', warning: '#f59e0b', emissive: '#053b2a', signEmissive: '#3a2100' },
   },
+  toyPark: TOY_PARK_WORLD_VISUAL_THEME_STYLE,
 };
 
 const MARBLE_MATERIAL_STYLES = {
@@ -1120,6 +1177,10 @@ class MarbleRace {
     this.widthPreset = WIDTH_PRESETS[this.widthPresetKey];
     this.speedIndex = 1;
     this.speedPreset = SPEED_PRESETS[this.speedIndex];
+    this.physicsMechanicKey = DEFAULT_PHYSICS_MECHANIC_KEY;
+    this.physicsMechanic = PHYSICS_MECHANIC_PROFILES[this.physicsMechanicKey];
+    this.physicsMechanicSource = 'default-render-safe';
+    this.physicsMechanicAppliedAt = null;
     this.obstacleIndex = 0;
     this.obstaclePreset = OBSTACLE_PRESETS[this.obstacleIndex];
     this.obstacleDistributionMode = 'random';
@@ -1262,7 +1323,7 @@ class MarbleRace {
     this.rightAngleTurns = [];
     this.trackPieceSystem = 'modular-pieces';
     this.trackPieces = [];
-    this.slopeDrive = SLOPE_DRIVE;
+    this.slopeDrive = { ...SLOPE_DRIVE, ...((this.physicsMechanic || PHYSICS_MECHANIC_PROFILES[DEFAULT_PHYSICS_MECHANIC_KEY]).slopeDriveOverrides || {}) };
     this.directionStabilityAssist = DIRECTION_STABILITY_ASSIST;
     this.landingReboundAbsorber = LANDING_REBOUND_ABSORBER;
     this.airborneGuidePolicy = AIRBORNE_GUIDE_POLICY;
@@ -1577,9 +1638,11 @@ class MarbleRace {
     this.setTtsPitch(this.ui.ttsPitchSlider?.value || this.ttsPitch || 1, { resetQueue: false, updateStatus: false });
     this.initTtsVoiceSelector();
     this.buildObstacleTypeToggles();
+    this.applyInitialPreviewParams();
     this.buildRaceThemeOverlay();
     this.initThree();
     this.initPhysics();
+    this.applyPhysicsMechanic(this.physicsMechanicKey, { source: this.physicsMechanicSource || 'default-render-safe' });
     this.bindEvents();
     this.newRace({ regenerateTrack: true });
     this.animate();
@@ -1762,7 +1825,7 @@ class MarbleRace {
     if (active) return { title: active.title || 'LIVE EVENT', detail: active.detail || '' };
     const leader = this.getRanking({ force: false })[0];
     if (this.state === 'running' && leader) return { title: 'LIVE EVENT', detail: `${leader.name} leads the rush` };
-    if (this.countdownActive) return { title: 'GET READY', detail: 'The gate is about to open' };
+    if (this.countdownActive) return { title: 'GET READY', detail: 'The grid is about to launch' };
     if (this.state === 'finished') return { title: 'RACE COMPLETE', detail: this.buildPodiumResultLine?.() || 'Podium locked' };
     return { title: 'MARBLE RUSH', detail: 'Pick your winner' };
   }
@@ -2332,7 +2395,8 @@ class MarbleRace {
   }
 
   initPhysics() {
-    this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -16, 0) });
+    const profile = this.physicsMechanic || PHYSICS_MECHANIC_PROFILES[DEFAULT_PHYSICS_MECHANIC_KEY];
+    this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, profile.worldGravityY ?? -16, 0) });
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
     // Disable sleeping for racers: small sustained drive forces can be ignored by sleeping Cannon bodies,
     // which makes marbles look like they lose speed or die out around the middle of long tracks.
@@ -2342,10 +2406,10 @@ class MarbleRace {
     this.trackMaterial = new CANNON.Material('track');
     this.railMaterial = new CANNON.Material('rail');
     this.obstacleMaterial = new CANNON.Material('obstacle');
-    this.world.addContactMaterial(new CANNON.ContactMaterial(this.marbleMaterial, this.trackMaterial, NO_ROLLING_SLOWDOWN.trackContact));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.marbleMaterial, this.trackMaterial, profile.trackContact || NO_ROLLING_SLOWDOWN.trackContact));
     this.world.addContactMaterial(new CANNON.ContactMaterial(this.marbleMaterial, this.railMaterial, RAIL_REBOUND));
-    this.world.addContactMaterial(new CANNON.ContactMaterial(this.marbleMaterial, this.obstacleMaterial, NO_ROLLING_SLOWDOWN.obstacleContact));
-    this.world.addContactMaterial(new CANNON.ContactMaterial(this.marbleMaterial, this.marbleMaterial, NO_ROLLING_SLOWDOWN.marbleContact));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.marbleMaterial, this.obstacleMaterial, profile.obstacleContact || NO_ROLLING_SLOWDOWN.obstacleContact));
+    this.world.addContactMaterial(new CANNON.ContactMaterial(this.marbleMaterial, this.marbleMaterial, profile.marbleContact || NO_ROLLING_SLOWDOWN.marbleContact));
     this.world.addEventListener('postStep', () => { this.physicsSteps += 1; });
   }
 
@@ -2435,6 +2499,126 @@ class MarbleRace {
       const map = { '1': 'default', '2': 'leadPack', '3': 'selected', '4': 'cinematicLeader', '5': 'orbit' };
       if (map[event.key]) this.cameraMode = map[event.key];
     });
+  }
+
+  applyPhysicsMechanic(key = DEFAULT_PHYSICS_MECHANIC_KEY, { source = 'runtime' } = {}) {
+    const normalizedKey = PHYSICS_MECHANIC_PROFILES[key] ? key : DEFAULT_PHYSICS_MECHANIC_KEY;
+    const profile = PHYSICS_MECHANIC_PROFILES[normalizedKey];
+    this.physicsMechanicKey = normalizedKey;
+    this.physicsMechanic = profile;
+    this.physicsMechanicSource = source;
+    this.physicsMechanicAppliedAt = new Date().toISOString();
+    this.speedPreset = this.getMechanicAdjustedSpeedPreset(SPEED_PRESETS[this.speedIndex] || SPEED_PRESETS[1], profile);
+    this.slopeDrive = { ...SLOPE_DRIVE, ...(profile.slopeDriveOverrides || {}) };
+    if (this.world?.gravity) this.world.gravity.set(0, profile.worldGravityY ?? -16, 0);
+    if (this.world?.contactmaterials?.length) {
+      const contactByPair = [
+        [this.marbleMaterial, this.trackMaterial, profile.trackContact || NO_ROLLING_SLOWDOWN.trackContact],
+        [this.marbleMaterial, this.railMaterial, RAIL_REBOUND],
+        [this.marbleMaterial, this.obstacleMaterial, profile.obstacleContact || NO_ROLLING_SLOWDOWN.obstacleContact],
+        [this.marbleMaterial, this.marbleMaterial, profile.marbleContact || NO_ROLLING_SLOWDOWN.marbleContact],
+      ];
+      this.world.contactmaterials.length = 0;
+      contactByPair.forEach(([a, b, options]) => this.world.addContactMaterial(new CANNON.ContactMaterial(a, b, options)));
+    }
+    (this.marbleData || []).forEach((data) => {
+      if (data.body) {
+        data.body.linearDamping = profile.linearDamping ?? NO_ROLLING_SLOWDOWN.marbleLinearDamping;
+        data.body.angularDamping = profile.angularDamping ?? NO_ROLLING_SLOWDOWN.marbleAngularDamping;
+        if (data.baseMass != null) {
+          data.body.mass = data.baseMass * (profile.marbleMassScale ?? 1);
+          data.body.updateMassProperties();
+        }
+      }
+    });
+    if (this.ui?.speedLabel && this.speedPreset) this.ui.speedLabel.textContent = this.speedPreset.label;
+    window.__MARBLE_RACE_PHYSICS_MECHANIC__ = this.getPhysicsMechanicDebug();
+    return this.physicsMechanic;
+  }
+
+  getPhysicsMechanicDebug() {
+    const profile = this.physicsMechanic || PHYSICS_MECHANIC_PROFILES[DEFAULT_PHYSICS_MECHANIC_KEY];
+    return {
+      key: profile.key,
+      label: profile.label,
+      source: this.physicsMechanicSource,
+      appliedAt: this.physicsMechanicAppliedAt,
+      renderSafeDefault: Boolean(profile.renderSafeDefault),
+      isolatedPreviewOnly: Boolean(profile.isolatedPreviewOnly),
+      worldGravityY: this.world?.gravity?.y ?? profile.worldGravityY,
+      speedScale: profile.speedScale ?? 1,
+      speedPreset: {
+        index: this.speedIndex,
+        baseLabel: this.speedPreset?.baseLabel || SPEED_PRESETS[this.speedIndex]?.label,
+        label: this.speedPreset?.label,
+        maxSpeed: Number((this.speedPreset?.maxSpeed || 0).toFixed(3)),
+        accel: Number((this.speedPreset?.accel || 0).toFixed(3)),
+      },
+      marbleMassScale: profile.marbleMassScale ?? 1,
+      marbleRadiusScale: profile.marbleRadiusScale ?? 1,
+      damping: {
+        linear: profile.linearDamping ?? NO_ROLLING_SLOWDOWN.marbleLinearDamping,
+        angular: profile.angularDamping ?? NO_ROLLING_SLOWDOWN.marbleAngularDamping,
+      },
+      contacts: {
+        track: profile.trackContact,
+        marble: profile.marbleContact,
+        obstacle: profile.obstacleContact,
+        rail: RAIL_REBOUND,
+      },
+      slopeDriveModel: this.slopeDrive?.model,
+      contactLabel: profile.contactLabel,
+      defaultRenderUnaffected: profile.key === DEFAULT_PHYSICS_MECHANIC_KEY,
+    };
+  }
+
+  applyInitialPreviewParams() {
+    const params = new URLSearchParams(window.location.search || '');
+    const pathKey = String(window.location.pathname || '').replace(/^\/+|\/+$/g, '').toLowerCase();
+    const mechanic = String(params.get('physicsMechanic') || '').trim();
+    const toyParkPreview = pathKey === 'toypark' || mechanic.toLowerCase() === 'toypark';
+    const requestedMechanic = toyParkPreview ? 'toyPark' : (PHYSICS_MECHANIC_PROFILES[mechanic] ? mechanic : DEFAULT_PHYSICS_MECHANIC_KEY);
+    this.applyPhysicsMechanic(requestedMechanic, { source: toyParkPreview ? 'toypark-endpoint' : (mechanic ? 'query-param' : 'default-render-safe') });
+    const requestedTheme = params.get('visualTheme') || (toyParkPreview ? 'toyPark' : '');
+    if (requestedTheme && MARBLE_VISUAL_THEMES[requestedTheme] && this.ui.visualTheme) {
+      this.ui.visualTheme.value = requestedTheme;
+      this.visualThemeKey = requestedTheme;
+      this.visualTheme = MARBLE_VISUAL_THEMES[requestedTheme];
+    }
+
+    const obstaclePresetAliases = { none: 0, standard: 1, many: 2, extreme: 3 };
+    const requestedObstaclePreset = String(params.get('obstaclePreset') || (toyParkPreview ? 'none' : '')).trim().toLowerCase();
+    if (requestedObstaclePreset && this.ui.obstacle) {
+      const presetIndex = obstaclePresetAliases[requestedObstaclePreset] ?? Number.parseInt(requestedObstaclePreset, 10);
+      if (Number.isFinite(presetIndex)) this.ui.obstacle.value = String(clamp(presetIndex, 0, OBSTACLE_PRESETS.length - 1));
+    }
+
+    const requestedTypes = String(params.get('obstacleTypes') || '')
+      .split(',')
+      .map((type) => type.trim())
+      .filter((type) => PINBALL_OBSTACLE_TYPES.includes(type));
+    if (requestedTypes.length) {
+      const typeSet = new Set(requestedTypes);
+      (this.ui.obstacleTypeToggles || []).forEach((toggle) => {
+        toggle.checked = typeSet.has(toggle.dataset.obstacleType);
+      });
+      this.enabledObstacleTypes = typeSet;
+    } else if (toyParkPreview) {
+      (this.ui.obstacleTypeToggles || []).forEach((toggle) => {
+        toggle.checked = false;
+      });
+      this.enabledObstacleTypes = new Set();
+    }
+
+    window.__MARBLE_RACE_INITIAL_PREVIEW__ = {
+      path: pathKey || '/',
+      physicsMechanic: mechanic || null,
+      toyParkPreview,
+      visualThemeKey: this.visualThemeKey,
+      obstaclePresetIndex: this.ui.obstacle ? Number(this.ui.obstacle.value) : this.obstacleIndex,
+      obstacleTypes: [...(this.enabledObstacleTypes || new Set())],
+      activePhysicsMechanic: this.getPhysicsMechanicDebug(),
+    };
   }
 
   buildRaceThemeOverlay() {
@@ -2962,9 +3146,23 @@ class MarbleRace {
     }
   }
 
+  getMechanicAdjustedSpeedPreset(basePreset = this.speedPreset, profile = this.physicsMechanic) {
+    const mechanic = profile || PHYSICS_MECHANIC_PROFILES[DEFAULT_PHYSICS_MECHANIC_KEY];
+    return {
+      ...basePreset,
+      label: mechanic.key === DEFAULT_PHYSICS_MECHANIC_KEY ? basePreset.label : `${basePreset.label} / ${mechanic.label}`,
+      startImpulse: (basePreset.startImpulse || 0) * (mechanic.startImpulseScale ?? mechanic.speedScale ?? 1),
+      maxSpeed: (basePreset.maxSpeed || 0) * (mechanic.maxSpeedScale ?? mechanic.speedScale ?? 1),
+      accel: (basePreset.accel || 0) * (mechanic.accelScale ?? mechanic.speedScale ?? 1),
+      unstuck: (basePreset.unstuck || 0) * (mechanic.unstuckScale ?? mechanic.speedScale ?? 1),
+      baseLabel: basePreset.label,
+      mechanicKey: mechanic.key,
+    };
+  }
+
   updateSpeedPreset() {
     this.speedIndex = clamp(Math.round(Number(this.ui.speed.value) || 0), 0, SPEED_PRESETS.length - 1);
-    this.speedPreset = SPEED_PRESETS[this.speedIndex];
+    this.speedPreset = this.getMechanicAdjustedSpeedPreset(SPEED_PRESETS[this.speedIndex]);
     this.ui.speed.value = String(this.speedIndex);
     this.ui.speedLabel.textContent = this.speedPreset.label;
     this.updateUI();
@@ -3428,6 +3626,11 @@ class MarbleRace {
         orbitRingGuideStrength: obstacle.type === 'orbitRing' ? (obstacle.orbitGuideStrength ?? null) : null,
         lastOrbitRingHitBy: obstacle.type === 'orbitRing' ? (obstacle.lastHitBy ?? null) : null,
         lastOrbitSegmentIndex: obstacle.type === 'orbitRing' ? (obstacle.lastOrbitSegmentIndex ?? null) : null,
+        pendulumHammerDimensions: obstacle.pendulumHammerDimensions ?? null,
+        pendulumHammerSwingAngle: obstacle.type === 'pendulumHammer' && obstacle.swingAngle != null ? Number(obstacle.swingAngle.toFixed(3)) : null,
+        pendulumHammerSweepSpeed: obstacle.type === 'pendulumHammer' && obstacle.sweepSpeed != null ? Number(Math.abs(obstacle.sweepSpeed).toFixed(2)) : null,
+        lastPendulumHammerHitBy: obstacle.type === 'pendulumHammer' ? (obstacle.lastHitBy ?? null) : null,
+        lastPendulumForwardSpeed: obstacle.type === 'pendulumHammer' ? (obstacle.lastPendulumForwardSpeed ?? null) : null,
         splitterForkDimensions: obstacle.splitterForkDimensions ?? null,
         splitterForkRailCount: obstacle.type === 'splitterFork' ? (obstacle.rails?.length ?? 0) : null,
         splitterForkBodyCount: obstacle.type === 'splitterFork' ? (obstacle.bodies?.length ?? (obstacle.body ? 1 : 0)) : null,
@@ -3473,6 +3676,7 @@ class MarbleRace {
       widthPresetKey: this.widthPresetKey,
       speedIndex: this.speedIndex,
       speedLabel: this.speedPreset?.label,
+      physicsMechanic: this.getPhysicsMechanicDebug(),
       obstacleIndex: this.obstacleIndex,
       obstacleLabel: this.obstaclePreset?.label,
       obstacleMultiplier: this.obstaclePreset?.multiplier ?? 1,
@@ -3490,18 +3694,28 @@ class MarbleRace {
       catchupAssistEnabled: this.catchupAssistEnabled,
       catchupAssist: CATCHUP_ASSIST,
       trackWidth: Number((this.trackWidth || 0).toFixed(3)),
+      trackStats: this.trackStats,
+      trackSlope: this.trackSlope,
+      trackWidthProfile: this.trackWidthProfile,
       rightAngleTurnCount: this.rightAngleTurnCount,
       modularTrackPieceCounts: {
         straight: this.trackPieces.filter((piece) => piece.type === 'straight').length,
+        variableBend: this.trackPieces.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend?.key).length,
+        uTurn180: 0,
         corner45: this.trackPieces.filter((piece) => Math.abs(piece.turnDegrees) === 45).length,
         corner90: this.trackPieces.filter((piece) => Math.abs(piece.turnDegrees) === 90).length,
       },
       trackPieces: this.trackPieces.map((piece) => ({
         type: piece.type,
+        tileKey: piece.tileKey || null,
+        tileLabel: piece.tileLabel || null,
         length: Number((piece.length || 0).toFixed(2)),
         turnDegrees: piece.turnDegrees,
         startDistance: Number(((piece.startDistance ?? piece.startD) || 0).toFixed(2)),
         endDistance: Number(((piece.endDistance ?? piece.endD) || 0).toFixed(2)),
+        loopPrototype: Boolean(piece.loopPrototype),
+        loopPrototypeIndex: piece.loopPrototypeIndex ?? null,
+        loopSegmentRole: piece.loopSegmentRole ?? null,
       })),
       driveAssist: {
         slopeDrive: this.slopeDrive,
@@ -3554,6 +3768,11 @@ class MarbleRace {
         orbitRingGuideStrength: obstacle.type === 'orbitRing' ? (obstacle.orbitGuideStrength ?? null) : null,
         lastOrbitRingHitBy: obstacle.type === 'orbitRing' ? (obstacle.lastHitBy ?? null) : null,
         lastOrbitSegmentIndex: obstacle.type === 'orbitRing' ? (obstacle.lastOrbitSegmentIndex ?? null) : null,
+        pendulumHammerDimensions: obstacle.pendulumHammerDimensions ?? null,
+        pendulumHammerSwingAngle: obstacle.type === 'pendulumHammer' && obstacle.swingAngle != null ? Number(obstacle.swingAngle.toFixed(3)) : null,
+        pendulumHammerSweepSpeed: obstacle.type === 'pendulumHammer' && obstacle.sweepSpeed != null ? Number(Math.abs(obstacle.sweepSpeed).toFixed(2)) : null,
+        lastPendulumHammerHitBy: obstacle.type === 'pendulumHammer' ? (obstacle.lastHitBy ?? null) : null,
+        lastPendulumForwardSpeed: obstacle.type === 'pendulumHammer' ? (obstacle.lastPendulumForwardSpeed ?? null) : null,
         splitterForkDimensions: obstacle.splitterForkDimensions ?? null,
         splitterForkRailCount: obstacle.type === 'splitterFork' ? (obstacle.rails?.length ?? 0) : null,
         splitterForkBodyCount: obstacle.type === 'splitterFork' ? (obstacle.bodies?.length ?? (obstacle.body ? 1 : 0)) : null,
@@ -3713,7 +3932,7 @@ class MarbleRace {
     this.rightAngleTurns = [];
     this.trackPieceSystem = 'modular-pieces';
     this.trackPieces = [];
-    this.slopeDrive = SLOPE_DRIVE;
+    this.slopeDrive = { ...SLOPE_DRIVE, ...((this.physicsMechanic || PHYSICS_MECHANIC_PROFILES[DEFAULT_PHYSICS_MECHANIC_KEY]).slopeDriveOverrides || {}) };
     this.directionStabilityAssist = DIRECTION_STABILITY_ASSIST;
     this.landingReboundAbsorber = LANDING_REBOUND_ABSORBER;
     this.airborneGuidePolicy = AIRBORNE_GUIDE_POLICY;
@@ -4305,6 +4524,41 @@ class MarbleRace {
         ctx.fillRect(x, 0, 120, 1024);
       }
       ctx.globalCompositeOperation = 'source-over';
+    } else if (pattern === 'soft-clay-road-panels') {
+      // Stronger clay / molded plastic feel for Toy Park: broad smears, tiny pits, soft panel seams.
+      ctx.globalCompositeOperation = 'source-over';
+      for (let y = 0; y < 1024; y += 1) {
+        const wave = Math.sin(y * 0.018) * 9 + Math.sin(y * 0.047) * 4;
+        ctx.fillStyle = `rgba(255,255,255,${0.03 + Math.max(0, wave) * 0.002})`;
+        ctx.fillRect(0, y, 1024, 1);
+        ctx.fillStyle = `rgba(90,92,88,${0.02 + Math.max(0, -wave) * 0.002})`;
+        ctx.fillRect(0, y + 1, 1024, 1);
+      }
+      for (let i = 0; i < 1300; i += 1) {
+        const x = (i * 181 + 47) % 1024;
+        const y = (i * 317 + 89) % 1024;
+        const r = 0.6 + (i % 5) * 0.38;
+        ctx.fillStyle = i % 3 === 0 ? 'rgba(92,94,90,0.13)' : 'rgba(255,252,238,0.10)';
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(92,88,82,0.18)';
+      ctx.lineWidth = 5;
+      for (let y = 128; y < 1024; y += 164) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        for (let x = 0; x <= 1024; x += 64) ctx.lineTo(x, y + Math.sin(x * 0.02 + y * 0.01) * 8);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = `${style.line || '#e99a3f'}66`;
+      ctx.lineWidth = 9;
+      ctx.beginPath();
+      ctx.moveTo(145, 0);
+      ctx.lineTo(145, 1024);
+      ctx.moveTo(879, 0);
+      ctx.lineTo(879, 1024);
+      ctx.stroke();
     } else {
       // Mixed Showcase uses one long stretched playfield texture on the ribbon.
       // Keep artwork low-frequency and mostly longitudinal so track-piece joins do not read as tiled blocks.
@@ -4361,6 +4615,42 @@ class MarbleRace {
   }
 
   createNeonRubberTexture(style = this.getWorldVisualThemeStyle().rail) {
+    if ((style.pattern || '').includes('heavy-clay-curb')) {
+      const { canvas, ctx } = this.createTextureCanvas(512, style.base || '#cc2f34');
+      const grad = ctx.createLinearGradient(0, 0, 512, 512);
+      grad.addColorStop(0, style.base || '#cc2f34');
+      grad.addColorStop(0.48, style.mid || '#f0e7d9');
+      grad.addColorStop(1, style.secondary || '#8a7f79');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 512, 512);
+      for (let y = 0; y < 512; y += 1) {
+        const smear = Math.sin(y * 0.06) * 16 + Math.sin(y * 0.19) * 6;
+        ctx.fillStyle = `rgba(255,245,224,${0.045 + Math.max(0, smear) * 0.002})`;
+        ctx.fillRect(0, y, 512, 1);
+        ctx.fillStyle = `rgba(65,45,38,${0.035 + Math.max(0, -smear) * 0.002})`;
+        ctx.fillRect(0, y + 1, 512, 1);
+      }
+      for (let i = 0; i < 700; i += 1) {
+        const x = (i * 97 + 23) % 512;
+        const y = (i * 193 + 71) % 512;
+        const r = 0.5 + (i % 4) * 0.42;
+        ctx.fillStyle = i % 2 ? 'rgba(55,38,30,0.18)' : 'rgba(255,250,232,0.14)';
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(255,250,232,0.18)';
+      ctx.lineWidth = 5;
+      for (let y = 32; y < 512; y += 76) {
+        ctx.beginPath();
+        ctx.moveTo(-20, y);
+        for (let x = 0; x <= 540; x += 42) ctx.lineTo(x, y + Math.sin(x * 0.04 + y) * 5);
+        ctx.stroke();
+      }
+      const texture = this.finishTexture(canvas, 2.2, 1);
+      texture.userData = { style: style.pattern || 'red-white-heavy-clay-curb', themeKey: this.visualThemeKey, role: 'track-rail', clayGrain: style.clayGrain || 'heavy-pitted-molded-plastic' };
+      return texture;
+    }
     const { canvas, ctx } = this.createTextureCanvas(512, style.base || '#151827');
     for (let y = 0; y < 512; y += 1) {
       const pulse = Math.sin(y * 0.045) * 20;
@@ -4392,25 +4682,58 @@ class MarbleRace {
       ? { ...presetBase, label: 'Custom', base: this.customTrackLength || this.getCustomTrackLength(), variation: 0 }
       : presetBase;
     this.trackLength = preset.base + Math.floor((this.rng() - 0.5) * preset.variation);
+    if (this.physicsMechanicKey === 'toyPark') {
+      // Toy Park random loop: start board -> random straight + left/right 45° bend road tiles -> finish board,
+      // with the finish module connecting back to the start-board entrance. Keep scoped to Toy Park.
+      // Generate once here and reuse the same piece list in buildPath so length/topology/debug stay in sync.
+      this.toyParkGeneratedTilePieces = buildToyParkDefaultTilePieces({ rng: this.rng });
+      this.toyParkRandomLoopSummary = this.toyParkGeneratedTilePieces.randomLoopSummary || null;
+      this.trackLength = getToyParkTrackRoadLength(this.toyParkGeneratedTilePieces);
+    } else {
+      this.toyParkGeneratedTilePieces = null;
+      this.toyParkRandomLoopSummary = null;
+    }
     const widthPreset = this.widthPreset || WIDTH_PRESETS.normal;
-    this.trackWidth = widthPreset.min + this.rng() * (widthPreset.max - widthPreset.min);
+    const generatedTrackWidth = widthPreset.min + this.rng() * (widthPreset.max - widthPreset.min);
+    this.trackWidth = this.physicsMechanicKey === 'toyPark'
+      ? generatedTrackWidth * TOY_PARK_TRACK_WIDTH_SCALE
+      : generatedTrackWidth;
+    this.toyParkTrackWidthScale = this.physicsMechanicKey === 'toyPark' ? TOY_PARK_TRACK_WIDTH_SCALE : 1;
+    this.toyParkOriginalTrackWidth = this.physicsMechanicKey === 'toyPark' ? generatedTrackWidth : null;
     this.buildPath(preset);
     this.ui.length.textContent = `${preset.label} ${this.trackLength}m`;
 
     const bounds = this.getTrackBounds();
     const minTrackY = Math.min(...this.pathPoints.map((p) => p.y));
-    const groundY = minTrackY - 3.2;
+    const groundY = this.physicsMechanicKey === 'toyPark' ? minTrackY - 0.035 : minTrackY - 3.2;
     this.groundY = groundY;
     this.minTrackY = minTrackY;
     const worldTheme = this.getWorldVisualThemeStyle();
-    const woodTexture = this.createWoodTexture(worldTheme.ground);
+    const toyParkSolidBackground = this.physicsMechanicKey === 'toyPark'
+      ? TOY_PARK_SOLID_BACKGROUND
+      : null;
+    if (toyParkSolidBackground) {
+      this.scene.background = new THREE.Color(toyParkSolidBackground.color);
+      this.scene.fog = new THREE.Fog(toyParkSolidBackground.color, 90, 380);
+    } else {
+      this.scene.background = new THREE.Color(0x081020);
+      this.scene.fog = new THREE.Fog(0x081020, 90, 380);
+    }
+    const woodTexture = toyParkSolidBackground ? null : this.createWoodTexture(worldTheme.ground);
     this.woodGroundMaterial = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
+      color: toyParkSolidBackground ? hexColorToNumber(toyParkSolidBackground.color, 0xf3eadb) : 0xffffff,
       map: woodTexture,
       roughness: worldTheme.ground.roughness ?? 0.82,
       metalness: worldTheme.ground.metalness ?? 0.02,
       side: THREE.DoubleSide,
     });
+    this.woodGroundMaterial.userData = {
+      themeKey: this.visualThemeKey,
+      role: 'arena-ground',
+      style: toyParkSolidBackground?.label || worldTheme.ground.pattern,
+      solidColor: toyParkSolidBackground?.color || null,
+      textureDisabled: Boolean(toyParkSolidBackground),
+    };
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(bounds.width + 120, bounds.depth + 140),
       this.woodGroundMaterial
@@ -4418,8 +4741,25 @@ class MarbleRace {
     ground.rotation.x = -Math.PI / 2;
     // 賽道一路向下坡，草地如果固定喺 -0.22 會喺標準/長途中段蓋住路面。
     // 跟住最低路面再低 3.2m，確保任何 preset 都唔會「行到中間無地板」。
+    // Toy Park 係平路 playset，地台應貼近賽道底部，避免玩具路面同欄好似離地浮起。
     ground.position.set(bounds.cx, groundY, bounds.cz);
     ground.receiveShadow = PERFORMANCE_TUNING.shadows;
+    ground.userData = {
+      type: toyParkSolidBackground ? 'toy-park-solid-cream-background-ground' : 'arena-ground',
+      themeKey: this.visualThemeKey,
+      backgroundStyle: toyParkSolidBackground?.label || worldTheme.ground.pattern,
+      solidColor: toyParkSolidBackground?.color || null,
+      textureDisabled: Boolean(toyParkSolidBackground),
+    };
+    this.trackStats.toyParkBackground = toyParkSolidBackground ? {
+      mode: 'solid-color-warm-cream-no-texture',
+      color: toyParkSolidBackground.color,
+      groundMaterialColor: toyParkSolidBackground.color,
+      sceneBackgroundColor: toyParkSolidBackground.color,
+      fogColor: toyParkSolidBackground.color,
+      textureDisabled: true,
+      scopedToToyPark: true,
+    } : null;
     this.trackGroup.add(ground);
 
     const floorMat = new THREE.MeshPhysicalMaterial({
@@ -4431,7 +4771,7 @@ class MarbleRace {
       clearcoatRoughness: 0.18,
       side: THREE.DoubleSide,
     });
-    floorMat.userData = { themeKey: this.visualThemeKey, role: 'track-surface', style: worldTheme.track.pattern };
+    floorMat.userData = { themeKey: this.visualThemeKey, role: 'track-surface', style: worldTheme.track.pattern, clayGrain: worldTheme.track.clayGrain || null };
     const railMat = new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       map: this.createNeonRubberTexture(worldTheme.rail),
@@ -4440,29 +4780,43 @@ class MarbleRace {
       clearcoat: worldTheme.rail.clearcoat ?? 0.8,
       clearcoatRoughness: 0.16,
     });
-    railMat.userData = { themeKey: this.visualThemeKey, role: 'track-rail', style: worldTheme.rail.pattern };
+    railMat.userData = { themeKey: this.visualThemeKey, role: 'track-rail', style: worldTheme.rail.pattern, clayGrain: worldTheme.rail.clayGrain || null };
     const stripeMat = new THREE.MeshStandardMaterial({ color: hexColorToNumber(worldTheme.track.line || worldTheme.track.accent, 0xf7f7ff), roughness: 0.5 });
     const finishMat = new THREE.MeshStandardMaterial({ color: hexColorToNumber(worldTheme.gate.warning, 0xffd166), roughness: 0.3, emissive: hexColorToNumber(worldTheme.gate.signEmissive, 0x443000) });
 
-    this.addTrackRibbon(this.pathPoints, this.trackWidth, floorMat);
+    if (this.physicsMechanicKey === 'toyPark') {
+      addToyParkTrackTileRibbons(this, floorMat);
+    } else {
+      this.addTrackRibbon(this.pathPoints, this.trackWidth, floorMat);
+    }
     this.addTrackPhysicsRibbon(this.pathPoints, this.trackWidth);
-    this.addContinuousRails(this.pathPoints, railMat, this.trackWidth);
+    if (this.physicsMechanicKey === 'toyPark') {
+      addToyParkMarbleGuardRails(this, this.pathPoints, railMat, this.trackWidth);
+    } else {
+      this.addContinuousRails(this.pathPoints, railMat, this.trackWidth);
+    }
 
     // 分岔路先取消：保留主賽道，避免支路接駁同護欄未穩定時影響比賽。
     this.addStartFinish(stripeMat, finishMat);
     this.addCatchers(railMat, finishMat);
-    const enabledTypeCount = this.enabledObstacleTypes?.size ?? PINBALL_OBSTACLE_TYPES.length;
+    const toyParkNoObstaclesDefault = this.physicsMechanicKey === 'toyPark';
+    const enabledTypeCount = toyParkNoObstaclesDefault ? 0 : (this.enabledObstacleTypes?.size ?? PINBALL_OBSTACLE_TYPES.length);
     const obstacleCount = enabledTypeCount > 0
       ? Math.round((this.obstaclePreset?.multiplier ?? 0) * Math.max(4, Math.floor(this.trackLength / 55)))
       : 0;
+    if (toyParkNoObstaclesDefault) {
+      this.trackStats.toyParkNoObstaclesDefault = true;
+      this.trackStats.toyParkObstaclePolicy = 'temporary-default-no-obstacles';
+    }
     this.createObstacles(obstacleCount);
     this.createDecorations();
   }
 
   buildPath(preset) {
     const step = Math.min(1.2, preset.segment);
-    const slopeDropPerMeter = this.slopeDrive?.dropPerMeter ?? 0.118;
-    const startHeight = Math.max(14, Math.min(42, this.trackLength * slopeDropPerMeter + 5.5));
+    const toyParkFlatTrack = this.physicsMechanicKey === 'toyPark';
+    const slopeDropPerMeter = toyParkFlatTrack ? 0 : (this.slopeDrive?.dropPerMeter ?? 0.118);
+    const startHeight = toyParkFlatTrack ? 1.35 : Math.max(14, Math.min(42, this.trackLength * slopeDropPerMeter + 5.5));
     const widthPreset = this.widthPreset || WIDTH_PRESETS.normal;
     const minWidth = Math.max(widthPreset.absoluteMin, this.trackWidth * widthPreset.minFactor);
     const narrowSections = Array.from({ length: Math.max(2, Math.floor(this.trackLength / 85)) }, () => ({
@@ -4471,6 +4825,7 @@ class MarbleRace {
       strength: 0.18 + this.rng() * 0.32,
     }));
     const widthAt = (d) => {
+      if (toyParkFlatTrack) return this.trackWidth;
       const baseWave = 1 - 0.1 * (Math.sin(d * 0.035 + 0.7) + 1) / 2;
       const factor = narrowSections.reduce((value, section) => {
         const t = clamp(1 - Math.abs(d - section.center) / section.length, 0, 1);
@@ -4479,16 +4834,18 @@ class MarbleRace {
       return clamp(this.trackWidth * factor, minWidth, this.trackWidth);
     };
 
-    const addPiece = (pieces, type, length, turnDegrees = 0) => {
-      pieces.push({ type, length, turnDegrees, angleRadians: THREE.MathUtils.degToRad(turnDegrees) });
+    const addPiece = (pieces, type, length, turnDegrees = 0, tileKey = null) => {
+      pieces.push({ type, length, turnDegrees, tileKey, angleRadians: THREE.MathUtils.degToRad(turnDegrees) });
     };
-    const modularPieces = [];
-    addPiece(modularPieces, 'straight', 16 + this.rng() * 8, 0);
+    const modularPieces = toyParkFlatTrack
+      ? (this.toyParkGeneratedTilePieces || buildToyParkDefaultTilePieces({ rng: this.rng }))
+      : [];
+    if (!toyParkFlatTrack) addPiece(modularPieces, 'straight', 16 + this.rng() * 8, 0);
     const targetLength = this.trackLength;
     let plannedLength = modularPieces.reduce((sum, piece) => sum + piece.length, 0);
     let previousTurn = this.rng() < 0.5 ? -1 : 1;
     let safety = 0;
-    while (plannedLength < targetLength - 18 && safety < 40) {
+    while (!toyParkFlatTrack && plannedLength < targetLength - 18 && safety < 40) {
       safety += 1;
       const roll = this.rng();
       if (roll < 0.34) {
@@ -4504,7 +4861,7 @@ class MarbleRace {
       }
       plannedLength = modularPieces.reduce((sum, piece) => sum + piece.length, 0);
     }
-    addPiece(modularPieces, 'straight', Math.max(12, targetLength - plannedLength), 0);
+    if (!toyParkFlatTrack) addPiece(modularPieces, 'straight', Math.max(12, targetLength - plannedLength), 0);
 
     let x = 0;
     let y = startHeight;
@@ -4527,27 +4884,27 @@ class MarbleRace {
         heading = startHeading + piece.angleRadians * turnT;
         x += Math.cos(heading) * deltaD;
         z += Math.sin(heading) * deltaD;
-        const slopeJitter = (this.rng() - 0.5) * (this.slopeDrive?.undulationAmplitude ?? 0.035);
-        const startRampRatio = START_RAMP.enabled ? clamp(1 - prevD / Math.max(START_RAMP.length, 0.001), 0, 1) : 0;
-        const rightAngleRatio = RIGHT_ANGLE_CORNER_SLOPE.enabled && Math.abs(piece.turnDegrees) === 90
+        const slopeJitter = toyParkFlatTrack ? 0 : ((this.rng() - 0.5) * (this.slopeDrive?.undulationAmplitude ?? 0.035));
+        const startRampRatio = !toyParkFlatTrack && START_RAMP.enabled ? clamp(1 - prevD / Math.max(START_RAMP.length, 0.001), 0, 1) : 0;
+        const rightAngleRatio = !toyParkFlatTrack && RIGHT_ANGLE_CORNER_SLOPE.enabled && Math.abs(piece.turnDegrees) === 90
           ? (localT < 0.22 ? localT / 0.22 : (localT > 0.78 ? (1 - localT) / 0.22 : 1))
           : 0;
-        const nearConsecutiveRightAngle = RIGHT_ANGLE_CORNER_SLOPE.enabled && Math.abs(piece.turnDegrees) === 90 && (
+        const nearConsecutiveRightAngle = !toyParkFlatTrack && RIGHT_ANGLE_CORNER_SLOPE.enabled && Math.abs(piece.turnDegrees) === 90 && (
           Math.abs(modularPieces[index - 1]?.turnDegrees || 0) === 90 || Math.abs(modularPieces[index + 1]?.turnDegrees || 0) === 90
         );
         const rightAngleExtraDrop = rightAngleRatio * (
           RIGHT_ANGLE_CORNER_SLOPE.extraDropPerMeter
           + (nearConsecutiveRightAngle ? RIGHT_ANGLE_CORNER_SLOPE.consecutiveExtraDropPerMeter : 0)
         );
-        const transitionExtraDrop = RIGHT_ANGLE_CORNER_SLOPE.enabled && Math.abs(piece.turnDegrees) !== 90 && (
+        const transitionExtraDrop = !toyParkFlatTrack && RIGHT_ANGLE_CORNER_SLOPE.enabled && Math.abs(piece.turnDegrees) !== 90 && (
           Math.abs(modularPieces[index - 1]?.turnDegrees || 0) === 90 || Math.abs(modularPieces[index + 1]?.turnDegrees || 0) === 90
         ) ? RIGHT_ANGLE_CORNER_SLOPE.transitionExtraDropPerMeter : 0;
-        const segmentDropPerMeter = Math.max(
+        const segmentDropPerMeter = toyParkFlatTrack ? 0 : Math.max(
           this.slopeDrive?.minSegmentDropPerMeter ?? 0.086,
           slopeDropPerMeter + slopeJitter + startRampRatio * START_RAMP.extraDropPerMeter + rightAngleExtraDrop + transitionExtraDrop
         );
         y -= deltaD * segmentDropPerMeter;
-        pathPoints.push({ x, y, z, d, w: widthAt(d), pieceType: piece.type, heading, segmentDropPerMeter, startRampRatio, rightAngleRatio, rightAngleExtraDrop, transitionExtraDrop });
+        pathPoints.push({ x, y, z, d, w: widthAt(d), pieceType: piece.type, tileKey: piece.tileKey || null, heading, segmentDropPerMeter, startRampRatio, rightAngleRatio, rightAngleExtraDrop, transitionExtraDrop });
         if (d >= targetLength) break;
       }
       heading = startHeading + piece.angleRadians;
@@ -4558,6 +4915,18 @@ class MarbleRace {
         endD: Math.min(targetLength, startD + piece.length),
         length: piece.length,
         turnDegrees: piece.turnDegrees,
+        tileKey: piece.tileKey || null,
+        tileLabel: getToyParkTileLabel(piece.tileKey),
+        loopPrototype: Boolean(piece.loopPrototype),
+        loopPrototypeIndex: piece.loopPrototypeIndex ?? null,
+        loopSegmentRole: piece.loopSegmentRole ?? null,
+        randomLoop: Boolean(piece.randomLoop),
+        randomLoopGenerator: piece.randomLoopGenerator ?? null,
+        randomLoopAttempt: piece.randomLoopAttempt ?? null,
+        randomLoopTurnIndex: piece.randomLoopTurnIndex ?? null,
+        randomLoopStraightIndex: piece.randomLoopStraightIndex ?? null,
+        turnDirection: piece.turnDirection ?? null,
+        closureSolved: Boolean(piece.closureSolved),
         startHeading,
         endHeading: heading,
       });
@@ -4567,23 +4936,104 @@ class MarbleRace {
     this.trackLength = pathPoints[pathPoints.length - 1].d;
     const rightAngleTurns = pieceMetadata.filter((piece) => Math.abs(piece.turnDegrees) === 90);
     const fortyFiveTurns = pieceMetadata.filter((piece) => Math.abs(piece.turnDegrees) === 45);
+    const variableBendTurns = pieceMetadata.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend?.key);
     const straightPieces = pieceMetadata.filter((piece) => piece.type === 'straight');
     const rightAngleSlopePanels = pathPoints.filter((point) => (point.rightAngleExtraDrop || 0) > 0);
+    const startPoint = pathPoints[0];
+    const finishPoint = pathPoints[pathPoints.length - 1];
+    const startHeading = startPoint?.heading ?? -Math.PI / 2;
+    const startBoardExitPoint = startPoint;
+    const startBoardEntrancePoint = toyParkFlatTrack ? {
+      x: (startPoint?.x || 0) - Math.cos(startHeading) * TOY_PARK_START_BOARD_ENTRANCE_OFFSET_FROM_EXIT,
+      y: startPoint?.y || 0,
+      z: (startPoint?.z || 0) - Math.sin(startHeading) * TOY_PARK_START_BOARD_ENTRANCE_OFFSET_FROM_EXIT,
+      heading: startHeading,
+    } : startPoint;
+    const loopClosureDistance = Math.hypot((finishPoint?.x || 0) - (startBoardEntrancePoint?.x || 0), (finishPoint?.z || 0) - (startBoardEntrancePoint?.z || 0));
+    const loopClosureDistanceToStartExit = Math.hypot((finishPoint?.x || 0) - (startBoardExitPoint?.x || 0), (finishPoint?.z || 0) - (startBoardExitPoint?.z || 0));
+    const totalTurnDegrees = pieceMetadata.reduce((sum, piece) => sum + (piece.turnDegrees || 0), 0);
+    const headingDeltaDegrees = THREE.MathUtils.radToDeg((finishPoint?.heading ?? heading) - startHeading);
+    const loopClosure = toyParkFlatTrack ? {
+      mode: 'toy-park-random-left-right-45-and-90-degree-loop-finish-to-start-entrance',
+      closureTarget: 'start-board-entrance-not-start-board-exit',
+      startBoardExitPosition: {
+        x: Number((startBoardExitPoint?.x || 0).toFixed(3)),
+        y: Number((startBoardExitPoint?.y || 0).toFixed(3)),
+        z: Number((startBoardExitPoint?.z || 0).toFixed(3)),
+      },
+      startBoardEntrancePosition: {
+        x: Number((startBoardEntrancePoint?.x || 0).toFixed(3)),
+        y: Number((startBoardEntrancePoint?.y || 0).toFixed(3)),
+        z: Number((startBoardEntrancePoint?.z || 0).toFixed(3)),
+      },
+      startBoardEntranceOffsetFromExit: TOY_PARK_START_BOARD_ENTRANCE_OFFSET_FROM_EXIT,
+      finishPosition: {
+        x: Number((finishPoint?.x || 0).toFixed(3)),
+        y: Number((finishPoint?.y || 0).toFixed(3)),
+        z: Number((finishPoint?.z || 0).toFixed(3)),
+      },
+      closureDistance: Number(loopClosureDistance.toFixed(3)),
+      closureDistanceToStartBoardExit: Number(loopClosureDistanceToStartExit.toFixed(3)),
+      closureTolerance: 1.25,
+      finishConnectsToStartEntrance: loopClosureDistance <= 1.25,
+      finishConnectsToStartExit: loopClosureDistanceToStartExit <= 1.25,
+      totalTurnDegrees: Number(totalTurnDegrees.toFixed(3)),
+      expectedTotalTurnDegrees: 360,
+      headingDeltaDegrees: Number(headingDeltaDegrees.toFixed(3)),
+      roadTileCount: pieceMetadata.length,
+      straightTileCount: straightPieces.length,
+      fortyFiveTileCount: fortyFiveTurns.length,
+      ninetyDegreeTileCount: rightAngleTurns.length,
+      variableBendTileCount: variableBendTurns.length,
+      uTurn180TileCount: 0,
+      uTurn180Cancelled: true,
+      roadLength: Number((finishPoint?.d || 0).toFixed(3)),
+      randomGeneratedSequence: Boolean(this.toyParkRandomLoopSummary?.randomGenerated),
+      randomLoopSummary: this.toyParkRandomLoopSummary || null,
+      leftBendCount: variableBendTurns.filter((piece) => piece.turnDegrees < 0).length,
+      rightBendCount: variableBendTurns.filter((piece) => piece.turnDegrees > 0).length,
+      hasNinetyDegreeBends: rightAngleTurns.length > 0,
+      finishBoardConnectsLoop: true,
+      shortPrototypeForTesting: false,
+      finalRoadToFinishConnector: 'straight-square-entry-connector-before-finish-board',
+    } : null;
     const consecutiveRightAngleSections = rightAngleTurns.filter((piece) => {
       const before = pieceMetadata[piece.index - 1];
       const after = pieceMetadata[piece.index + 1];
       return Math.abs(before?.turnDegrees || 0) === 90 || Math.abs(after?.turnDegrees || 0) === 90;
     });
-    this.trackPieceSystem = 'modular-pieces';
+    this.trackPieceSystem = toyParkFlatTrack ? 'toy-park-road-tile-modules' : 'modular-pieces';
     this.trackPieces = pieceMetadata;
+    this.toyParkTrackTiles = toyParkFlatTrack ? buildToyParkTrackTileSummary({
+      pieceMetadata,
+      rightAngleTurns,
+      fortyFiveTurns,
+      variableBendTurns,
+      loopClosure,
+      randomLoopSummary: this.toyParkRandomLoopSummary || modularPieces.randomLoopSummary || null,
+    }) : null;
+    if (toyParkFlatTrack) {
+      this.trackStats.toyParkLoopPrototype = loopClosure;
+      this.trackStats.toyParkLoopClosedCourse = Boolean(loopClosure?.finishConnectsToStartEntrance);
+      this.trackStats.toyParkLoopRoadTileCount = pieceMetadata.length;
+      this.trackStats.toyParkLoopTotalTurnDegrees = Number(totalTurnDegrees.toFixed(3));
+      this.trackStats.toyParkLoopTileSequence = this.toyParkTrackTiles?.sequence || [];
+      this.trackStats.toyParkRandomLoopSummary = this.toyParkTrackTiles?.randomLoop || null;
+      this.trackStats.toyParkRandomGeneratedSequence = Boolean(this.toyParkTrackTiles?.randomGeneratedSequence);
+      this.trackStats.toyParkLoopLeftBendCount = this.toyParkTrackTiles?.leftBendCount || 0;
+      this.trackStats.toyParkLoopRightBendCount = this.toyParkTrackTiles?.rightBendCount || 0;
+      this.trackStats.toyParkLoopNinetyDegreeBendCount = this.toyParkTrackTiles?.ninetyDegreeBendCount || 0;
+    }
     this.rightAngleTurnCount = rightAngleTurns.length;
     this.rightAngleTurns = rightAngleTurns;
     this.hairpinTurnCount = rightAngleTurns.length;
     this.hairpinTurns = rightAngleTurns;
     this.trackSlope = {
-      enabled: true,
+      enabled: !toyParkFlatTrack,
+      mode: toyParkFlatTrack ? 'flat-playset-no-gravity-drive' : 'downhill-slope',
       slopeDriveModel: this.slopeDrive?.model,
       startHeight,
+      flatTrack: toyParkFlatTrack,
       dropPerMeter: slopeDropPerMeter,
       minSegmentDropPerMeter: this.slopeDrive?.minSegmentDropPerMeter,
       finishHeight: pathPoints[pathPoints.length - 1].y,
@@ -4601,15 +5051,23 @@ class MarbleRace {
         consecutiveRightAngleCount: consecutiveRightAngleSections.length,
         maxObservedDropPerMeter: Math.max(...pathPoints.map((point) => point.segmentDropPerMeter || 0)),
       },
-      generatedBy: 'monotonic-per-segment-downhill-panels-with-extra-90-degree-corner-pitch',
+      generatedBy: toyParkFlatTrack ? 'toy-park-flat-modular-playset-track-no-forward-gravity-drive' : 'monotonic-per-segment-downhill-panels-with-extra-90-degree-corner-pitch',
     };
     this.trackWidthProfile = {
       preset: this.widthPresetKey,
       label: widthPreset.label,
       baseWidth: this.trackWidth,
+      originalBaseWidth: this.toyParkOriginalTrackWidth ?? this.trackWidth,
+      widthScale: this.toyParkTrackWidthScale ?? 1,
+      reducedByPercent: toyParkFlatTrack ? Number(((1 - (this.toyParkTrackWidthScale ?? 1)) * 100).toFixed(1)) : 0,
       minWidth,
       narrowSections,
-      generationMode: 'modular-pieces',
+      generationMode: toyParkFlatTrack ? 'toy-park-road-tile-modules' : 'modular-pieces',
+      standardRailOpening: toyParkFlatTrack,
+      standardEntranceWidth: toyParkFlatTrack ? this.trackWidth : null,
+      standardExitWidth: toyParkFlatTrack ? this.trackWidth : null,
+      widthFunction: toyParkFlatTrack ? 'constant-standard-module-width-for-all-toy-park-tile-entrances-and-exits' : 'classic-variable-width-with-narrow-sections',
+      toyParkTrackTiles: this.toyParkTrackTiles,
       modularTrackPieces: pieceMetadata,
       straightPieceCount: straightPieces.length,
       fortyFiveTurnCount: fortyFiveTurns.length,
@@ -4621,6 +5079,9 @@ class MarbleRace {
         consecutiveRightAngleCount: consecutiveRightAngleSections.length,
       },
       curveStyle: this.curveStyleKey,
+      toyParkFlatTrack,
+      trackSurfaceMaterial: toyParkFlatTrack ? 'soft-grey-clay-plastic-playset-road' : 'classic-downhill-ribbon',
+      guardRailStyle: toyParkFlatTrack ? 'small-marble-bead-guardrails' : 'continuous-rail-tubes',
     };
     this.trackSamples = this.pathPoints.map((p, index) => ({ ...p, index }));
     this.trackWidthProfile.actualMinWidth = Math.min(...this.pathPoints.map((p) => p.w));
@@ -4636,12 +5097,14 @@ class MarbleRace {
     };
   }
 
-  addTrackRibbon(points, width, material) {
+  addTrackRibbon(points, width, material, options = {}) {
     const geometry = new THREE.BufferGeometry();
     const vertices = [];
     const normals = [];
     const uvs = [];
     const indices = [];
+    const distanceStart = options.distanceStart ?? points[0]?.d ?? 0;
+    const distanceEnd = options.distanceEnd ?? points[points.length - 1]?.d ?? this.trackLength;
     points.forEach((point, index) => {
       const frame = this.getTrackFrameAt(point.d);
       const crown = Math.sin((point.d / Math.max(1, this.trackLength)) * Math.PI) * 0.04;
@@ -4667,12 +5130,14 @@ class MarbleRace {
     geometry.computeVertexNormals();
     const mesh = new THREE.Mesh(geometry, material);
     mesh.receiveShadow = PERFORMANCE_TUNING.shadows;
+    mesh.name = options.name || mesh.name;
     mesh.userData = {
       ...(mesh.userData || {}),
+      ...(options.userData || {}),
       cameraOccluder: true,
       cameraOccluderType: 'track-ribbon',
-      cameraOccluderDistanceStart: points[0]?.d ?? 0,
-      cameraOccluderDistanceEnd: points[points.length - 1]?.d ?? this.trackLength,
+      cameraOccluderDistanceStart: distanceStart,
+      cameraOccluderDistanceEnd: distanceEnd,
     };
     this.trackGroup.add(mesh);
     this.trackStats.ribbonMeshes += 1;
@@ -4684,6 +5149,8 @@ class MarbleRace {
     // 現在只用連續 ribbon 做視覺地面，避免一級級橫紋。
     this.trackStats.visibleDecks += 0;
   }
+
+
 
   addTrackPhysicsRibbon(points, width) {
     // 用單一連續 Trimesh 做賽道碰撞面，取代密集 box strips，減少物理階梯令波子怪轉。
@@ -4723,6 +5190,20 @@ class MarbleRace {
       this.trackStats.physicsDecks += 1;
     }
   }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   addContinuousRails(points, material, width) {
     const railHeight = 1.45;
@@ -5061,21 +5542,44 @@ class MarbleRace {
     const finish = this.getTrackPointAt(this.trackLength);
     const startNext = this.getTrackPointAt(5);
     const finishPrev = this.getTrackPointAt(this.trackLength - 5);
-    this.addLinePlate(start, startNext, stripeMat, this.trackWidth + 1.4, 1.0);
+    this.addLinePlate(start, startNext, stripeMat, this.trackWidth + 1.4, 1.0, {
+      name: this.physicsMechanicKey === 'toyPark' ? 'TOY_PARK_START_LINE_ON_EXISTING_START_BOARD_MODULE' : 'START_LINE_PLATE',
+      userData: this.physicsMechanicKey === 'toyPark' ? {
+        type: 'toy-park-start-board-line-marker',
+        tileKey: TOY_PARK_TRACK_TILE_LIBRARY.start.key,
+        tileLabel: TOY_PARK_TRACK_TILE_LIBRARY.start.label,
+        moduleRole: 'start-board-existing-module',
+      } : { type: 'start-line-plate' },
+    });
     // 終點線改幼身，唔再似一大塊厚板蓋住尾段賽道。
-    this.addLinePlate(finish, finishPrev, finishMat, this.trackWidth + 1.0, 0.7);
+    if (this.physicsMechanicKey === 'toyPark') {
+      addToyParkFinishBoard(this, finish, finishPrev, finishMat, {
+        connectorYaw: Math.atan2(startNext.x - start.x, startNext.z - start.z),
+        connectorAlignment: 'start-board-entrance-yaw',
+      });
+    } else {
+      this.addLinePlate(finish, finishPrev, finishMat, this.trackWidth + 1.0, 0.7, {
+        name: 'FINISH_LINE_PLATE',
+        userData: { type: 'finish-line-plate' },
+      });
+    }
   }
 
-  addLinePlate(p, forwardPoint, mat, width, length) {
+  addLinePlate(p, forwardPoint, mat, width, length, options = {}) {
     const dx = forwardPoint.x - p.x;
     const dz = forwardPoint.z - p.z;
     const yaw = Math.atan2(dx, dz);
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, 0.045, length), mat);
     mesh.position.set(p.x, p.y + 0.1, p.z);
     mesh.rotation.y = yaw;
+    mesh.name = options.name || 'TRACK_LINE_PLATE';
+    mesh.userData = { ...(mesh.userData || {}), ...(options.userData || {}) };
     mesh.receiveShadow = PERFORMANCE_TUNING.shadows;
     this.trackGroup.add(mesh);
+    return mesh;
   }
+
+
 
   addCatchers(railMat, finishMat) {
     const startFrame = this.getTrackFrameAt(0);
@@ -5087,15 +5591,21 @@ class MarbleRace {
       labelColor: hexColorToNumber(this.getWorldVisualThemeStyle().gate.panel, 0x7cf7d4),
     });
     // No start apron/bridge here: even an invisible physics bridge can block the marbles after the gate opens.
-    // START_CHUTE now connects directly to the track entrance; the gate is the only removable blocker.
-    this.startGate = this.addStartingGate(startFrame, railMat);
-    this.finishCatcher = this.addRankingCollector({
-      frame: finishFrame,
-      width: this.trackWidth + 12,
-      racerCount: Math.max(1, Math.floor(Number(this.ui.count.value) || 12)),
-      mat: railMat,
-      accentMat: finishMat,
-    });
+    // START_CHUTE now connects directly to the track entrance. The optional gate can be disabled for a racing-grid start.
+    const isToyParkStartMode = this.physicsMechanicKey === 'toyPark' || this.visualThemeKey === 'toyPark';
+    const startGateEnabled = START_GATE_DESIGN.gateEnabled !== false && (!isToyParkStartMode || START_GATE_DESIGN.toyParkGateEnabled !== false);
+    this.startGate = startGateEnabled ? this.addStartingGate(startFrame, railMat) : null;
+    const isToyParkFinishMode = this.physicsMechanicKey === 'toyPark' || this.visualThemeKey === 'toyPark';
+    this.finishCatcher = isToyParkFinishMode
+      ? null
+      : this.addRankingCollector({
+        frame: finishFrame,
+        width: this.trackWidth + 12,
+        racerCount: Math.max(1, Math.floor(Number(this.ui.count.value) || 12)),
+        mat: railMat,
+        accentMat: finishMat,
+        noPodium: false,
+      });
     this.finishRankingContainer = this.finishCatcher;
     this.finishSpinner = null;
   }
@@ -5119,29 +5629,179 @@ class MarbleRace {
 
   addStartingChute({ frame, railMat, accentMat, labelColor }) {
     const yaw = Math.atan2(frame.tangent.x, frame.tangent.z);
-    const width = this.trackWidth + START_GATE_DESIGN.chuteWidthPadding;
-    const depth = START_GATE_DESIGN.chuteDepth;
-    const center = this.getStartPrepTrayCenter(frame);
+    const isToyParkStartTile = this.physicsMechanicKey === 'toyPark' || this.visualThemeKey === 'toyPark';
+    const toyParkStartSideRailRadius = 0.784;
+    const toyParkStartSideRailOffset = 0.392;
+    const toyParkStartTrackWidth = frame.p?.w ?? this.getTrackWidthAt?.(0) ?? this.trackWidth;
+    const baseChuteDepth = START_GATE_DESIGN.chuteDepth;
+    const width = isToyParkStartTile
+      ? toyParkStartTrackWidth + toyParkStartSideRailOffset * 2
+      : this.trackWidth + START_GATE_DESIGN.chuteWidthPadding;
+    const depth = isToyParkStartTile ? baseChuteDepth * 2 : baseChuteDepth;
+    const center = this.getStartPrepTrayCenter(frame, { flatBoard: isToyParkStartTile })
+      .add(isToyParkStartTile ? frame.tangent.clone().multiplyScalar(-(depth - baseChuteDepth) / 2) : new THREE.Vector3());
     const group = new THREE.Group();
     group.position.copy(center);
     group.rotation.y = yaw;
     this.trackGroup.add(group);
 
-    const transparentStartVisuals = Boolean(START_GATE_DESIGN.transparentVisuals);
-    const floorMat = transparentStartVisuals
-      ? makeStartTransparentMaterial(accentMat, START_GATE_DESIGN.startFloorOpacity)
-      : accentMat;
-    const railVisualMat = transparentStartVisuals
-      ? makeStartTransparentMaterial(railMat, START_GATE_DESIGN.startRailOpacity)
-      : railMat;
+    const isNoGateRacingGridStart = isToyParkStartTile && START_GATE_DESIGN.toyParkGateEnabled === false && START_GATE_DESIGN.racingGridStartEnabled !== false;
+    const transparentStartVisuals = isToyParkStartTile ? false : Boolean(START_GATE_DESIGN.transparentVisuals);
+    const makeToyParkStartBoardTexture = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#d86aa4';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+      grad.addColorStop(0, 'rgba(255,255,255,0.18)');
+      grad.addColorStop(0.45, 'rgba(255,208,231,0.10)');
+      grad.addColorStop(1, 'rgba(92,39,95,0.16)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // Keep the board deliberately plain; slot markers are separate meshes so they can
+      // line up with live marble staging positions instead of being baked into texture UVs.
+      const sheen = ctx.createRadialGradient(170, 145, 20, 230, 210, 420);
+      sheen.addColorStop(0, 'rgba(255,255,255,0.16)');
+      sheen.addColorStop(0.62, 'rgba(255,194,224,0.06)');
+      sheen.addColorStop(1, 'rgba(95,36,93,0.08)');
+      ctx.fillStyle = sheen;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(1, 1);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.userData = { type: 'toy-park-start-board-texture', pattern: 'plain-pink-clean-board-no-dots-no-straight-lines' };
+      return texture;
+    };
+    const makeToyParkBannerTexture = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      const roundedRectPath = (x, y, w, h, r) => {
+        const radius = Math.min(r, w / 2, h / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + w - radius, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+        ctx.lineTo(x + w, y + h - radius);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+        ctx.lineTo(x + radius, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+      };
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      roundedRectPath(12, 12, canvas.width - 24, canvas.height - 24, 54);
+      ctx.clip();
+      const clayBase = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+      clayBase.addColorStop(0, '#161d36');
+      clayBase.addColorStop(0.36, '#263159');
+      clayBase.addColorStop(0.72, '#171d35');
+      clayBase.addColorStop(1, '#10172b');
+      ctx.fillStyle = clayBase;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#ff5aa9';
+      roundedRectPath(24, 22, canvas.width - 48, 30, 15);
+      ctx.fill();
+      ctx.fillStyle = '#45e3c6';
+      roundedRectPath(24, canvas.height - 52, canvas.width - 48, 30, 15);
+      ctx.fill();
+      const grainCount = 620;
+      for (let i = 0; i < grainCount; i += 1) {
+        const x = Math.random() * canvas.width;
+        const y = Math.random() * canvas.height;
+        const radius = 0.7 + Math.random() * 2.4;
+        const alpha = 0.035 + Math.random() * 0.085;
+        ctx.fillStyle = i % 3 === 0 ? `rgba(255,255,255,${alpha})` : `rgba(3,7,18,${alpha})`;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const highlight = ctx.createRadialGradient(245, 80, 10, 350, 88, 530);
+      highlight.addColorStop(0, 'rgba(255,255,255,0.18)');
+      highlight.addColorStop(0.48, 'rgba(255,255,255,0.055)');
+      highlight.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = highlight;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#ffe16a';
+      ctx.lineWidth = 16;
+      roundedRectPath(34, 38, canvas.width - 68, canvas.height - 76, 42);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+      ctx.lineWidth = 5;
+      roundedRectPath(54, 58, canvas.width - 108, canvas.height - 116, 30);
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '900 132px Arial Black, Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,0.30)';
+      ctx.shadowBlur = 10;
+      ctx.shadowOffsetY = 7;
+      ctx.fillText('START', canvas.width / 2, canvas.height / 2 + 4);
+      ctx.shadowColor = 'transparent';
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.userData = { type: 'toy-park-start-banner-texture', label: 'START', shape: 'rounded-corners', materialStyle: 'heavier-molded-clay-plastic-grain' };
+      return texture;
+    };
+    const floorMat = isToyParkStartTile
+      ? new THREE.MeshPhysicalMaterial({
+        color: 0xffffff,
+        map: makeToyParkStartBoardTexture(),
+        roughness: 0.68,
+        metalness: 0,
+        clearcoat: 0.32,
+        clearcoatRoughness: 0.46,
+      })
+      : (transparentStartVisuals ? makeStartTransparentMaterial(accentMat, START_GATE_DESIGN.startFloorOpacity) : accentMat);
+    floorMat.userData = { ...(floorMat.userData || {}), type: isToyParkStartTile ? 'toy-park-start-board-floor-material' : 'start-floor-material' };
+    const railVisualMat = isToyParkStartTile
+      ? createToyParkRailMaterialSet(this, railMat).red
+      : (transparentStartVisuals ? makeStartTransparentMaterial(railMat, START_GATE_DESIGN.startRailOpacity) : railMat);
+    railVisualMat.userData = { ...(railVisualMat.userData || {}), type: isToyParkStartTile ? 'toy-park-start-board-red-white-side-rails' : 'start-rail-material' };
+    const toyParkStartSideRailMaterials = isToyParkStartTile
+      ? createToyParkStartRailPastelMaterialSet(this, railMat)
+      : null;
+    if (toyParkStartSideRailMaterials) {
+      toyParkStartSideRailMaterials.materials.forEach((material) => {
+        material.userData = {
+          ...(material.userData || {}),
+          type: 'toy-park-start-board-side-rail-pastel-material',
+          matchesTrackRailStyle: false,
+          startRailPastelPalette: true,
+          startRailPinkPalette: false,
+          noAdjacentRepeatPalette: true,
+        };
+      });
+    }
+    const toyParkBannerTexture = isToyParkStartTile ? makeToyParkBannerTexture() : null;
     const markingMat = (color, emissive, opacity = START_GATE_DESIGN.startMarkingOpacity) => {
       const material = new THREE.MeshStandardMaterial({ color, roughness: 0.24, emissive, emissiveIntensity: 0.28 });
       return transparentStartVisuals ? makeStartTransparentMaterial(material, opacity) : material;
     };
 
-    const drop = (START_RAMP.prepTrayBackOffset - START_RAMP.prepTrayFrontOffset) * START_RAMP.prepTrayDropPerMeter;
-    const pitch = Math.atan2(drop, depth);
+    const drop = isToyParkStartTile ? 0 : (START_RAMP.prepTrayBackOffset - START_RAMP.prepTrayFrontOffset) * START_RAMP.prepTrayDropPerMeter;
+    const pitch = isToyParkStartTile ? 0 : Math.atan2(drop, depth);
     const floor = new THREE.Mesh(new THREE.BoxGeometry(width, 0.20, depth), floorMat);
+    floor.name = isToyParkStartTile ? 'TOY_PARK_START_BOARD_TILE_PLAIN_PINK_WITH_SLOT_BRACKETS' : 'START_CHUTE_FLOOR';
+    floor.userData = {
+      ...(floor.userData || {}),
+      type: isToyParkStartTile ? 'toy-park-start-board-tile' : 'start-chute-floor',
+      startBoardTile: isToyParkStartTile,
+      plainPinkPanel: isToyParkStartTile,
+      dottedPinkPanel: false,
+      straightTextureLines: false,
+      stickerLabel: null,
+      referenceStyle: isToyParkStartTile ? 'plain-pink-rectangular-board-no-dots-no-lines-with-separate-left-bracket-slot-markers' : null,
+    };
     floor.position.set(0, -0.12, 0);
     floor.rotation.x = pitch;
     floor.receiveShadow = PERFORMANCE_TUNING.shadows;
@@ -5153,7 +5813,7 @@ class MarbleRace {
     this.world.addBody(floorBody);
     this.trackBodies.push(floorBody);
 
-    if (START_GATE_DESIGN.surroundingWallsEnabled) {
+    if (START_GATE_DESIGN.surroundingWallsEnabled && !isToyParkStartTile) {
       const sideSpecs = [
         { x: -width / 2 - START_GATE_DESIGN.sideWallThickness / 2, z: 0, sx: START_GATE_DESIGN.sideWallThickness, sz: depth + 0.8 },
         { x: width / 2 + START_GATE_DESIGN.sideWallThickness / 2, z: 0, sx: START_GATE_DESIGN.sideWallThickness, sz: depth + 0.8 },
@@ -5190,20 +5850,173 @@ class MarbleRace {
     const stallCount = gateLayout.stallCount;
     const laneGap = gateLayout.stallWidth;
     const gateWidth = gateLayout.gateWidth;
+    let toyParkStartSlotMarkerCount = 0;
+    let toyParkStartSlotMarkerPartCount = 0;
+    if (isToyParkStartTile && isNoGateRacingGridStart) {
+      const markerMat = new THREE.MeshPhysicalMaterial({
+        color: 0xfff1b8,
+        roughness: 0.44,
+        metalness: 0,
+        clearcoat: 0.36,
+        clearcoatRoughness: 0.32,
+        emissive: 0xff78b6,
+        emissiveIntensity: 0.05,
+      });
+      markerMat.userData = {
+        type: 'toy-park-start-board-slot-marker-material',
+        shape: 'left-bracket-rotated-90deg-long-edge-facing-start-banner',
+        boardDecoration: 'slot-marker-only-no-texture-dots-no-board-grid-lines',
+      };
+      const racingGridColumns = Math.max(1, Math.floor(START_GATE_DESIGN.racingGridColumns ?? 4));
+      const racingGridRows = Math.max(1, Math.floor(START_GATE_DESIGN.racingGridRows ?? 4));
+      const occupiedPerRow = Math.max(1, Math.min(racingGridColumns, Math.floor(START_GATE_DESIGN.racingGridOccupiedPerRow ?? Math.ceil(racingGridColumns / 2))));
+      const racingGridWidth = START_GATE_DESIGN.racingGridColumnSpacing ?? 1.45;
+      const racingLaneGap = racingGridColumns > 1 ? racingGridWidth / (racingGridColumns - 1) : 0;
+      const racingRowSpacing = Math.max(0.95, START_GATE_DESIGN.racingGridRowSpacing ?? 1.28);
+      const gateLocalZ = this.getStartPrepLocalZForBack(START_GATE_DESIGN.gateBackDistance);
+      const safeBackLocalZ = -depth / 2 + 0.7;
+      const gridFrontLocalZ = clamp(gateLocalZ - 0.38, safeBackLocalZ, depth / 2 - 0.95);
+      const uniqueSlotCount = Math.min(requestedCount, racingGridRows * occupiedPerRow);
+      const markerY = -0.001;
+      const markerThickness = 0.055;
+      const markerHeight = 0.035;
+      const markerLengthX = 0.86;
+      const markerArmDepth = 0.42;
+      const markerForwardOffsetZ = 0.25;
+      const makeMarkerBar = (slotIndex, row, col, kind, x, z, sx, sz) => {
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(sx, markerHeight, sz), markerMat);
+        bar.name = `TOY_PARK_START_SLOT_LEFT_BRACKET_${slotIndex}_${kind}`;
+        bar.position.set(x, markerY, z);
+        bar.rotation.x = pitch;
+        bar.castShadow = false;
+        bar.receiveShadow = PERFORMANCE_TUNING.shadows;
+        bar.userData = {
+          type: 'toy-park-start-board-slot-left-bracket-marker',
+          startSlotMarker: true,
+          markerShape: '[ rotated 90deg',
+          markerOrientation: 'long-edge-toward-start-banner-front-positive-local-z',
+          markerPart: kind,
+          slotIndex,
+          row,
+          column: col,
+          noPhysics: true,
+          boardDecoration: 'separate-slot-marker-not-texture-pattern',
+        };
+        group.add(bar);
+        toyParkStartSlotMarkerPartCount += 1;
+      };
+      for (let slotIndex = 0; slotIndex < uniqueSlotCount; slotIndex += 1) {
+        const row = Math.floor(slotIndex / occupiedPerRow);
+        const slotInRow = slotIndex % occupiedPerRow;
+        const rowStartsWithEmptySlot = row % 2 === 0;
+        const col = Math.min(racingGridColumns - 1, rowStartsWithEmptySlot ? slotInRow * 2 + 1 : slotInRow * 2);
+        const slotX = (col - (racingGridColumns - 1) / 2) * racingLaneGap;
+        const slotZ = clamp(gridFrontLocalZ - row * racingRowSpacing, safeBackLocalZ, depth / 2 - 0.6);
+        const frontZ = slotZ + markerForwardOffsetZ;
+        makeMarkerBar(slotIndex, row, col, 'front-long-edge-facing-start-banner', slotX, frontZ, markerLengthX, markerThickness);
+        makeMarkerBar(slotIndex, row, col, 'left-return-arm', slotX - markerLengthX / 2 + markerThickness / 2, frontZ - markerArmDepth / 2, markerThickness, markerArmDepth);
+        makeMarkerBar(slotIndex, row, col, 'right-return-arm', slotX + markerLengthX / 2 - markerThickness / 2, frontZ - markerArmDepth / 2, markerThickness, markerArmDepth);
+        toyParkStartSlotMarkerCount += 1;
+      }
+    }
+    let toyParkStartSideRailChunkCount = 0;
     for (let i = 0; i <= stallCount; i += 1) {
       const isOuterLaneBoard = i === 0 || i === stallCount;
-      const x = -gateWidth / 2 + i * laneGap;
-      const railHeight = isOuterLaneBoard ? Math.max(START_GATE_DESIGN.laneRailHeight, 1.05) : START_GATE_DESIGN.laneRailHeight;
-      const railThickness = isOuterLaneBoard ? Math.max(START_GATE_DESIGN.laneRailThickness, 0.18) : START_GATE_DESIGN.laneRailThickness;
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(railThickness, railHeight, depth - 1.2), railVisualMat);
+      if (isToyParkStartTile && !isOuterLaneBoard) continue;
+      const toyParkStartWorldRailSide = i === 0 ? -1 : 1;
+      const x = isToyParkStartTile
+        ? -toyParkStartWorldRailSide * (toyParkStartTrackWidth / 2 + toyParkStartSideRailOffset)
+        : -gateWidth / 2 + i * laneGap;
+      const railHeight = isToyParkStartTile
+        ? toyParkStartSideRailRadius
+        : (isOuterLaneBoard ? Math.max(START_GATE_DESIGN.laneRailHeight, 1.05) : START_GATE_DESIGN.laneRailHeight);
+      const railThickness = isToyParkStartTile
+        ? toyParkStartSideRailRadius * 2
+        : (isOuterLaneBoard ? Math.max(START_GATE_DESIGN.laneRailThickness, 0.18) : START_GATE_DESIGN.laneRailThickness);
+      const railDepth = isToyParkStartTile ? depth : depth - 1.2;
+      const railCenterLocalZ = isToyParkStartTile ? 0 : -0.25;
+      if (isToyParkStartTile) {
+        const sideLabel = i === 0 ? 'LEFT' : 'RIGHT';
+        const chunkLength = 1.45;
+        const chunkGap = 0.035;
+        const chunkCount = Math.max(1, Math.ceil(railDepth / chunkLength));
+        for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+          const zStart = -railDepth / 2 + chunkIndex * (railDepth / chunkCount);
+          const zEnd = -railDepth / 2 + (chunkIndex + 1) * (railDepth / chunkCount);
+          const chunkDepth = Math.max(0.12, (zEnd - zStart) - chunkGap);
+          const frontChunkIndex = (chunkCount - 1) - chunkIndex;
+          const pastelPalette = toyParkStartSideRailMaterials.materials;
+          const railMaterial = pastelPalette[(frontChunkIndex + (toyParkStartWorldRailSide < 0 ? 0 : 2)) % pastelPalette.length];
+          const railCenterZ = railCenterLocalZ + (zStart + zEnd) / 2;
+          const railSamples = [
+            { center: new THREE.Vector3(x, 0.006, railCenterZ - chunkDepth / 2), right: new THREE.Vector3(1, 0, 0), y: 0.006 },
+            { center: new THREE.Vector3(x, 0.006, railCenterZ), right: new THREE.Vector3(1, 0, 0), y: 0.006 },
+            { center: new THREE.Vector3(x, 0.006, railCenterZ + chunkDepth / 2), right: new THREE.Vector3(1, 0, 0), y: 0.006 },
+          ];
+          const rail = buildToyParkHalfRoundRailMesh(this,
+            railSamples,
+            toyParkStartSideRailRadius,
+            railMaterial,
+            `TOY_PARK_START_BOARD_SIDE_RAIL_${sideLabel}_${chunkIndex}`,
+            {
+              type: 'toy-park-start-board-side-rail',
+              startBoardSideRail: true,
+              matchesTrackSideRailStyle: true,
+              matchesTrackRailSize: true,
+              redWhiteSideRail: false,
+              pinkSideRail: false,
+              pastelSideRail: true,
+              startRailMatchesMainCurveRoleAtTrackJoin: false,
+              noAdjacentRepeatPalette: true,
+              paletteKey: railMaterial.userData?.paletteKey || null,
+              paletteFamily: railMaterial.userData?.paletteFamily || null,
+              paletteIndex: railMaterial.userData?.paletteIndex ?? null,
+              noGreenLaneDivider: true,
+              side: sideLabel.toLowerCase(),
+              railSide: toyParkStartWorldRailSide,
+              curveRole: 'pastel-start-side-rail',
+              outerLaneBoard: true,
+              chunkIndex,
+              railRadius: toyParkStartSideRailRadius,
+              railHeight,
+              railThickness,
+              railOffset: toyParkStartSideRailOffset,
+              railChunkLength: chunkLength,
+              railDepth: Number(railDepth.toFixed(3)),
+              railCenterLocalZ,
+              railFrontLocalZ: Number((railCenterLocalZ + railDepth / 2).toFixed(3)),
+              railBackLocalZ: Number((railCenterLocalZ - railDepth / 2).toFixed(3)),
+              railFrontFlushWithBoard: true,
+              railProfile: 'same-size-as-main-toy-park-half-round-rail-flat-bottom-upward',
+            }
+          );
+          rail.rotation.x = pitch;
+          group.add(rail);
+          toyParkStartSideRailChunkCount += 1;
+        }
+        const body = new CANNON.Body({ mass: 0, material: this.railMaterial || this.obstacleMaterial });
+        body.addShape(new CANNON.Box(new CANNON.Vec3(railThickness / 2, railHeight / 2, railDepth / 2)));
+        body.position.copy(center.clone().add(this.localToWorldOffset(x, railHeight / 2 + 0.006, railCenterLocalZ, yaw)));
+        body.quaternion.setFromEuler(pitch, yaw, 0, 'YXZ');
+        body.userData = { name: `TOY_PARK_START_BOARD_SIDE_RAIL_BODY_${sideLabel}`, startSideRailBody: true, startLaneBoard: true, outerLaneBoard: true, noInternalLaneDivider: true, matchesTrackRailSize: true, railFrontFlushWithBoard: true, railDepth, railCenterLocalZ };
+        this.world.addBody(body);
+        this.trackBodies.push(body);
+        continue;
+      }
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(railThickness, railHeight, railDepth), railVisualMat);
       rail.name = isOuterLaneBoard ? `START_OUTER_LANE_BOARD_${i === 0 ? 'LEFT' : 'RIGHT'}` : `START_LANE_DIVIDER_${i}`;
+      rail.userData = {
+        ...(rail.userData || {}),
+        type: 'start-lane-rail',
+        outerLaneBoard: isOuterLaneBoard,
+      };
       rail.position.set(x, railHeight / 2 + 0.08, -0.25);
       rail.rotation.x = pitch;
       rail.castShadow = PERFORMANCE_TUNING.shadows;
       rail.receiveShadow = PERFORMANCE_TUNING.shadows;
       group.add(rail);
       const body = new CANNON.Body({ mass: 0, material: this.railMaterial || this.obstacleMaterial });
-      body.addShape(new CANNON.Box(new CANNON.Vec3(railThickness / 2, railHeight / 2, (depth - 1.2) / 2)));
+      body.addShape(new CANNON.Box(new CANNON.Vec3(railThickness / 2, railHeight / 2, railDepth / 2)));
       body.position.copy(center.clone().add(this.localToWorldOffset(x, railHeight / 2 + 0.08, -0.25, yaw)));
       body.quaternion.setFromEuler(pitch, yaw, 0, 'YXZ');
       body.userData = { name: rail.name, startLaneBoard: true, outerLaneBoard: isOuterLaneBoard };
@@ -5211,15 +6024,180 @@ class MarbleRace {
       this.trackBodies.push(body);
     }
 
-    const gateLine = new THREE.Mesh(new THREE.BoxGeometry(width * 0.82, 0.075, 0.34), markingMat(labelColor, labelColor, START_GATE_DESIGN.startMarkingOpacity));
-    gateLine.position.set(0, 0.11, depth / 2 - 0.62);
-    gateLine.rotation.x = pitch;
-    group.add(gateLine);
+    let toyParkStartBeadCount = 0;
+    let toyParkStartBanner = false;
+    if (isToyParkStartTile) {
+      const bannerMat = new THREE.MeshPhysicalMaterial({
+        color: 0xffffff,
+        map: toyParkBannerTexture,
+        roughness: 0.72,
+        metalness: 0,
+        clearcoat: 0.22,
+        clearcoatRoughness: 0.58,
+        side: THREE.DoubleSide,
+      });
+      bannerMat.userData = {
+        type: 'toy-park-start-banner-material',
+        label: 'START',
+        opaqueClay: true,
+        transparentTexture: false,
+        role: 'toy-park-rounded-molded-clay-plastic-start-banner',
+      };
+      const bannerWidth = Math.min(width * 0.92, gateWidth + 2.4);
+      const bannerHeight = 1.65;
+      const bannerCornerRadius = 0.28;
+      const bannerShape = new THREE.Shape();
+      const left = -bannerWidth / 2;
+      const right = bannerWidth / 2;
+      const top = bannerHeight / 2;
+      const bottom = -bannerHeight / 2;
+      bannerShape.moveTo(left + bannerCornerRadius, top);
+      bannerShape.lineTo(right - bannerCornerRadius, top);
+      bannerShape.quadraticCurveTo(right, top, right, top - bannerCornerRadius);
+      bannerShape.lineTo(right, bottom + bannerCornerRadius);
+      bannerShape.quadraticCurveTo(right, bottom, right - bannerCornerRadius, bottom);
+      bannerShape.lineTo(left + bannerCornerRadius, bottom);
+      bannerShape.quadraticCurveTo(left, bottom, left, bottom + bannerCornerRadius);
+      bannerShape.lineTo(left, top - bannerCornerRadius);
+      bannerShape.quadraticCurveTo(left, top, left + bannerCornerRadius, top);
+      const bannerGeometry = new THREE.ShapeGeometry(bannerShape, 16);
+      const bannerPositions = bannerGeometry.attributes.position;
+      const bannerUvs = [];
+      for (let vertexIndex = 0; vertexIndex < bannerPositions.count; vertexIndex += 1) {
+        const px = bannerPositions.getX(vertexIndex);
+        const py = bannerPositions.getY(vertexIndex);
+        bannerUvs.push((px - left) / bannerWidth, (py - bottom) / bannerHeight);
+      }
+      bannerGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(bannerUvs, 2));
+      const banner = new THREE.Mesh(bannerGeometry, bannerMat);
+      banner.name = 'TOY_PARK_START_BANNER_OVERHEAD_START_ROUNDED_CLAY';
+      banner.position.set(0, 3.25, depth / 2 - 1.15);
+      banner.rotation.set(-0.18, 0, 0);
+      banner.castShadow = PERFORMANCE_TUNING.shadows;
+      banner.receiveShadow = PERFORMANCE_TUNING.shadows;
+      banner.userData = {
+        type: 'toy-park-start-banner-overhead',
+        startBoardBanner: true,
+        text: 'START',
+        referenceStyle: 'rounded-corner-black-sticker-like-molded-clay-plastic-start-sign-above-start-tile',
+        roundedCorners: true,
+        cornerRadius: bannerCornerRadius,
+        geometryStyle: 'rounded-rectangle-shape-geometry',
+        materialStyle: 'heavier-molded-clay-plastic-grain',
+        textureStyle: toyParkBannerTexture?.userData?.materialStyle || null,
+      };
+      group.add(banner);
+      toyParkStartBanner = true;
 
-    const startText = new THREE.Mesh(new THREE.BoxGeometry(width * 0.42, 0.08, 0.5), markingMat(0xffffff, 0x153a34, START_GATE_DESIGN.startMarkingOpacity));
-    startText.position.set(0, 0.16, -depth * 0.16);
-    startText.rotation.x = pitch;
-    group.add(startText);
+      const postMat = new THREE.MeshPhysicalMaterial({ color: 0x41e0c1, roughness: 0.48, metalness: 0, clearcoat: 0.5, clearcoatRoughness: 0.3 });
+      [-1, 1].forEach((side) => {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.17, 3.05, 12), postMat);
+        post.name = `TOY_PARK_START_BANNER_POST_${side < 0 ? 'LEFT' : 'RIGHT'}`;
+        post.position.set(side * (Math.min(width * 0.92, gateWidth + 2.4) / 2 + 0.18), 1.72, depth / 2 - 1.15);
+        post.castShadow = PERFORMANCE_TUNING.shadows;
+        post.receiveShadow = PERFORMANCE_TUNING.shadows;
+        post.userData = { type: 'toy-park-start-banner-post', startBoardBannerPost: true, side };
+        group.add(post);
+      });
+    }
+
+    if (!isToyParkStartTile) {
+      const gateLine = new THREE.Mesh(new THREE.BoxGeometry(width * 0.82, 0.075, 0.34), markingMat(labelColor, labelColor, START_GATE_DESIGN.startMarkingOpacity));
+      gateLine.name = 'START_GATE_LINE';
+      gateLine.userData = { ...(gateLine.userData || {}), type: 'start-gate-line' };
+      gateLine.position.set(0, 0.11, depth / 2 - 0.62);
+      gateLine.rotation.x = pitch;
+      group.add(gateLine);
+    }
+
+    if (!isToyParkStartTile) {
+      const startText = new THREE.Mesh(new THREE.BoxGeometry(width * 0.42, 0.08, 0.5), markingMat(0xffffff, 0x153a34, START_GATE_DESIGN.startMarkingOpacity));
+      startText.name = 'START_TEXT_MARK';
+      startText.userData = { ...(startText.userData || {}), type: 'start-text-mark' };
+      startText.position.set(0, 0.16, -depth * 0.16);
+      startText.rotation.x = pitch;
+      group.add(startText);
+    }
+
+    if (isToyParkStartTile) {
+      this.trackStats.toyParkStartBoard = {
+        enabled: true,
+        status: isNoGateRacingGridStart
+          ? 'ordinary-flat-start-board-visual-preview-no-gate-racing-grid-start'
+          : 'ordinary-flat-start-board-visual-preview-existing-gate-physics-preserved',
+        style: 'flat-plain-pink-rectangular-board-no-dots-no-straight-lines-rotated-left-bracket-slot-markers-long-edge-facing-start-banner-pastel-mixed-nonrepeating-side-rails-no-side-beads-overhead-start-banner',
+        boardWidth: Number(width.toFixed(2)),
+        boardSurfaceWidth: Number(width.toFixed(2)),
+        originalTrackWidth: Number((this.toyParkOriginalTrackWidth ?? toyParkStartTrackWidth).toFixed(2)),
+        widthScale: Number((this.toyParkTrackWidthScale ?? 1).toFixed(2)),
+        reducedByPercent: this.toyParkTrackWidthScale ? Number(((1 - this.toyParkTrackWidthScale) * 100).toFixed(1)) : 0,
+        trackWidth: Number(toyParkStartTrackWidth.toFixed(2)),
+        boardWidthMatchesTrackAndRailFootprint: Math.abs(width - (toyParkStartTrackWidth + toyParkStartSideRailOffset * 2)) < 0.001,
+        boardWidthClosesSideGap: true,
+        boardDepth: Number(depth.toFixed(2)),
+        baseBoardDepth: Number(baseChuteDepth.toFixed(2)),
+        boardLengthScale: isToyParkStartTile ? 2 : 1,
+        laneCount: stallCount,
+        internalLaneRailsVisible: 0,
+        sideRailStyle: 'deeper-matte-pastel-pink-blue-purple-cream-green-side-rails-strong-clay-grain-low-clearcoat-no-adjacent-repeat',
+        sideRailPalette: toyParkStartSideRailMaterials?.paletteKeys || [],
+        sideRailPaletteFamilies: toyParkStartSideRailMaterials?.paletteFamilies || [],
+        sideRailNoAdjacentRepeatPalette: true,
+        sideRailOpaqueClay: true,
+        sideRailTexture: 'opaque-deeper-pastel-strong-heavy-pitted-molded-plastic-clay-grain-matte',
+        sideRailLowClearcoat: true,
+        sideRailStrongerClayGrain: true,
+        sideRailChunkCount: toyParkStartSideRailChunkCount,
+        sideRailMatchesTrackRailSize: true,
+        sideRailRadius: toyParkStartSideRailRadius,
+        sideRailHeight: toyParkStartSideRailRadius,
+        sideRailThickness: Number((toyParkStartSideRailRadius * 2).toFixed(3)),
+        sideRailOffset: toyParkStartSideRailOffset,
+        standardRailOpening: true,
+        standardEntranceWidth: Number(toyParkStartTrackWidth.toFixed(3)),
+        standardExitWidth: Number(toyParkStartTrackWidth.toFixed(3)),
+        railOpeningWidth: Number((toyParkStartTrackWidth + toyParkStartSideRailOffset * 2).toFixed(3)),
+        railOpeningMatchesRoadTiles: Math.abs(toyParkStartSideRailOffset - (this.trackStats.toyParkRailOffset ?? toyParkStartSideRailOffset)) < 0.001,
+        sideRailChunkLength: 1.45,
+        sideRailDepth: Number(depth.toFixed(2)),
+        sideRailFrontFlushWithBoard: true,
+        sideRailCenterLocalZ: 0,
+        sideRailFrontLocalZ: Number((depth / 2).toFixed(2)),
+        sideRailBackLocalZ: Number((-depth / 2).toFixed(2)),
+        surroundingWallsVisible: false,
+        greenLaneRailsRemoved: true,
+        beadCount: toyParkStartBeadCount,
+        sideBeadsRemoved: toyParkStartBeadCount === 0,
+        slotMarkerShape: '[ rotated 90deg',
+        slotMarkerOrientation: 'long-edge-toward-start-banner-front-positive-local-z',
+        slotMarkerLongEdgeFacingStartBanner: true,
+        slotMarkerCount: toyParkStartSlotMarkerCount,
+        slotMarkerPartCount: toyParkStartSlotMarkerPartCount,
+        slotMarkersPerMarbleStartPosition: isNoGateRacingGridStart,
+        boardDotsRemoved: true,
+        boardStraightLinesRemoved: true,
+        overheadBanner: toyParkStartBanner,
+        boardStartTextRemoved: true,
+        centerWhiteMarkRemoved: true,
+        floorTexture: floorMat.map?.userData?.pattern || null,
+        bannerTexture: toyParkBannerTexture?.userData?.label || null,
+        bannerRoundedCorners: true,
+        bannerGeometryStyle: 'rounded-rectangle-shape-geometry',
+        bannerMaterialStyle: toyParkBannerTexture?.userData?.materialStyle || 'heavier-molded-clay-plastic-grain',
+        bannerCornerRadius: 0.28,
+        bannerOpaqueClay: true,
+        flatBoard: true,
+        visualPitchDegrees: 0,
+        dropToGate: 0,
+        gateEnabled: !isNoGateRacingGridStart,
+        noGateRacingGridStart: isNoGateRacingGridStart,
+        racingGridColumns: START_GATE_DESIGN.racingGridColumns,
+        racingGridOccupiedPerRow: START_GATE_DESIGN.racingGridOccupiedPerRow,
+        racingGridRows: START_GATE_DESIGN.racingGridRows,
+        racingGridSurfaceClearance: START_GATE_DESIGN.racingGridSurfaceClearance,
+        racingGridStyle: isNoGateRacingGridStart ? 'four-column-checkerboard-alternating-two-marbles-per-row' : null,
+      };
+    }
 
     return {
       center,
@@ -5237,6 +6215,9 @@ class MarbleRace {
       frontLocalZ: depth / 2,
       backLocalZ: -depth / 2,
       design: START_GATE_DESIGN.style,
+      gateEnabled: !isNoGateRacingGridStart,
+      noGateRacingGridStart: isNoGateRacingGridStart,
+      racingGridColumns: START_GATE_DESIGN.racingGridColumns,
       surroundingWallsEnabled: Boolean(START_GATE_DESIGN.surroundingWallsEnabled),
       surroundingWallsRemoved: !START_GATE_DESIGN.surroundingWallsEnabled,
       trackConnection: 'frontLocalZ-positive-aligns-with-frame-tangent-and-track-d0',
@@ -5255,11 +6236,11 @@ class MarbleRace {
     };
   }
 
-  getStartPrepTrayCenter(frame) {
+  getStartPrepTrayCenter(frame, { flatBoard = false } = {}) {
     const back = START_RAMP.prepTrayBackOffset;
     const front = START_RAMP.prepTrayFrontOffset;
     const offset = -(back + front) / 2;
-    const heightAtCenter = ((back - front) / 2) * START_RAMP.prepTrayDropPerMeter;
+    const heightAtCenter = flatBoard ? 0 : ((back - front) / 2) * START_RAMP.prepTrayDropPerMeter;
     return new THREE.Vector3(frame.p.x, frame.p.y + 0.18 + heightAtCenter, frame.p.z)
       .add(frame.tangent.clone().multiplyScalar(offset));
   }
@@ -5271,6 +6252,7 @@ class MarbleRace {
   }
 
   getStartPrepSurfaceY(frame, backDistance) {
+    if (this.physicsMechanicKey === 'toyPark' || this.visualThemeKey === 'toyPark') return frame.p.y;
     return frame.p.y + backDistance * START_RAMP.prepTrayDropPerMeter;
   }
 
@@ -5502,10 +6484,10 @@ class MarbleRace {
     return { center, yaw, radius, group, disc, armGroup, frame, name: 'SPINNER' };
   }
 
-  addRankingCollector({ frame, width, racerCount, mat, accentMat }) {
+  addRankingCollector({ frame, width, racerCount, mat, accentMat, noPodium = false }) {
     const yaw = Math.atan2(frame.tangent.x, frame.tangent.z);
     const slotGap = 1.45;
-    const lowerCount = Math.max(0, racerCount - 3);
+    const lowerCount = noPodium ? racerCount : Math.max(0, racerCount - 3);
     const lowerCols = lowerCount > 0
       ? Math.max(4, Math.ceil(Math.sqrt(lowerCount * 1.28)))
       : 4;
@@ -5551,7 +6533,7 @@ class MarbleRace {
     group.add(chute);
 
     const podiumColors = [0xffd700, 0xc0c0c0, 0xcd7f32];
-    const podiumSpecs = [
+    const podiumSpecs = noPodium ? [] : [
       { rank: 1, x: 0, z: -0.6, height: 1.28, color: podiumColors[0], label: '1' },
       { rank: 2, x: -1.65, z: 0.05, height: 0.88, color: podiumColors[1], label: '2' },
       { rank: 3, x: 1.65, z: 0.35, height: 0.64, color: podiumColors[2], label: '3' },
@@ -5559,18 +6541,22 @@ class MarbleRace {
     podiumSpecs.forEach((spec) => {
       const blockMat = new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.25, metalness: 0.38, emissive: spec.color, emissiveIntensity: 0.12 });
       const block = new THREE.Mesh(new THREE.BoxGeometry(1.32, spec.height, 1.32), blockMat);
+      block.name = `FINISH_PODIUM_BLOCK_${spec.rank}`;
+      block.userData = { type: 'finish-podium-block', rank: spec.rank };
       block.position.set(spec.x, spec.height / 2 - 0.02, spec.z);
       block.castShadow = PERFORMANCE_TUNING.shadows;
       block.receiveShadow = PERFORMANCE_TUNING.shadows;
       group.add(block);
       const label = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.05, 0.42), accentMat);
+      label.name = `FINISH_PODIUM_LABEL_${spec.rank}`;
+      label.userData = { type: 'finish-podium-label', rank: spec.rank };
       label.position.set(spec.x, spec.height + 0.05, spec.z - 0.36);
       group.add(label);
     });
 
-    const lowerSlotMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.45, metalness: 0.08 });
-    for (let i = 3; i < racerCount; i += 1) {
-      const lowerIndex = i - 3;
+    const lowerSlotMat = new THREE.MeshStandardMaterial({ color: noPodium ? 0x273449 : 0x334155, roughness: 0.45, metalness: 0.08 });
+    for (let i = noPodium ? 0 : 3; i < racerCount; i += 1) {
+      const lowerIndex = noPodium ? i : i - 3;
       const row = Math.floor(lowerIndex / lowerCols);
       const col = lowerIndex % lowerCols;
       const x = (col - (lowerCols - 1) / 2) * slotGap;
@@ -5595,8 +6581,10 @@ class MarbleRace {
       slotGap,
       group,
       frame,
-      name: 'PODIUM_COLLECTOR',
-      podiumStyle: 'top-3-on-podium-rest-below',
+      name: noPodium ? 'FLAT_FINISH_COLLECTOR' : 'PODIUM_COLLECTOR',
+      podiumStyle: noPodium ? 'flat-no-podium-all-finishers-grid' : 'top-3-on-podium-rest-below',
+      noPodium,
+      podiumRemoved: noPodium,
       podiumSlots: podiumSpecs,
       lowerSlots: {
         cols: lowerCols,
@@ -5928,6 +6916,7 @@ class MarbleRace {
       popBumperCap: new THREE.MeshPhysicalMaterial({ color: 0xfff1fa, roughness: 0.12, metalness: 0.02, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0xff5fb7, emissiveIntensity: 0.18 }),
       slingshot: new THREE.MeshPhysicalMaterial({ color: 0x12f0c8, roughness: 0.16, metalness: 0.06, clearcoat: 1, clearcoatRoughness: 0.07, emissive: 0x00685d, emissiveIntensity: 0.46 }),
       spinnerGate: new THREE.MeshPhysicalMaterial({ color: 0x8d7dff, roughness: 0.15, metalness: 0.16, clearcoat: 1, clearcoatRoughness: 0.06, emissive: 0x280090, emissiveIntensity: 0.38 }),
+      pendulumHammer: new THREE.MeshPhysicalMaterial({ color: 0xffb347, roughness: 0.2, metalness: 0.72, clearcoat: 0.92, clearcoatRoughness: 0.06, emissive: 0x5c2600, emissiveIntensity: 0.34 }),
       movingGate: new THREE.MeshPhysicalMaterial({ color: 0x46f6ff, roughness: 0.13, metalness: 0.22, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0x005f75, emissiveIntensity: 0.48 }),
       tiltBridge: new THREE.MeshPhysicalMaterial({ color: 0xff7ad9, roughness: 0.18, metalness: 0.08, clearcoat: 1, clearcoatRoughness: 0.05, emissive: 0x83115f, emissiveIntensity: 0.46 }),
       orbitRing: new THREE.MeshPhysicalMaterial({ color: 0x5bffdf, roughness: 0.13, metalness: 0.2, clearcoat: 1, clearcoatRoughness: 0.04, emissive: 0x008d8f, emissiveIntensity: 0.52 }),
@@ -6228,6 +7217,36 @@ class MarbleRace {
         palette.spinnerGate.userData.redInsert = palette.redInsert;
         palette.spinnerGate.userData.chromeMaterial = palette.chrome;
         return this.createSpinnerGateObstacle(trackSurface, yaw, pitch, palette.spinnerGate);
+      case 'pendulumHammer': {
+        palette.pendulumHammer.userData.chromeMaterial = palette.chrome;
+        palette.pendulumHammer.userData.insertMaterial = palette.redInsert;
+        const hammerWidth = Math.min(5.4, Math.max(4.2, localWidth - 1.15));
+        const hammerLength = 4.2;
+        const hammerFrame = this.getTrackSlopeFrameAcrossSpan(Number.isFinite(placement.distance) ? placement.distance : (Number.isFinite(frame.p.d) ? frame.p.d : 0), hammerLength);
+        const hammerYaw = Math.atan2(hammerFrame.tangent.x, hammerFrame.tangent.z);
+        const hammerPitch = Math.atan2(hammerFrame.tangent.y, Math.max(0.0001, Math.hypot(hammerFrame.tangent.x, hammerFrame.tangent.z)));
+        const railClearance = 0.48;
+        const maxCenterOffset = Math.max(0, localWidth / 2 - hammerWidth / 2 - railClearance);
+        const safeLane = clamp(lane, -maxCenterOffset, maxCenterOffset);
+        const safeTrackSurface = new THREE.Vector3(hammerFrame.p.x + hammerFrame.right.x * safeLane, hammerFrame.p.y, hammerFrame.p.z + hammerFrame.right.z * safeLane);
+        return this.createPendulumHammerObstacle(safeTrackSurface, hammerYaw, hammerPitch, palette.pendulumHammer, {
+          hammerWidth,
+          hammerLength,
+          laneOffset: safeLane,
+          requestedLaneOffset: lane,
+          localTrackWidth: localWidth,
+          railClearance,
+          railContainmentHalfWidth: hammerWidth / 2,
+          slopeFit: {
+            mode: 'hammer-span-track-slope',
+            spanMeters: hammerFrame.spanMeters ?? hammerLength,
+            centerPitch: pitch,
+            hammerPitch,
+            spanStartDistance: hammerFrame.spanStartDistance ?? null,
+            spanEndDistance: hammerFrame.spanEndDistance ?? null,
+          },
+        });
+      }
       case 'movingGate': {
         palette.movingGate.userData.chromeMaterial = palette.chrome;
         palette.movingGate.userData.insertMaterial = palette.redInsert;
@@ -7333,6 +8352,127 @@ class MarbleRace {
     return obstacle;
   }
 
+  createPendulumHammerObstacle(trackSurface, yaw, pitch, material, placement = {}) {
+    const group = new THREE.Group();
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation(group, yaw, pitch);
+    this.trackGroup.add(group);
+
+    const chromeMaterial = material.userData?.chromeMaterial || material;
+    const insertMaterial = material.userData?.insertMaterial || material;
+    const dimensions = {
+      hammerWidth: placement.hammerWidth ?? 5.0,
+      hammerLength: placement.hammerLength ?? 4.2,
+      pivotHeight: 2.35,
+      armLength: 2.15,
+      armRadius: 0.09,
+      headWidth: Math.min(1.55, (placement.hammerWidth ?? 5.0) * 0.28),
+      headHeight: 0.72,
+      headDepth: 0.86,
+      sweepSpeed: PINBALL_PHYSICS.pendulumHammerSweepSpeed,
+      swingAmplitude: PINBALL_PHYSICS.pendulumHammerSwingAmplitude,
+      headRestY: 1.08,
+      headForwardZ: 0.1,
+      colliderRadius: 0.92,
+    };
+    dimensions.railClearance = placement.railClearance ?? 0.48;
+    dimensions.localTrackWidth = placement.localTrackWidth ?? null;
+    dimensions.railContainmentHalfWidth = placement.railContainmentHalfWidth ?? dimensions.hammerWidth / 2;
+    dimensions.containedWithinRails = dimensions.localTrackWidth == null
+      ? true
+      : Math.abs(placement.laneOffset ?? 0) + dimensions.hammerWidth / 2 <= dimensions.localTrackWidth / 2 - dimensions.railClearance + 1e-6;
+
+    const frameBeam = new THREE.Mesh(new THREE.BoxGeometry(dimensions.hammerWidth, 0.18, 0.28), chromeMaterial);
+    frameBeam.position.set(0, dimensions.pivotHeight, -0.08);
+    frameBeam.castShadow = PERFORMANCE_TUNING.shadows;
+    frameBeam.receiveShadow = PERFORMANCE_TUNING.shadows;
+    group.add(frameBeam);
+
+    [-1, 1].forEach((side) => {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, dimensions.pivotHeight, 0.22), chromeMaterial);
+      post.position.set(side * dimensions.hammerWidth / 2, dimensions.pivotHeight / 2, -0.08);
+      post.castShadow = PERFORMANCE_TUNING.shadows;
+      post.receiveShadow = PERFORMANCE_TUNING.shadows;
+      group.add(post);
+    });
+
+    const pivotGroup = new THREE.Group();
+    pivotGroup.position.set(0, dimensions.pivotHeight, 0);
+    group.add(pivotGroup);
+
+    const pivotAxle = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, dimensions.hammerWidth * 0.55, 18), chromeMaterial);
+    pivotAxle.rotation.z = Math.PI / 2;
+    pivotAxle.castShadow = PERFORMANCE_TUNING.shadows;
+    pivotGroup.add(pivotAxle);
+
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(dimensions.armRadius, dimensions.armRadius, dimensions.armLength, 14), chromeMaterial);
+    arm.position.y = -dimensions.armLength / 2;
+    arm.rotation.x = Math.PI / 2;
+    arm.castShadow = PERFORMANCE_TUNING.shadows;
+    pivotGroup.add(arm);
+
+    const head = new THREE.Mesh(new THREE.BoxGeometry(dimensions.headWidth, dimensions.headHeight, dimensions.headDepth), material);
+    head.position.set(0, -dimensions.armLength, dimensions.headForwardZ);
+    head.castShadow = PERFORMANCE_TUNING.shadows;
+    head.receiveShadow = PERFORMANCE_TUNING.shadows;
+    pivotGroup.add(head);
+
+    const faceGlow = new THREE.Mesh(new THREE.BoxGeometry(dimensions.headWidth * 0.92, dimensions.headHeight * 0.72, 0.035), insertMaterial);
+    faceGlow.position.set(0, -dimensions.armLength, dimensions.headForwardZ - dimensions.headDepth / 2 - 0.025);
+    faceGlow.castShadow = false;
+    pivotGroup.add(faceGlow);
+
+    const sweepArc = new THREE.Mesh(
+      new THREE.TorusGeometry(dimensions.armLength * 0.72, 0.025, 6, 48, Math.PI * 1.18),
+      new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.38, blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    sweepArc.position.set(0, dimensions.pivotHeight - dimensions.armLength * 0.48, -0.02);
+    sweepArc.rotation.z = Math.PI * 0.41;
+    sweepArc.renderOrder = 36;
+    group.add(sweepArc);
+
+    const headLocalCenter = new THREE.Vector3(0, dimensions.pivotHeight - dimensions.armLength, dimensions.headForwardZ);
+    const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
+    body.addShape(new CANNON.Box(new CANNON.Vec3(dimensions.headWidth / 2, dimensions.headHeight / 2, dimensions.headDepth / 2)));
+    const obstacleCenter = trackSurface.clone().add(this.localToWorldOffsetOnSlope(headLocalCenter.x, headLocalCenter.y, headLocalCenter.z, yaw, pitch));
+    this.setSlopeRollBodyTransform(body, obstacleCenter, yaw, pitch, 0);
+    this.addObstacleBody(body, group);
+
+    const obstacle = {
+      type: 'pendulumHammer',
+      trackSurface: trackSurface.clone(),
+      center: obstacleCenter.clone(),
+      radius: PINBALL_PHYSICS.pendulumHammerRadius,
+      impulse: PINBALL_PHYSICS.pendulumHammerImpulse,
+      group,
+      pivotGroup,
+      arm,
+      head,
+      faceGlow,
+      sweepArc,
+      body,
+      cooldown: new Map(),
+      cooldownSeconds: 0.38,
+      trackYaw: yaw,
+      trackSlopePitch: pitch,
+      localYaw: 0,
+      pendulumHammerDimensions: dimensions,
+      sweepSpeed: dimensions.sweepSpeed,
+      swingAmplitude: dimensions.swingAmplitude,
+      swingAngle: 0,
+      lastSwingAngle: 0,
+      lastHitBy: null,
+      laneOffset: placement.laneOffset ?? 0,
+      requestedLaneOffset: placement.requestedLaneOffset ?? placement.laneOffset ?? 0,
+      containedWithinRails: dimensions.containedWithinRails,
+      slopeFit: placement.slopeFit ?? null,
+      visualStyle: 'overhead-swinging-arcade-pendulum-hammer',
+      textureStyle: 'brass-chrome-hazard-hammer-with-neon-sweep-arc',
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
+  }
+
   createMovingGateObstacle(trackSurface, yaw, pitch, swingDirection = 1, material, placement = {}) {
     const group = new THREE.Group();
     group.position.copy(trackSurface);
@@ -7581,6 +8721,27 @@ class MarbleRace {
           arm.rotation.y = obstacle.spinAngle + (Math.PI * 2 * index) / 3;
         });
       }
+      if (animationActive && obstacle.type === 'pendulumHammer') {
+        const dimensions = obstacle.pendulumHammerDimensions || {};
+        const phase = this.elapsed * Math.abs(obstacle.sweepSpeed || PINBALL_PHYSICS.pendulumHammerSweepSpeed) + (obstacle.distributionZoneIndex || 0) * 0.67;
+        const swingAngle = Math.sin(phase) * (obstacle.swingAmplitude || PINBALL_PHYSICS.pendulumHammerSwingAmplitude);
+        obstacle.swingAngle = swingAngle;
+        obstacle.lastSwingAngle = swingAngle;
+        if (obstacle.pivotGroup) obstacle.pivotGroup.rotation.z = swingAngle;
+        const pivotY = dimensions.pivotHeight ?? 2.35;
+        const armLength = dimensions.armLength ?? 2.15;
+        const headZ = dimensions.headForwardZ ?? 0.1;
+        const localX = Math.sin(swingAngle) * armLength;
+        const localY = pivotY - Math.cos(swingAngle) * armLength;
+        const localZ = headZ;
+        const center = obstacle.trackSurface.clone().add(this.localToWorldOffsetOnSlope(localX, localY, localZ, obstacle.trackYaw || 0, obstacle.trackSlopePitch || 0));
+        obstacle.center.copy(center);
+        if (obstacle.body) {
+          this.setSlopeRollBodyTransform(obstacle.body, center, obstacle.trackYaw || 0, obstacle.trackSlopePitch || 0, swingAngle);
+          obstacle.body.aabbNeedsUpdate = true;
+        }
+        if (obstacle.faceGlow?.material) obstacle.faceGlow.material.opacity = 0.55 + Math.abs(Math.sin(phase)) * 0.35;
+      }
       if (animationActive && obstacle.type === 'movingGate') {
         const dimensions = obstacle.movingGateDimensions || {};
         const cycleSpeed = Math.abs(obstacle.sweepSpeed || dimensions.cycleSpeed || PINBALL_PHYSICS.movingGateSweepSpeed);
@@ -7707,6 +8868,12 @@ class MarbleRace {
             segment.mesh?.scale.set(1 + segmentPulse * 0.1, 1 + segmentPulse * 0.08, 1 + segmentPulse * 0.1);
           });
         }
+        if (obstacle.type === 'pendulumHammer') {
+          const hammerPulse = 1 + obstacle.pulse * 0.16;
+          obstacle.head?.scale.set(hammerPulse, 1 + obstacle.pulse * 0.08, hammerPulse);
+          obstacle.sweepArc?.scale.setScalar(1 + obstacle.pulse * 0.22);
+          if (obstacle.faceGlow?.material) obstacle.faceGlow.material.opacity = 0.58 + obstacle.pulse * 0.32;
+        }
         if (obstacle.type === 'splitterFork') {
           obstacle.rails?.forEach((rail) => {
             const railPulse = rail.index === obstacle.lastSplitterRailIndex ? obstacle.pulse : obstacle.pulse * 0.38;
@@ -7738,6 +8905,7 @@ class MarbleRace {
         if (obstacle.type === 'spinnerGate') this.applySpinnerGateImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'movingGate') this.applyMovingGateImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'tiltBridge') this.applyTiltBridgeImpulse(obstacle, data, dx, dz);
+        if (obstacle.type === 'pendulumHammer') this.applyPendulumHammerImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'orbitRing') this.applyOrbitRingImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'splitterFork') this.applySplitterForkImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'dropTarget') this.applyDropTargetHit(obstacle, data);
@@ -7960,6 +9128,45 @@ class MarbleRace {
       distance: data.lastObstacleHitDistance,
       progress: data.lastObstacleHitProgress,
       lines: [`${data.name} rides the tilt bridge`, `${data.name} balances across`, `${data.name} surfs the neon bridge`],
+    });
+  }
+
+  applyPendulumHammerImpulse(obstacle, data, dx, dz) {
+    const closest = this.findClosestProgress(data.body.position);
+    this.noteObstacleHit(data, obstacle, closest.distance);
+    const frame = this.getTrackFrameAt(Math.max(closest.distance, data.distance || 0) + this.finishDirectionAssist.lookAhead);
+    const swingAngle = obstacle.swingAngle || 0;
+    const swingSide = Math.sign(swingAngle) || Math.sign(new THREE.Vector3(dx, 0, dz).dot(frame.right)) || 1;
+    const angularEnergy = Math.abs(Math.sin(swingAngle)) + 0.35;
+    const forwardBias = frame.tangent.clone().multiplyScalar(obstacle.impulse * 0.62);
+    const sideKick = frame.right.clone().multiplyScalar(swingSide * obstacle.impulse * Math.min(0.62, 0.26 + angularEnergy * 0.28));
+    const radialDistance = Math.max(0.001, Math.hypot(dx, dz));
+    const softRebound = new THREE.Vector3(dx / radialDistance, 0, dz / radialDistance).multiplyScalar(obstacle.impulse * 0.12);
+    const rawImpulse = forwardBias.add(sideKick).add(softRebound);
+    data.body.wakeUp();
+    this.applyFinishDirectedImpulse(data, rawImpulse, frame, 0.28);
+    const forwardSpeed = data.body.velocity.x * frame.tangent.x + data.body.velocity.y * frame.tangent.y + data.body.velocity.z * frame.tangent.z;
+    if (forwardSpeed < 2.2) {
+      const boost = 2.2 - forwardSpeed;
+      data.body.velocity.x += frame.tangent.x * boost;
+      data.body.velocity.y += Math.max(0, Math.min(0.1, frame.tangent.y * boost));
+      data.body.velocity.z += frame.tangent.z * boost;
+      data.lastMovementTime = this.elapsed;
+      data.lastDriveMovementTime = this.elapsed;
+    }
+    obstacle.cooldown.set(data.id, this.elapsed);
+    obstacle.pulse = 1;
+    obstacle.lastHitBy = data.name;
+    obstacle.lastPendulumForwardSpeed = Number(forwardSpeed.toFixed(3));
+    obstacle.lastPendulumSwingSide = swingSide < 0 ? 'left' : 'right';
+    this.pinballInteractions.pendulumHammer += 1;
+    this.spawnImpactEffect(obstacle.center, 0xffb347, 'ring');
+    this.pushBroadcastEvent('Pendulum Hammer', `${data.name} dodges the hammer`, {
+      kind: 'obstacle',
+      marbleId: data.id,
+      distance: data.lastObstacleHitDistance,
+      progress: data.lastObstacleHitProgress,
+      lines: [`${data.name} dodges the hammer`, `${data.name} takes the swing`, `${data.name} gets hammered forward`],
     });
   }
 
@@ -10335,20 +11542,40 @@ class MarbleRace {
   createMarbles(count) {
     const requestedCols = Math.ceil(Math.sqrt(count));
     const fallbackLayout = this.getStartGateLayout(count);
-    const laneCount = Math.max(1, this.startCatcher?.laneCount || Math.min(fallbackLayout.stallCount, requestedCols));
+    const gateEnabled = START_GATE_DESIGN.gateEnabled !== false && (!(this.physicsMechanicKey === 'toyPark' || this.visualThemeKey === 'toyPark') || START_GATE_DESIGN.toyParkGateEnabled !== false);
+    const racingGridEnabled = START_GATE_DESIGN.racingGridStartEnabled !== false && !gateEnabled && (this.physicsMechanicKey === 'toyPark' || this.visualThemeKey === 'toyPark');
+    const laneCount = racingGridEnabled
+      ? Math.max(1, Math.floor(START_GATE_DESIGN.racingGridColumns ?? 4))
+      : Math.max(1, this.startCatcher?.laneCount || Math.min(fallbackLayout.stallCount, requestedCols));
+    const racingGridRows = racingGridEnabled
+      ? Math.max(1, Math.floor(START_GATE_DESIGN.racingGridRows ?? 4))
+      : null;
+    const racingGridOccupiedPerRow = racingGridEnabled
+      ? Math.max(1, Math.min(laneCount, Math.floor(START_GATE_DESIGN.racingGridOccupiedPerRow ?? Math.ceil(laneCount / 2))))
+      : null;
     const gateWidth = this.startCatcher?.gateWidth || fallbackLayout.gateWidth;
-    const laneGap = Math.max(1.05, gateWidth / Math.max(1, laneCount));
+    const racingGridWidth = START_GATE_DESIGN.racingGridColumnSpacing ?? 1.45;
+    const laneGap = racingGridEnabled
+      ? (laneCount > 1 ? racingGridWidth / (laneCount - 1) : 0)
+      : Math.max(1.05, gateWidth / Math.max(1, laneCount));
     const cols = laneCount;
     const chuteDepth = this.startCatcher?.depth || START_GATE_DESIGN.chuteDepth;
     const highCountStaging = START_GATE_DESIGN.highCountStaging || {};
-    const maxRowsInsideChute = highCountStaging.enabled === false
-      ? Infinity
-      : Math.max(1, Math.floor(highCountStaging.maxRowsBeforeHoldingPattern ?? 3));
-    const laneRowSpacing = Math.max(1.12, Math.min(laneGap * 0.92, highCountStaging.rowSpacing ?? 1.18));
+    const maxRowsInsideChute = racingGridEnabled
+      ? racingGridRows
+      : (highCountStaging.enabled === false
+        ? Infinity
+        : Math.max(1, Math.floor(highCountStaging.maxRowsBeforeHoldingPattern ?? 3)));
+    const laneRowSpacing = racingGridEnabled
+      ? Math.max(0.95, START_GATE_DESIGN.racingGridRowSpacing ?? 1.28)
+      : Math.max(1.12, Math.min(laneGap * 0.92, highCountStaging.rowSpacing ?? 1.18));
     const gateLocalZ = this.getStartPrepLocalZForBack(START_GATE_DESIGN.gateBackDistance);
     const safeChuteBackLocalZ = -chuteDepth / 2 + 0.7;
     const safeChuteFrontLocalZ = gateLocalZ - 0.55;
-    const laneFrontLocalZ = clamp(gateLocalZ - 0.75, safeChuteBackLocalZ, safeChuteFrontLocalZ);
+    const racingGridFrontLocalZ = clamp(gateLocalZ - 0.38, safeChuteBackLocalZ, (this.startCatcher?.frontLocalZ ?? chuteDepth / 2) - 0.95);
+    const laneFrontLocalZ = racingGridEnabled
+      ? racingGridFrontLocalZ
+      : clamp(gateLocalZ - 0.75, safeChuteBackLocalZ, safeChuteFrontLocalZ);
     const laneBackLocalZ = Math.max(safeChuteBackLocalZ, laneFrontLocalZ - (maxRowsInsideChute - 1) * laneRowSpacing);
     const holdingPatternCols = laneCount;
     const holdingPatternLateralSpacing = laneGap;
@@ -10357,6 +11584,12 @@ class MarbleRace {
     this.startStagingLayout = {
       count,
       laneCount,
+      gateEnabled,
+      racingGridEnabled,
+      racingGridStyle: racingGridEnabled ? 'four-column-checkerboard-alternating-two-marbles-per-row' : null,
+      racingGridRows,
+      racingGridOccupiedPerRow,
+      racingGridPattern: racingGridEnabled ? 'row1:0-M-0-M,row2:M-0-M-0,row3:0-M-0-M,row4:M-0-M-0' : null,
       gateWidth,
       laneGap,
       maxRowsInsideChute,
@@ -10365,7 +11598,9 @@ class MarbleRace {
       holdingPatternStartLocalZ,
       holdingPatternLateralSpacing,
       holdingPatternDepthGap,
-      mode: count > cols * maxRowsInsideChute ? 'lane-plus-holding-grid' : 'lane-grid',
+      mode: racingGridEnabled
+        ? 'checkerboard-four-column-four-row-grid-no-gate'
+        : (count > cols * maxRowsInsideChute ? 'lane-plus-holding-grid' : 'lane-grid'),
     };
     this.ui.select.innerHTML = '';
     for (let i = 0; i < count; i += 1) {
@@ -10374,16 +11609,30 @@ class MarbleRace {
         : this.cupMode?.active && this.cupMode.currentEntrants?.[i]
           ? this.cupMode.currentEntrants[i]
           : this.createMarbleIdentity(i, count);
-      const { color, radius } = identity;
+      const { color } = identity;
+      const profile = this.physicsMechanic || PHYSICS_MECHANIC_PROFILES[DEFAULT_PHYSICS_MECHANIC_KEY];
+      const radius = identity.radius * (profile.marbleRadiusScale ?? 1);
+      const baseMass = 1.1 + (i % 4) * 0.04;
       const mesh = this.makeMarbleMesh(radius, color, i, identity.patternKey, identity.palette, identity.materialKey);
       const labelSprite = this.createMarbleNameLabel(identity.name);
-      const col = i % cols;
-      const row = Math.floor(i / cols);
+      const gridIndex = racingGridEnabled ? i % Math.max(1, racingGridRows * racingGridOccupiedPerRow) : i;
+      const row = racingGridEnabled
+        ? Math.floor(gridIndex / racingGridOccupiedPerRow)
+        : Math.floor(i / cols);
+      const slotInRow = racingGridEnabled ? gridIndex % racingGridOccupiedPerRow : i % cols;
+      const rowStartsWithEmptySlot = racingGridEnabled ? row % 2 === 0 : false;
+      const col = racingGridEnabled
+        ? Math.min(cols - 1, rowStartsWithEmptySlot ? slotInRow * 2 + 1 : slotInRow * 2)
+        : i % cols;
       let lane = (col - (cols - 1) / 2) * laneGap;
       let localZ;
       let localY;
-      let stagingMode = 'lane-grid';
-      if (row < maxRowsInsideChute) {
+      let stagingMode = racingGridEnabled ? 'racing-grid' : 'lane-grid';
+      if (racingGridEnabled) {
+        const columnForwardOffset = 0;
+        localZ = clamp(laneFrontLocalZ - row * laneRowSpacing + columnForwardOffset, safeChuteBackLocalZ, (this.startCatcher?.frontLocalZ ?? chuteDepth / 2) - 0.6);
+        localY = this.getStartChuteFloorTopLocalY(localZ, radius, START_GATE_DESIGN.racingGridSurfaceClearance ?? 0.018);
+      } else if (row < maxRowsInsideChute) {
         localZ = clamp(laneFrontLocalZ - row * laneRowSpacing, safeChuteBackLocalZ, safeChuteFrontLocalZ);
         localY = this.getStartChuteFloorTopLocalY(localZ, radius, 0.16);
       } else {
@@ -10401,10 +11650,10 @@ class MarbleRace {
       mesh.position.copy(start);
       this.scene.add(mesh);
       const body = new CANNON.Body({
-        mass: 1.1 + (i % 4) * 0.04,
+        mass: baseMass * (profile.marbleMassScale ?? 1),
         material: this.marbleMaterial,
-        linearDamping: NO_ROLLING_SLOWDOWN.marbleLinearDamping,
-        angularDamping: NO_ROLLING_SLOWDOWN.marbleAngularDamping,
+        linearDamping: profile.linearDamping ?? NO_ROLLING_SLOWDOWN.marbleLinearDamping,
+        angularDamping: profile.angularDamping ?? NO_ROLLING_SLOWDOWN.marbleAngularDamping,
       });
       body.allowSleep = false;
       body.sleepState = CANNON.Body.AWAKE;
@@ -10412,8 +11661,8 @@ class MarbleRace {
       body.position.copy(mesh.position);
       body.velocity.set(0, 0, 0);
       body.angularVelocity.set(0, 0, 0);
-      body.linearDamping = NO_ROLLING_SLOWDOWN.marbleLinearDamping;
-      body.angularDamping = NO_ROLLING_SLOWDOWN.marbleAngularDamping;
+      body.linearDamping = profile.linearDamping ?? NO_ROLLING_SLOWDOWN.marbleLinearDamping;
+      body.angularDamping = profile.angularDamping ?? NO_ROLLING_SLOWDOWN.marbleAngularDamping;
       const data = {
         id: i,
         code: identity.code,
@@ -10435,6 +11684,9 @@ class MarbleRace {
         sizeKey: identity.sizeKey,
         sizeName: identity.sizeName,
         radius,
+        baseRadius: identity.radius,
+        baseMass,
+        physicsMechanicKey: this.physicsMechanicKey,
         startLocalZ: localZ,
         startLocalY: localY,
         startBackDistance: backDistance,
@@ -10719,7 +11971,8 @@ class MarbleRace {
     this.elapsed = 0;
     if (!this.activeCommentary || this.activeCommentary.kind !== 'start') {
       const gateOpenLine = this.getCountdownStarterLine(performance.now());
-      this.pushBroadcastEvent('Gate Open', gateOpenLine, { kind: 'start', force: true, countdownLine: gateOpenLine });
+      const startEventTitle = this.startGate ? 'Gate Open' : 'Race Start';
+      this.pushBroadcastEvent(startEventTitle, gateOpenLine, { kind: 'start', force: true, countdownLine: gateOpenLine });
     }
     this.recordRaceHistorySample({ force: true });
     this.ui.start.textContent = 'Re-stage';
@@ -10733,15 +11986,17 @@ class MarbleRace {
     this.marbleData.forEach((data, i) => {
       if (data.startFrozenUntilGateOpen) {
         data.body.type = CANNON.Body.DYNAMIC;
-        data.body.mass = 1.1 + (i % 4) * 0.04;
+        data.body.mass = data.baseMass != null
+          ? data.baseMass * (this.physicsMechanic?.marbleMassScale ?? 1)
+          : (1.1 + (i % 4) * 0.04);
         data.body.updateMassProperties();
         data.startFrozenUntilGateOpen = false;
       }
       data.body.wakeUp();
       data.body.velocity.set(0, 0, 0);
       data.body.angularVelocity.set(0, 0, 0);
-      data.body.linearDamping = NO_ROLLING_SLOWDOWN.marbleLinearDamping;
-      data.body.angularDamping = NO_ROLLING_SLOWDOWN.marbleAngularDamping;
+      data.body.linearDamping = this.physicsMechanic?.linearDamping ?? NO_ROLLING_SLOWDOWN.marbleLinearDamping;
+      data.body.angularDamping = this.physicsMechanic?.angularDamping ?? NO_ROLLING_SLOWDOWN.marbleAngularDamping;
       data.startImpulseDisabled = true;
       data.lastDriveMovementDistance = Math.max(data.distance || 0, data.lastDriveMovementDistance || 0);
       data.lastDriveMovementTime = this.elapsed;
@@ -13575,6 +14830,7 @@ class MarbleRace {
       speedIndex: this.speedIndex,
       speedLabel: this.speedPreset.label,
       speedPreset: this.speedPreset,
+      physicsMechanic: this.getPhysicsMechanicDebug(),
       speedMultiplier: SPEED_SCALE,
       requestedSpeedScale: SPEED_SCALE,
       widthPresetKey: this.widthPresetKey,
@@ -13950,7 +15206,15 @@ class MarbleRace {
         openProgress: this.startGate.openProgress,
         opened: Boolean(this.startGate.opened),
         frozenUntilGateOpenCount: this.marbleData.filter((data) => data.startFrozenUntilGateOpen).length,
-      } : START_GATE_DESIGN,
+      } : {
+        ...START_GATE_DESIGN,
+        activeDesign: START_GATE_DESIGN.style,
+        disabled: this.startCatcher?.gateEnabled === false,
+        noGateRacingGridStart: Boolean(this.startCatcher?.noGateRacingGridStart),
+        physicsBlockers: 0,
+        opened: this.startCatcher?.gateEnabled === false,
+        frozenUntilGateOpenCount: this.marbleData.filter((data) => data.startFrozenUntilGateOpen).length,
+      },
       marbleLabelPolicy: {
         ...MARBLE_LABEL_POLICY,
         state: this.state,
@@ -14008,6 +15272,8 @@ class MarbleRace {
       modularTrackPieces: this.trackPieces,
       modularTrackPieceCounts: {
         straight: this.trackPieces.filter((piece) => piece.type === 'straight').length,
+        variableBend: this.trackPieces.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend?.key).length,
+        uTurn180: 0,
         corner45: this.trackPieces.filter((piece) => Math.abs(piece.turnDegrees) === 45).length,
         corner90: this.trackPieces.filter((piece) => Math.abs(piece.turnDegrees) === 90).length,
       },
@@ -14082,7 +15348,8 @@ class MarbleRace {
       groundY: this.groundY,
       hasStartCatcher: Boolean(this.startCatcher),
       hasStartGate: Boolean(this.startGate),
-      startGateOpen: Boolean(this.startGate?.opened),
+      startGateOpen: this.startGate ? Boolean(this.startGate.opened) : this.startCatcher?.gateEnabled === false,
+      noGateRacingGridStart: Boolean(this.startCatcher?.noGateRacingGridStart),
       hasFinishCatcher: Boolean(this.finishCatcher),
       hasFinishSpinner: Boolean(this.finishSpinner),
       hasFinishRankingContainer: Boolean(this.finishRankingContainer),
