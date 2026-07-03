@@ -4812,6 +4812,129 @@ class MarbleRace {
     this.createDecorations();
   }
 
+  detectToyParkTrackOverlapBridgeZones(pathPoints, pieceMetadata) {
+    const minPieceGap = 2;
+    const bridgePadding = 3.2;
+    const minCrossingAngleSin = 0.18;
+    const segments = [];
+    const cross2d = (ax, az, bx, bz) => ax * bz - az * bx;
+    const intersects = (a, b) => {
+      const rx = a.x2 - a.x1;
+      const rz = a.z2 - a.z1;
+      const sx = b.x2 - b.x1;
+      const sz = b.z2 - b.z1;
+      const denominator = cross2d(rx, rz, sx, sz);
+      const lengthProduct = Math.hypot(rx, rz) * Math.hypot(sx, sz);
+      if (Math.abs(denominator) < Math.max(0.0001, lengthProduct * minCrossingAngleSin)) return null;
+      const qpx = b.x1 - a.x1;
+      const qpz = b.z1 - a.z1;
+      const t = cross2d(qpx, qpz, sx, sz) / denominator;
+      const u = cross2d(qpx, qpz, rx, rz) / denominator;
+      if (t <= 0.05 || t >= 0.95 || u <= 0.05 || u >= 0.95) return null;
+      return {
+        dA: a.d1 + (a.d2 - a.d1) * t,
+        dB: b.d1 + (b.d2 - b.d1) * u,
+        x: a.x1 + rx * t,
+        z: a.z1 + rz * t,
+        angleSin: Math.abs(denominator) / Math.max(0.0001, lengthProduct),
+      };
+    };
+
+    for (let index = 1; index < pathPoints.length; index += 1) {
+      const prev = pathPoints[index - 1];
+      const point = pathPoints[index];
+      if (!Number.isFinite(prev.pieceIndex) || !Number.isFinite(point.pieceIndex)) continue;
+      if (prev.pieceIndex !== point.pieceIndex) continue;
+      segments.push({
+        pieceIndex: point.pieceIndex,
+        x1: prev.x,
+        z1: prev.z,
+        d1: prev.d,
+        x2: point.x,
+        z2: point.z,
+        d2: point.d,
+      });
+    }
+
+    const zones = [];
+    const seen = new Set();
+    for (let aIndex = 0; aIndex < segments.length; aIndex += 1) {
+      for (let bIndex = aIndex + 1; bIndex < segments.length; bIndex += 1) {
+        const a = segments[aIndex];
+        const b = segments[bIndex];
+        if (Math.abs(a.pieceIndex - b.pieceIndex) <= minPieceGap) continue;
+        const crossing = intersects(a, b);
+        if (!crossing) continue;
+        const overPieceIndex = Math.max(a.pieceIndex, b.pieceIndex);
+        const overDistance = overPieceIndex === a.pieceIndex ? crossing.dA : crossing.dB;
+        const underPieceIndex = Math.min(a.pieceIndex, b.pieceIndex);
+        const key = `${overPieceIndex}:${Math.round(overDistance * 10)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const overPiece = pieceMetadata[overPieceIndex] || null;
+        const underPiece = pieceMetadata[underPieceIndex] || null;
+        zones.push({
+          index: zones.length,
+          overPieceIndex,
+          underPieceIndex,
+          overTileKey: overPiece?.tileKey || null,
+          underTileKey: underPiece?.tileKey || null,
+          centerD: overDistance,
+          startD: Math.max(overPiece?.startD ?? 0, overDistance - bridgePadding),
+          endD: Math.min(overPiece?.endD ?? this.trackLength, overDistance + bridgePadding),
+          crossingX: crossing.x,
+          crossingZ: crossing.z,
+          crossingAngleSin: crossing.angleSin,
+          reason: 'toy-park-planar-road-overlap-raise-later-piece-as-bridge',
+        });
+      }
+    }
+    zones.sort((left, right) => left.centerD - right.centerD);
+    return zones;
+  }
+
+  applyToyParkOverlapBridgeHeights(pathPoints, pieceMetadata) {
+    if (this.physicsMechanicKey !== 'toyPark') return { enabled: false, zones: [], raisedPointCount: 0, maxHeightOffset: 0 };
+    const zones = this.detectToyParkTrackOverlapBridgeZones(pathPoints, pieceMetadata);
+    const bridgeClearance = 3.2;
+    let raisedPointCount = 0;
+    let maxHeightOffset = 0;
+    pathPoints.forEach((point) => {
+      const activeZone = zones.find((zone) => point.d >= zone.startD && point.d <= zone.endD);
+      if (!activeZone) {
+        point.toyParkBridgeHeightOffset = 0;
+        point.toyParkBridgeZoneIndex = null;
+        return;
+      }
+      const halfLength = Math.max(0.001, (activeZone.endD - activeZone.startD) / 2);
+      const normalized = clamp(1 - Math.abs(point.d - activeZone.centerD) / halfLength, 0, 1);
+      const smooth = normalized * normalized * (3 - 2 * normalized);
+      const offset = bridgeClearance * smooth;
+      point.y += offset;
+      point.toyParkBridgeHeightOffset = Number(offset.toFixed(4));
+      point.toyParkBridgeZoneIndex = activeZone.index;
+      if (offset > 0.001) raisedPointCount += 1;
+      maxHeightOffset = Math.max(maxHeightOffset, offset);
+    });
+    return {
+      enabled: true,
+      mode: 'raise-later-overlapping-road-piece-as-toy-bridge',
+      bridgeClearance,
+      zoneCount: zones.length,
+      raisedPointCount,
+      maxHeightOffset: Number(maxHeightOffset.toFixed(3)),
+      zones: zones.map((zone) => ({
+        ...zone,
+        centerD: Number(zone.centerD.toFixed(3)),
+        startD: Number(zone.startD.toFixed(3)),
+        endD: Number(zone.endD.toFixed(3)),
+        crossingX: Number(zone.crossingX.toFixed(3)),
+        crossingZ: Number(zone.crossingZ.toFixed(3)),
+        crossingAngleSin: Number(zone.crossingAngleSin.toFixed(3)),
+      })),
+    };
+  }
+
   buildPath(preset) {
     const step = Math.min(1.2, preset.segment);
     const toyParkFlatTrack = this.physicsMechanicKey === 'toyPark';
@@ -4904,7 +5027,7 @@ class MarbleRace {
           slopeDropPerMeter + slopeJitter + startRampRatio * START_RAMP.extraDropPerMeter + rightAngleExtraDrop + transitionExtraDrop
         );
         y -= deltaD * segmentDropPerMeter;
-        pathPoints.push({ x, y, z, d, w: widthAt(d), pieceType: piece.type, tileKey: piece.tileKey || null, heading, segmentDropPerMeter, startRampRatio, rightAngleRatio, rightAngleExtraDrop, transitionExtraDrop });
+        pathPoints.push({ x, y, z, d, w: widthAt(d), pieceType: piece.type, pieceIndex: index, tileKey: piece.tileKey || null, heading, segmentDropPerMeter, startRampRatio, rightAngleRatio, rightAngleExtraDrop, transitionExtraDrop });
         if (d >= targetLength) break;
       }
       heading = startHeading + piece.angleRadians;
@@ -4932,6 +5055,10 @@ class MarbleRace {
       });
     });
 
+    const toyParkOverlapBridges = toyParkFlatTrack
+      ? this.applyToyParkOverlapBridgeHeights(pathPoints, pieceMetadata)
+      : { enabled: false, zones: [], zoneCount: 0, raisedPointCount: 0, maxHeightOffset: 0 };
+    this.toyParkOverlapBridges = toyParkOverlapBridges;
     this.pathPoints = pathPoints;
     this.trackLength = pathPoints[pathPoints.length - 1].d;
     const rightAngleTurns = pieceMetadata.filter((piece) => Math.abs(piece.turnDegrees) === 90);
@@ -5023,6 +5150,10 @@ class MarbleRace {
       this.trackStats.toyParkLoopLeftBendCount = this.toyParkTrackTiles?.leftBendCount || 0;
       this.trackStats.toyParkLoopRightBendCount = this.toyParkTrackTiles?.rightBendCount || 0;
       this.trackStats.toyParkLoopNinetyDegreeBendCount = this.toyParkTrackTiles?.ninetyDegreeBendCount || 0;
+      this.trackStats.toyParkOverlapBridges = toyParkOverlapBridges;
+      this.trackStats.toyParkOverlapBridgeZoneCount = toyParkOverlapBridges.zoneCount || 0;
+      this.trackStats.toyParkOverlapBridgeRaisedPointCount = toyParkOverlapBridges.raisedPointCount || 0;
+      this.trackStats.toyParkOverlapBridgeMaxHeightOffset = toyParkOverlapBridges.maxHeightOffset || 0;
     }
     this.rightAngleTurnCount = rightAngleTurns.length;
     this.rightAngleTurns = rightAngleTurns;
@@ -5038,7 +5169,10 @@ class MarbleRace {
       minSegmentDropPerMeter: this.slopeDrive?.minSegmentDropPerMeter,
       finishHeight: pathPoints[pathPoints.length - 1].y,
       totalDrop: startHeight - pathPoints[pathPoints.length - 1].y,
-      everyPanelDownhill: pathPoints.every((point, index) => index === 0 || point.y < pathPoints[index - 1].y),
+      toyParkOverlapBridges,
+      everyPanelDownhill: toyParkFlatTrack
+        ? pathPoints.every((point) => !point.toyParkBridgeHeightOffset || point.toyParkBridgeHeightOffset >= 0)
+        : pathPoints.every((point, index) => index === 0 || point.y < pathPoints[index - 1].y),
       startRamp: {
         ...START_RAMP,
         baseDropPerMeter: slopeDropPerMeter,
@@ -5068,6 +5202,8 @@ class MarbleRace {
       standardExitWidth: toyParkFlatTrack ? this.trackWidth : null,
       widthFunction: toyParkFlatTrack ? 'constant-standard-module-width-for-all-toy-park-tile-entrances-and-exits' : 'classic-variable-width-with-narrow-sections',
       toyParkTrackTiles: this.toyParkTrackTiles,
+      toyParkOverlapBridges,
+      toyParkOverlapBridgeMode: toyParkFlatTrack ? toyParkOverlapBridges.mode : null,
       modularTrackPieces: pieceMetadata,
       straightPieceCount: straightPieces.length,
       fortyFiveTurnCount: fortyFiveTurns.length,
