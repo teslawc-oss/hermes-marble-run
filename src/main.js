@@ -5,6 +5,7 @@ import obstacleCatalogData from './obstacle-catalog.json';
 import {
   TOY_PARK_MARBLE_VISUAL_THEME,
   TOY_PARK_SOLID_BACKGROUND,
+  TOY_PARK_SOFT_GUIDE_PHYSICS,
   TOY_PARK_START_GATE_OVERRIDES,
   TOY_PARK_TRACK_TILE_LIBRARY,
   TOY_PARK_TRACK_WIDTH_SCALE,
@@ -13,6 +14,7 @@ import {
 } from './toypark/config.js';
 import {
   buildToyParkDefaultTilePieces,
+  buildToyParkBoardSequence,
   buildToyParkTrackTileSummary,
   getToyParkTileLabel,
   getToyParkTrackRoadLength,
@@ -474,9 +476,12 @@ const GUIDE_POINT_POLICY = {
   guideStallSkipDistance: 1.15,
   nonRegressionSlack: 1.15,
   finishNearestSampleSlack: 3.5,
+  overlapProjectionWindowBehind: 2.4,
+  overlapProjectionWindowAhead: 7.5,
+  maxNearestProgressJump: 8,
   guideBlockedByObstacleRadiusPadding: 0.55,
   cornerExitNextEntranceMaxDistance: 4.2,
-  label: 'guide point advances only a short distance within the current board first; if a near guide point cannot be reached, advance to the next small point, including obstacle-overlap stalls; corner exits cannot jump far into the next straight',
+  label: 'guide point advances only a short distance within the current board first; if a near guide point cannot be reached, advance to the next small point, including obstacle-overlap stalls; corner exits cannot jump far into the next straight; Toy Park overlap/bridge projection stays near current progress so stacked roads do not steal guides',
 };
 
 const DIRECTION_STABILITY_ASSIST = {
@@ -1298,9 +1303,22 @@ class MarbleRace {
     this.guidePointGroup = new THREE.Group();
     this.guidePointGroup.name = 'guide-point-marker-group';
     this.guidePointGroup.visible = false;
+    this.showPhysicsHitboxes = false;
+    this.physicsHitboxGroup = new THREE.Group();
+    this.physicsHitboxGroup.name = 'physics-hitbox-debug-group';
+    this.physicsHitboxGroup.visible = false;
     this.scene?.add?.(this.guidePointGroup);
+    this.scene?.add?.(this.physicsHitboxGroup);
     this.pinballInteractions = Object.fromEntries(PINBALL_OBSTACLE_TYPES.map((type) => [type, 0]));
+    this.toyParkSoftGuidePhysics = this.physicsMechanicKey === 'toyPark' ? (this.physicsMechanic?.softGuidePhysics || TOY_PARK_SOFT_GUIDE_PHYSICS) : null;
+    this.toyParkSoftGuideForceCount = 0;
     this.trackStats = { ribbonMeshes: 0, visibleDecks: 0, physicsDecks: 0, railTubes: 0, branchJoinDecks: 0, physicalRailBodies: 0, smoothRailJoinBodies: 0, optimizedRailBodies: 0, broadcastStageMarkers: 0 };
+    if (this.physicsMechanicKey === 'toyPark') {
+      this.trackStats.toyParkPhysicsMode = this.toyParkSoftGuidePhysics?.mode || null;
+      this.trackStats.toyParkHardSplineLock = Boolean(this.toyParkSoftGuidePhysics?.hardSplineLock);
+      this.trackStats.toyParkCollisionPreserved = Boolean(this.toyParkSoftGuidePhysics?.collisionPreserved);
+      this.trackStats.toyParkGuideAssist = this.toyParkSoftGuidePhysics || null;
+    }
     this.stuckResetPenalty = STUCK_RESET.penaltyDistance;
     this.stuckResetDelay = this.getStallEliminationDelaySeconds();
     this.stallElimination = { ...STALL_ELIMINATION, delaySeconds: this.stuckResetDelay };
@@ -1324,6 +1342,7 @@ class MarbleRace {
     this.trackPieceSystem = 'modular-pieces';
     this.trackPieces = [];
     this.slopeDrive = { ...SLOPE_DRIVE, ...((this.physicsMechanic || PHYSICS_MECHANIC_PROFILES[DEFAULT_PHYSICS_MECHANIC_KEY]).slopeDriveOverrides || {}) };
+    this.toyParkSoftGuidePhysics = this.physicsMechanicKey === 'toyPark' ? (this.physicsMechanic?.softGuidePhysics || TOY_PARK_SOFT_GUIDE_PHYSICS) : null;
     this.directionStabilityAssist = DIRECTION_STABILITY_ASSIST;
     this.landingReboundAbsorber = LANDING_REBOUND_ABSORBER;
     this.airborneGuidePolicy = AIRBORNE_GUIDE_POLICY;
@@ -1632,7 +1651,7 @@ class MarbleRace {
       finalShowcase: document.querySelector('#final-showcase'),
     };
 
-    this.leftUICollapsed = true;
+    this.leftUICollapsed = false;
     this.applyLeftUIState();
     this.applyRightUIState();
     this.setTtsPitch(this.ui.ttsPitchSlider?.value || this.ttsPitch || 1, { resetQueue: false, updateStatus: false });
@@ -1667,6 +1686,7 @@ class MarbleRace {
     this.initViewerCanvasOverlay();
     this.initWebViewerCanvasOverlay();
     this.scene.add(this.guidePointGroup);
+    this.scene.add(this.physicsHitboxGroup);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enabled = true;
     this.controls.enableDamping = true;
@@ -2495,6 +2515,7 @@ class MarbleRace {
       const isTyping = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
       if (!isTyping && event.key.toLowerCase() === 'h') this.toggleLeftUI();
       if (!isTyping && event.key.toLowerCase() === 'j') this.toggleRightUI();
+      if (!isTyping && event.key.toLowerCase() === 'p') this.togglePhysicsHitboxes();
       if (!isTyping && event.key.toLowerCase() === 'v') this.toggleSingleRecording();
       const map = { '1': 'default', '2': 'leadPack', '3': 'selected', '4': 'cinematicLeader', '5': 'orbit' };
       if (map[event.key]) this.cameraMode = map[event.key];
@@ -2510,6 +2531,7 @@ class MarbleRace {
     this.physicsMechanicAppliedAt = new Date().toISOString();
     this.speedPreset = this.getMechanicAdjustedSpeedPreset(SPEED_PRESETS[this.speedIndex] || SPEED_PRESETS[1], profile);
     this.slopeDrive = { ...SLOPE_DRIVE, ...(profile.slopeDriveOverrides || {}) };
+    this.toyParkSoftGuidePhysics = profile.key === 'toyPark' ? (profile.softGuidePhysics || TOY_PARK_SOFT_GUIDE_PHYSICS) : null;
     if (this.world?.gravity) this.world.gravity.set(0, profile.worldGravityY ?? -16, 0);
     if (this.world?.contactmaterials?.length) {
       const contactByPair = [
@@ -2567,6 +2589,18 @@ class MarbleRace {
         rail: RAIL_REBOUND,
       },
       slopeDriveModel: this.slopeDrive?.model,
+      toyParkPhysicsMode: profile.key === 'toyPark' ? (this.toyParkSoftGuidePhysics?.mode || null) : null,
+      toyParkHardSplineLock: profile.key === 'toyPark' ? Boolean(this.toyParkSoftGuidePhysics?.hardSplineLock) : null,
+      toyParkCollisionPreserved: profile.key === 'toyPark' ? Boolean(this.toyParkSoftGuidePhysics?.collisionPreserved) : null,
+      toyParkGuideAssist: profile.key === 'toyPark' ? {
+        forwardAssist: this.toyParkSoftGuidePhysics?.forwardAssist ?? null,
+        centerPull: this.toyParkSoftGuidePhysics?.centerPull ?? null,
+        curveAssist: this.toyParkSoftGuidePhysics?.curveAssist ?? null,
+        bendTangentAssist: this.toyParkSoftGuidePhysics?.bendTangentAssist ?? null,
+        maxGuideForce: this.toyParkSoftGuidePhysics?.maxGuideForce ?? null,
+        maxCombinedGuideForce: this.toyParkSoftGuidePhysics?.maxCombinedGuideForce ?? null,
+        lateralFreedom: this.toyParkSoftGuidePhysics?.lateralFreedom ?? null,
+      } : null,
       contactLabel: profile.contactLabel,
       defaultRenderUnaffected: profile.key === DEFAULT_PHYSICS_MECHANIC_KEY,
     };
@@ -2574,6 +2608,9 @@ class MarbleRace {
 
   applyInitialPreviewParams() {
     const params = new URLSearchParams(window.location.search || '');
+    this.showPhysicsHitboxes = params.get('physicsHitboxes') === '1' || params.get('hitboxes') === '1';
+    if (this.physicsHitboxGroup) this.physicsHitboxGroup.visible = this.showPhysicsHitboxes;
+    window.__MARBLE_RACE_PHYSICS_HITBOXES__ = this.showPhysicsHitboxes;
     const pathKey = String(window.location.pathname || '').replace(/^\/+|\/+$/g, '').toLowerCase();
     const mechanic = String(params.get('physicsMechanic') || '').trim();
     const toyParkPreview = pathKey === 'toypark' || mechanic.toLowerCase() === 'toypark';
@@ -3377,6 +3414,7 @@ class MarbleRace {
     this.resetPodiumCeremony();
     this.ui.pause.textContent = 'Pause';
     this.ui.start.textContent = 'Open Gate';
+    if (!regenerateTrack) this.rebuildPhysicsHitboxes();
     this.ui.regen.textContent = this.cupMode?.active ? 'Regenerate Cup Track' : 'Generate New Track';
     this.updateSpeedPreset();
     this.updateGuideBias();
@@ -3416,6 +3454,7 @@ class MarbleRace {
       this.rng = mulberry32(cyrb128(`${this.seed}-${this.trackPresetKey}-${this.customTrackLength || 'preset'}-${this.widthPresetKey}-${this.curveStyleKey}-${this.obstacleIndex}-${this.obstacleDistributionMode}`)[0]);
       this.clearTrack();
       this.createTrack();
+      this.rebuildPhysicsHitboxes();
       this.updateTrackDebugCode();
       this.refreshStallEliminationPolicy();
       this.buildGuidePointMarkers();
@@ -3697,10 +3736,16 @@ class MarbleRace {
       trackStats: this.trackStats,
       trackSlope: this.trackSlope,
       trackWidthProfile: this.trackWidthProfile,
+      toyParkTrackTiles: this.physicsMechanicKey === 'toyPark' ? (this.toyParkTrackTiles || null) : null,
+      toyParkBoardSequence: this.physicsMechanicKey === 'toyPark' ? (this.toyParkBoardSequence || this.toyParkTrackTiles?.boardSequence || null) : null,
+      toyParkBoardSequenceReadable: this.physicsMechanicKey === 'toyPark' ? (this.toyParkTrackTiles?.boardSequenceReadable || this.trackStats?.toyParkBoardSequenceReadable || []) : [],
       rightAngleTurnCount: this.rightAngleTurnCount,
       modularTrackPieceCounts: {
         straight: this.trackPieces.filter((piece) => piece.type === 'straight').length,
         variableBend: this.trackPieces.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend?.key).length,
+        rampUp: this.trackPieces.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampUp?.key).length,
+        elevatedStraight: this.trackPieces.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight?.key).length,
+        rampDown: this.trackPieces.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampDown?.key).length,
         uTurn180: 0,
         corner45: this.trackPieces.filter((piece) => Math.abs(piece.turnDegrees) === 45).length,
         corner90: this.trackPieces.filter((piece) => Math.abs(piece.turnDegrees) === 90).length,
@@ -3719,6 +3764,11 @@ class MarbleRace {
       })),
       driveAssist: {
         slopeDrive: this.slopeDrive,
+        toyParkPhysicsMode: this.physicsMechanicKey === 'toyPark' ? (this.toyParkSoftGuidePhysics?.mode || null) : null,
+        toyParkHardSplineLock: this.physicsMechanicKey === 'toyPark' ? Boolean(this.toyParkSoftGuidePhysics?.hardSplineLock) : null,
+        toyParkCollisionPreserved: this.physicsMechanicKey === 'toyPark' ? Boolean(this.toyParkSoftGuidePhysics?.collisionPreserved) : null,
+        toyParkGuideAssist: this.physicsMechanicKey === 'toyPark' ? this.toyParkSoftGuidePhysics : null,
+        toyParkSoftGuideForceCount: this.toyParkSoftGuideForceCount || 0,
         minimumForwardSpeedAssist: this.minForwardSpeedAssist,
         midTrackSpeedAssist: this.midTrackSpeedAssist,
         finalApproachAssist: this.finalApproachAssist,
@@ -3895,6 +3945,7 @@ class MarbleRace {
   clearTrack() {
     if (this.trackGroup) this.scene.remove(this.trackGroup);
     this.clearGuidePointMarkers();
+    this.clearPhysicsHitboxes();
     this.trackBodies.forEach((body) => this.world.removeBody(body));
     this.obstacleBodies.forEach((body) => this.world.removeBody(body));
     this.trackBodies = [];
@@ -3912,7 +3963,15 @@ class MarbleRace {
     this.finishCatcher = null;
     this.finishRankingContainer = null;
     this.finishSpinner = null;
+    this.toyParkSoftGuidePhysics = this.physicsMechanicKey === 'toyPark' ? (this.physicsMechanic?.softGuidePhysics || TOY_PARK_SOFT_GUIDE_PHYSICS) : null;
+    this.toyParkSoftGuideForceCount = 0;
     this.trackStats = { ribbonMeshes: 0, visibleDecks: 0, physicsDecks: 0, railTubes: 0, branchJoinDecks: 0, physicalRailBodies: 0, smoothRailJoinBodies: 0, optimizedRailBodies: 0, broadcastStageMarkers: 0 };
+    if (this.physicsMechanicKey === 'toyPark') {
+      this.trackStats.toyParkPhysicsMode = this.toyParkSoftGuidePhysics?.mode || null;
+      this.trackStats.toyParkHardSplineLock = Boolean(this.toyParkSoftGuidePhysics?.hardSplineLock);
+      this.trackStats.toyParkCollisionPreserved = Boolean(this.toyParkSoftGuidePhysics?.collisionPreserved);
+      this.trackStats.toyParkGuideAssist = this.toyParkSoftGuidePhysics || null;
+    }
     this.firstFinishTime = 0;
     this.firstFinishRealTimeMs = 0;
     this.postFirstFinishDnfCutoff = { ...POST_FIRST_FINISH_DNF_CUTOFF, triggered: false, triggeredAt: null, triggeredAtRealTimeMs: null, dnfCount: 0 };
@@ -3933,6 +3992,7 @@ class MarbleRace {
     this.trackPieceSystem = 'modular-pieces';
     this.trackPieces = [];
     this.slopeDrive = { ...SLOPE_DRIVE, ...((this.physicsMechanic || PHYSICS_MECHANIC_PROFILES[DEFAULT_PHYSICS_MECHANIC_KEY]).slopeDriveOverrides || {}) };
+    this.toyParkSoftGuidePhysics = this.physicsMechanicKey === 'toyPark' ? (this.physicsMechanic?.softGuidePhysics || TOY_PARK_SOFT_GUIDE_PHYSICS) : null;
     this.directionStabilityAssist = DIRECTION_STABILITY_ASSIST;
     this.landingReboundAbsorber = LANDING_REBOUND_ABSORBER;
     this.airborneGuidePolicy = AIRBORNE_GUIDE_POLICY;
@@ -4813,10 +4873,34 @@ class MarbleRace {
   }
 
   detectToyParkTrackOverlapBridgeZones(pathPoints, pieceMetadata) {
-    const minPieceGap = 2;
     const bridgePadding = 8.5;
     const minCrossingAngleSin = 0.12;
-    const roadFootprintOverlapDistance = Math.max(1.2, this.trackWidth * 0.95);
+    const toyParkRailOffset = this.trackStats?.toyParkRailOffset ?? 0.392;
+    const roadFloorFootprintWidth = this.trackWidth;
+    const roadRailOpeningFootprintWidth = roadFloorFootprintWidth + toyParkRailOffset * 2;
+    const roadFootprintOverlapDistance = Math.max(1.2, roadRailOpeningFootprintWidth + 0.35);
+    const startFrame = pathPoints[0] || null;
+    const startHeading = startFrame?.heading ?? -Math.PI / 2;
+    const startForward = { x: Math.cos(startHeading), z: Math.sin(startHeading) };
+    const startRight = { x: -Math.sin(startHeading), z: Math.cos(startHeading) };
+    const startBoardDepth = START_GATE_DESIGN.chuteDepth * 2;
+    const startBoardHalfDepth = startBoardDepth / 2;
+    const startBoardHalfWidth = roadRailOpeningFootprintWidth / 2;
+    const startBoardCenter = startFrame ? {
+      x: (startFrame.x || 0) - startForward.x * ((startBoardDepth - START_GATE_DESIGN.chuteDepth) / 2 + ((START_RAMP.prepTrayBackOffset + START_RAMP.prepTrayFrontOffset) / 2)),
+      z: (startFrame.z || 0) - startForward.z * ((startBoardDepth - START_GATE_DESIGN.chuteDepth) / 2 + ((START_RAMP.prepTrayBackOffset + START_RAMP.prepTrayFrontOffset) / 2)),
+    } : null;
+    const startBoardKeepout = startBoardCenter ? {
+      enabled: true,
+      reason: 'prevent-road-and-bend-tiles-from-visually-stacking-on-top-of-the-pink-start-board',
+      allowedConnectorLocalZMin: startBoardHalfDepth - 1.1,
+      centerX: Number(startBoardCenter.x.toFixed(3)),
+      centerZ: Number(startBoardCenter.z.toFixed(3)),
+      halfWidth: Number(startBoardHalfWidth.toFixed(3)),
+      halfDepth: Number(startBoardHalfDepth.toFixed(3)),
+      depth: Number(startBoardDepth.toFixed(3)),
+      railOpeningFootprintWidth: Number(roadRailOpeningFootprintWidth.toFixed(3)),
+    } : { enabled: false };
     const segments = [];
     const cross2d = (ax, az, bx, bz) => ax * bz - az * bx;
     const clampUnit = (value) => clamp(value, 0, 1);
@@ -4830,6 +4914,57 @@ class MarbleRace {
         x: segment.x1 + vx * t,
         z: segment.z1 + vz * t,
         d: segment.d1 + (segment.d2 - segment.d1) * t,
+      };
+    };
+    const pointInStartBoardKeepout = (x, z) => {
+      if (!startBoardCenter) return null;
+      const dx = x - startBoardCenter.x;
+      const dz = z - startBoardCenter.z;
+      const localX = dx * startRight.x + dz * startRight.z;
+      const localZ = dx * startForward.x + dz * startForward.z;
+      const lateralInflate = roadRailOpeningFootprintWidth * 0.5;
+      const longitudinalInflate = 0.65;
+      const inside = Math.abs(localX) <= startBoardHalfWidth + lateralInflate
+        && Math.abs(localZ) <= startBoardHalfDepth + longitudinalInflate;
+      const nearConnectorEdge = Math.abs(Math.abs(localZ) - startBoardHalfDepth) <= 1.1;
+      return {
+        inside,
+        nearConnectorEdge,
+        localX,
+        localZ,
+      };
+    };
+    const startBoardIntrusionForSegment = (segment) => {
+      if (!startBoardCenter || segment.pieceIndex == null) return null;
+      const piece = pieceMetadata[segment.pieceIndex] || null;
+      const samples = [0.2, 0.35, 0.5, 0.65, 0.8].map((t) => ({
+        t,
+        x: segment.x1 + (segment.x2 - segment.x1) * t,
+        z: segment.z1 + (segment.z2 - segment.z1) * t,
+        d: segment.d1 + (segment.d2 - segment.d1) * t,
+      }));
+      const intrusion = samples
+        .map((sample) => ({ ...sample, keepout: pointInStartBoardKeepout(sample.x, sample.z) }))
+        .find((sample) => sample.keepout?.inside && !sample.keepout?.nearConnectorEdge);
+      if (!intrusion) return null;
+      return {
+        overPieceIndex: segment.pieceIndex,
+        underPieceIndex: -1,
+        overTileKey: piece?.tileKey || null,
+        underTileKey: TOY_PARK_TRACK_TILE_LIBRARY.start.key,
+        centerD: intrusion.d,
+        startD: Math.max(piece?.startD ?? 0, intrusion.d - bridgePadding),
+        endD: Math.min(piece?.endD ?? this.trackLength, intrusion.d + bridgePadding),
+        crossingX: intrusion.x,
+        crossingZ: intrusion.z,
+        crossingAngleSin: null,
+        planarDistance: 0,
+        footprintThreshold: roadFootprintOverlapDistance,
+        detectionMode: 'road-vs-start-board-keepout-intrusion',
+        nearestSource: `segment-sample-${intrusion.t}`,
+        localX: Number(intrusion.keepout.localX.toFixed(3)),
+        localZ: Number(intrusion.keepout.localZ.toFixed(3)),
+        reason: 'toy-park-road-tile-footprint-entered-start-board-keepout-raise-later-piece-as-bridge',
       };
     };
     const nearEndpoint = (t) => t <= 0.04 || t >= 0.96;
@@ -4859,12 +4994,28 @@ class MarbleRace {
         }
       }
 
+      const pointOn = (segment, t) => ({
+        t,
+        x: segment.x1 + (segment.x2 - segment.x1) * t,
+        z: segment.z1 + (segment.z2 - segment.z1) * t,
+        d: segment.d1 + (segment.d2 - segment.d1) * t,
+      });
+      const aQuarter = pointOn(a, 0.25);
+      const aMid = pointOn(a, 0.5);
+      const aThreeQuarter = pointOn(a, 0.75);
+      const bQuarter = pointOn(b, 0.25);
+      const bMid = pointOn(b, 0.5);
+      const bThreeQuarter = pointOn(b, 0.75);
       const candidates = [
         { from: 'a1', a: { t: 0, x: a.x1, z: a.z1, d: a.d1 }, b: closestPointOnSegment(a.x1, a.z1, b) },
-        { from: 'a-mid', a: { t: 0.5, x: (a.x1 + a.x2) / 2, z: (a.z1 + a.z2) / 2, d: (a.d1 + a.d2) / 2 }, b: closestPointOnSegment((a.x1 + a.x2) / 2, (a.z1 + a.z2) / 2, b) },
+        { from: 'a-quarter', a: aQuarter, b: closestPointOnSegment(aQuarter.x, aQuarter.z, b) },
+        { from: 'a-mid', a: aMid, b: closestPointOnSegment(aMid.x, aMid.z, b) },
+        { from: 'a-three-quarter', a: aThreeQuarter, b: closestPointOnSegment(aThreeQuarter.x, aThreeQuarter.z, b) },
         { from: 'a2', a: { t: 1, x: a.x2, z: a.z2, d: a.d2 }, b: closestPointOnSegment(a.x2, a.z2, b) },
         { from: 'b1', a: closestPointOnSegment(b.x1, b.z1, a), b: { t: 0, x: b.x1, z: b.z1, d: b.d1 } },
-        { from: 'b-mid', a: closestPointOnSegment((b.x1 + b.x2) / 2, (b.z1 + b.z2) / 2, a), b: { t: 0.5, x: (b.x1 + b.x2) / 2, z: (b.z1 + b.z2) / 2, d: (b.d1 + b.d2) / 2 } },
+        { from: 'b-quarter', a: closestPointOnSegment(bQuarter.x, bQuarter.z, a), b: bQuarter },
+        { from: 'b-mid', a: closestPointOnSegment(bMid.x, bMid.z, a), b: bMid },
+        { from: 'b-three-quarter', a: closestPointOnSegment(bThreeQuarter.x, bThreeQuarter.z, a), b: bThreeQuarter },
         { from: 'b2', a: closestPointOnSegment(b.x2, b.z2, a), b: { t: 1, x: b.x2, z: b.z2, d: b.d2 } },
       ].map((candidate) => ({
         ...candidate,
@@ -4872,7 +5023,14 @@ class MarbleRace {
       })).filter((candidate) => !(nearEndpoint(candidate.a.t) && nearEndpoint(candidate.b.t)))
         .sort((left, right) => left.distance - right.distance);
       const nearest = candidates[0];
-      if (!nearest || nearest.distance > roadFootprintOverlapDistance) return null;
+      if (!nearest) return null;
+      const projectedOverlapMargin = 0.45;
+      const footprintIntersects = nearest.distance <= roadFootprintOverlapDistance
+        && (
+          angleSin >= 0.35
+          || (nearest.distance <= Math.max(1.2, roadRailOpeningFootprintWidth * 0.72 + projectedOverlapMargin))
+        );
+      if (!footprintIntersects) return null;
       return {
         dA: nearest.a.d,
         dB: nearest.b.d,
@@ -4904,13 +5062,31 @@ class MarbleRace {
 
     const zones = [];
     const seen = new Set();
+    segments.forEach((segment) => {
+      if (segment.pieceIndex <= 0) return;
+      const intrusion = startBoardIntrusionForSegment(segment);
+      if (!intrusion) return;
+      const key = `start-board:${segment.pieceIndex}:${Math.round(intrusion.centerD * 4)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      zones.push({
+        ...intrusion,
+        index: zones.length,
+      });
+    });
     for (let aIndex = 0; aIndex < segments.length; aIndex += 1) {
       for (let bIndex = aIndex + 1; bIndex < segments.length; bIndex += 1) {
         const a = segments[aIndex];
         const b = segments[bIndex];
-        if (Math.abs(a.pieceIndex - b.pieceIndex) <= minPieceGap) continue;
+        const pieceGap = Math.abs(a.pieceIndex - b.pieceIndex);
+        const aPiece = pieceMetadata[a.pieceIndex] || null;
+        const bPiece = pieceMetadata[b.pieceIndex] || null;
+        const hasBendPiece = Math.abs(aPiece?.turnDegrees || 0) > 0 || Math.abs(bPiece?.turnDegrees || 0) > 0;
+        if (pieceGap <= 1) continue;
+        if (pieceGap <= 2 && !hasBendPiece) continue;
         const crossing = crossingOrNearestApproach(a, b);
         if (!crossing) continue;
+        if (pieceGap <= 2 && crossing.detectionMode !== 'centerline-crossing') continue;
         const overPieceIndex = Math.max(a.pieceIndex, b.pieceIndex);
         const overDistance = overPieceIndex === a.pieceIndex ? crossing.dA : crossing.dB;
         const underPieceIndex = Math.min(a.pieceIndex, b.pieceIndex);
@@ -4960,39 +5136,187 @@ class MarbleRace {
       }
       mergedZones.push({ ...zone, index: mergedZones.length, mergedZoneCount: 1 });
     });
-    return mergedZones.map((zone, index) => ({ ...zone, index, centerD: (zone.startD + zone.endD) / 2 }));
+    const mergedResult = mergedZones.map((zone, index) => ({ ...zone, index, centerD: (zone.startD + zone.endD) / 2, startBoardKeepout }));
+    mergedResult.startBoardKeepout = startBoardKeepout;
+    return mergedResult;
   }
 
   applyToyParkOverlapBridgeHeights(pathPoints, pieceMetadata) {
-    if (this.physicsMechanicKey !== 'toyPark') return { enabled: false, zones: [], raisedPointCount: 0, maxHeightOffset: 0 };
+    if (this.physicsMechanicKey !== 'toyPark') return { enabled: false, zones: [], flyoverSpans: [], raisedPointCount: 0, maxHeightOffset: 0 };
     const zones = this.detectToyParkTrackOverlapBridgeZones(pathPoints, pieceMetadata);
+    if (this.toyParkTrackTiles?.rampBridgeCancelled || this.toyParkGeneratedTilePieces?.randomLoopSummary?.rampBridgeCancelled) {
+      return {
+        enabled: true,
+        mode: 'bridge-height-disabled-generator-level-overlap-avoidance',
+        bridgeClearance: 0,
+        zoneCount: zones.length,
+        startBoardKeepout: zones.startBoardKeepout || zones.find((zone) => zone.startBoardKeepout)?.startBoardKeepout || null,
+        startBoardIntrusionCount: zones.filter((zone) => zone.detectionMode === 'road-vs-start-board-keepout-intrusion').length,
+        flyoverSpanCount: 0,
+        raisedPointCount: 0,
+        maxHeightOffset: 0,
+        flyoverSpans: [],
+        rampBridgeCancelled: true,
+        replacementPolicy: 'generator-level-road-footprint-avoidance-no-ramp-bridge-tiles',
+        zones: zones.map((zone) => ({
+          ...zone,
+          centerD: Number(zone.centerD.toFixed(3)),
+          startD: Number(zone.startD.toFixed(3)),
+          endD: Number(zone.endD.toFixed(3)),
+          crossingX: Number(zone.crossingX.toFixed(3)),
+          crossingZ: Number(zone.crossingZ.toFixed(3)),
+          crossingAngleSin: Number((zone.crossingAngleSin ?? 0).toFixed(3)),
+          planarDistance: Number((zone.planarDistance ?? 0).toFixed(3)),
+          footprintThreshold: Number((zone.footprintThreshold ?? 0).toFixed(3)),
+        })),
+      };
+    }
     const bridgeClearance = 4.6;
+    const flyoverSpans = [];
+    const spanByPiece = new Map();
+    zones.forEach((zone) => {
+      const overPiece = pieceMetadata[zone.overPieceIndex] || null;
+      if (!overPiece) return;
+      const startD = overPiece.startD ?? zone.startD;
+      const endD = overPiece.endD ?? zone.endD;
+      const existing = spanByPiece.get(zone.overPieceIndex);
+      const next = existing || {
+        overPieceIndex: zone.overPieceIndex,
+        overTileKey: zone.overTileKey || overPiece.tileKey || null,
+        underPieceIndexes: new Set(),
+        underTileKeys: new Set(),
+        sourceZoneIndexes: [],
+        detectionModes: new Set(),
+        startD,
+        endD,
+        rawOverlapStartD: zone.startD,
+        rawOverlapEndD: zone.endD,
+      };
+      next.startD = Math.min(next.startD, startD);
+      next.endD = Math.max(next.endD, endD);
+      next.rawOverlapStartD = Math.min(next.rawOverlapStartD, zone.startD);
+      next.rawOverlapEndD = Math.max(next.rawOverlapEndD, zone.endD);
+      next.underPieceIndexes.add(zone.underPieceIndex);
+      if (zone.underTileKey) next.underTileKeys.add(zone.underTileKey);
+      if (zone.detectionMode) next.detectionModes.add(zone.detectionMode);
+      next.sourceZoneIndexes.push(zone.index);
+      spanByPiece.set(zone.overPieceIndex, next);
+    });
+    Array.from(spanByPiece.values())
+      .sort((left, right) => left.startD - right.startD)
+      .forEach((span) => {
+        const previous = flyoverSpans[flyoverSpans.length - 1];
+        if (previous && span.startD <= previous.endD + 0.75) {
+          previous.endD = Math.max(previous.endD, span.endD);
+          previous.rawOverlapStartD = Math.min(previous.rawOverlapStartD, span.rawOverlapStartD);
+          previous.rawOverlapEndD = Math.max(previous.rawOverlapEndD, span.rawOverlapEndD);
+          previous.overPieceIndexes.push(span.overPieceIndex);
+          if (span.overTileKey) previous.overTileKeys.add(span.overTileKey);
+          span.underPieceIndexes.forEach((value) => previous.underPieceIndexes.add(value));
+          span.underTileKeys.forEach((value) => previous.underTileKeys.add(value));
+          span.detectionModes.forEach((value) => previous.detectionModes.add(value));
+          previous.sourceZoneIndexes.push(...span.sourceZoneIndexes);
+          return;
+        }
+        flyoverSpans.push({
+          ...span,
+          index: flyoverSpans.length,
+          overPieceIndexes: [span.overPieceIndex],
+          overTileKeys: new Set(span.overTileKey ? [span.overTileKey] : []),
+        });
+      });
+    flyoverSpans.forEach((span, index) => {
+      span.index = index;
+      span.overPieceIndexes = Array.from(new Set(span.overPieceIndexes)).sort((a, b) => a - b);
+      const firstOverPieceIndex = span.overPieceIndexes[0];
+      const lastOverPieceIndex = span.overPieceIndexes[span.overPieceIndexes.length - 1];
+      const rampUpPieceIndex = Math.max(0, firstOverPieceIndex - 1);
+      const rampDownPieceIndex = Math.min(pieceMetadata.length - 1, lastOverPieceIndex + 1);
+      span.rampUpPieceIndex = rampUpPieceIndex;
+      span.rampDownPieceIndex = rampDownPieceIndex;
+      span.elevatedPieceIndexes = [];
+      for (let pieceIndex = firstOverPieceIndex; pieceIndex <= lastOverPieceIndex; pieceIndex += 1) {
+        if (pieceIndex !== rampUpPieceIndex && pieceIndex !== rampDownPieceIndex) span.elevatedPieceIndexes.push(pieceIndex);
+      }
+      const rampUpPiece = pieceMetadata[rampUpPieceIndex] || null;
+      const rampDownPiece = pieceMetadata[rampDownPieceIndex] || null;
+      span.startD = rampUpPiece?.startD ?? span.startD;
+      span.endD = rampDownPiece?.endD ?? span.endD;
+      span.length = Math.max(0.001, span.endD - span.startD);
+      span.rampLength = Math.max(0.001, (rampUpPiece?.endD ?? span.startD) - (rampUpPiece?.startD ?? span.startD));
+      span.rampDownLength = Math.max(0.001, (rampDownPiece?.endD ?? span.endD) - (rampDownPiece?.startD ?? span.endD));
+      span.plateauStartD = rampUpPiece?.endD ?? span.startD;
+      span.plateauEndD = rampDownPiece?.startD ?? span.endD;
+      span.centerD = (span.startD + span.endD) / 2;
+      span.tileAwareRampMode = 'rollback-one-board-ramp-up-ordinary-boards-elevated-until-clear-then-ramp-down';
+    });
+
     let raisedPointCount = 0;
     let maxHeightOffset = 0;
     pathPoints.forEach((point) => {
-      const activeZone = zones.find((zone) => point.d >= zone.startD && point.d <= zone.endD);
-      if (!activeZone) {
+      const activeSpan = flyoverSpans.find((span) => point.d >= span.startD && point.d <= span.endD);
+      if (!activeSpan) {
         point.toyParkBridgeHeightOffset = 0;
         point.toyParkBridgeZoneIndex = null;
+        point.toyParkBridgeSpanIndex = null;
+        point.toyParkBridgePieceRole = null;
         return;
       }
-      const halfLength = Math.max(0.001, (activeZone.endD - activeZone.startD) / 2);
-      const normalized = clamp(1 - Math.abs(point.d - activeZone.centerD) / halfLength, 0, 1);
+      const piece = pieceMetadata[point.pieceIndex] || null;
+      let normalized = 1;
+      let bridgePieceRole = 'elevated-ordinary-board';
+      if (point.pieceIndex === activeSpan.rampUpPieceIndex) {
+        normalized = clamp((point.d - (piece?.startD ?? activeSpan.startD)) / Math.max(0.001, (piece?.endD ?? activeSpan.plateauStartD) - (piece?.startD ?? activeSpan.startD)), 0, 1);
+        bridgePieceRole = 'ramp-up-rollback-board';
+      } else if (point.pieceIndex === activeSpan.rampDownPieceIndex) {
+        normalized = clamp(((piece?.endD ?? activeSpan.endD) - point.d) / Math.max(0.001, (piece?.endD ?? activeSpan.endD) - (piece?.startD ?? activeSpan.plateauEndD)), 0, 1);
+        bridgePieceRole = 'ramp-down-after-overlap-board';
+      }
       const smooth = normalized * normalized * (3 - 2 * normalized);
       const offset = bridgeClearance * smooth;
       point.y += offset;
       point.toyParkBridgeHeightOffset = Number(offset.toFixed(4));
-      point.toyParkBridgeZoneIndex = activeZone.index;
+      point.toyParkBridgeZoneIndex = activeSpan.sourceZoneIndexes[0] ?? null;
+      point.toyParkBridgeSpanIndex = activeSpan.index;
+      point.toyParkBridgePieceRole = bridgePieceRole;
       if (offset > 0.001) raisedPointCount += 1;
       maxHeightOffset = Math.max(maxHeightOffset, offset);
     });
+    const summarizeSpan = (span) => ({
+      index: span.index,
+      mode: 'tile-aware-flyover-rollback-one-board-ramp-up-elevated-ordinary-boards-ramp-down',
+      tileAwareRampMode: span.tileAwareRampMode,
+      rampUpPieceIndex: span.rampUpPieceIndex,
+      elevatedPieceIndexes: span.elevatedPieceIndexes,
+      rampDownPieceIndex: span.rampDownPieceIndex,
+      overPieceIndexes: span.overPieceIndexes,
+      overTileKeys: Array.from(span.overTileKeys),
+      underPieceIndexes: Array.from(span.underPieceIndexes).sort((a, b) => a - b),
+      underTileKeys: Array.from(span.underTileKeys),
+      sourceZoneIndexes: span.sourceZoneIndexes,
+      detectionModes: Array.from(span.detectionModes),
+      startD: Number(span.startD.toFixed(3)),
+      endD: Number(span.endD.toFixed(3)),
+      centerD: Number(span.centerD.toFixed(3)),
+      length: Number(span.length.toFixed(3)),
+      rampLength: Number(span.rampLength.toFixed(3)),
+      rampDownLength: Number(span.rampDownLength.toFixed(3)),
+      plateauStartD: Number(span.plateauStartD.toFixed(3)),
+      plateauEndD: Number(span.plateauEndD.toFixed(3)),
+      rawOverlapStartD: Number(span.rawOverlapStartD.toFixed(3)),
+      rawOverlapEndD: Number(span.rawOverlapEndD.toFixed(3)),
+    });
     return {
       enabled: true,
-      mode: 'raise-later-overlapping-road-piece-as-toy-bridge',
+      mode: 'tile-aware-flyover-rollback-one-board-ramp-up-elevated-ordinary-boards-ramp-down',
       bridgeClearance,
       zoneCount: zones.length,
+      startBoardKeepout: zones.startBoardKeepout || zones.find((zone) => zone.startBoardKeepout)?.startBoardKeepout || null,
+      startBoardIntrusionCount: zones.filter((zone) => zone.detectionMode === 'road-vs-start-board-keepout-intrusion').length,
+      flyoverSpanCount: flyoverSpans.length,
       raisedPointCount,
       maxHeightOffset: Number(maxHeightOffset.toFixed(3)),
+      flyoverSpans: flyoverSpans.map(summarizeSpan),
       zones: zones.map((zone) => ({
         ...zone,
         centerD: Number(zone.centerD.toFixed(3)),
@@ -5099,7 +5423,35 @@ class MarbleRace {
           slopeDropPerMeter + slopeJitter + startRampRatio * START_RAMP.extraDropPerMeter + rightAngleExtraDrop + transitionExtraDrop
         );
         y -= deltaD * segmentDropPerMeter;
-        pathPoints.push({ x, y, z, d, w: widthAt(d), pieceType: piece.type, pieceIndex: index, tileKey: piece.tileKey || null, heading, segmentDropPerMeter, startRampRatio, rightAngleRatio, rightAngleExtraDrop, transitionExtraDrop });
+        if (toyParkFlatTrack && piece.elevationRole) {
+          const bridgeHeight = piece.bridgeHeight ?? TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight?.bridgeHeight ?? 0;
+          let elevationOffset = 0;
+          if (piece.elevationRole === 'ramp-up') elevationOffset = bridgeHeight * localT;
+          else if (piece.elevationRole === 'elevated') elevationOffset = bridgeHeight;
+          else if (piece.elevationRole === 'ramp-down') elevationOffset = bridgeHeight * (1 - localT);
+          y = startHeight + elevationOffset;
+        }
+        pathPoints.push({
+          x,
+          y,
+          z,
+          d,
+          w: widthAt(d),
+          pieceType: piece.type,
+          pieceIndex: index,
+          tileKey: piece.tileKey || null,
+          heading,
+          segmentDropPerMeter,
+          startRampRatio,
+          rightAngleRatio,
+          rightAngleExtraDrop,
+          transitionExtraDrop,
+          elevationRole: piece.elevationRole ?? null,
+          bridgeModule: Boolean(piece.bridgeModule),
+          bridgeModuleRole: piece.bridgeModuleRole ?? null,
+          bridgeHeight: piece.bridgeHeight ?? 0,
+          toyParkIndependentBridgeHeightOffset: toyParkFlatTrack && piece.elevationRole ? Number((y - startHeight).toFixed(4)) : 0,
+        });
         if (d >= targetLength) break;
       }
       heading = startHeading + piece.angleRadians;
@@ -5122,6 +5474,15 @@ class MarbleRace {
         randomLoopStraightIndex: piece.randomLoopStraightIndex ?? null,
         turnDirection: piece.turnDirection ?? null,
         closureSolved: Boolean(piece.closureSolved),
+        elevationRole: piece.elevationRole ?? null,
+        bridgeHeight: piece.bridgeHeight ?? 0,
+        bridgeModule: Boolean(piece.bridgeModule),
+        bridgeModuleIndex: piece.bridgeModuleIndex ?? null,
+        bridgeModuleRole: piece.bridgeModuleRole ?? null,
+        bridgeHostStraightIndex: piece.bridgeHostStraightIndex ?? null,
+        pathHeightMode: piece.elevationRole
+          ? 'independent-ramp-up-elevated-ramp-down-board-height-from-piece-metadata'
+          : null,
         startHeading,
         endHeading: heading,
       });
@@ -5129,7 +5490,7 @@ class MarbleRace {
 
     const toyParkOverlapBridges = toyParkFlatTrack
       ? this.applyToyParkOverlapBridgeHeights(pathPoints, pieceMetadata)
-      : { enabled: false, zones: [], zoneCount: 0, raisedPointCount: 0, maxHeightOffset: 0 };
+      : { enabled: false, zones: [], flyoverSpans: [], zoneCount: 0, flyoverSpanCount: 0, raisedPointCount: 0, maxHeightOffset: 0 };
     this.toyParkOverlapBridges = toyParkOverlapBridges;
     this.pathPoints = pathPoints;
     this.trackLength = pathPoints[pathPoints.length - 1].d;
@@ -5203,6 +5564,7 @@ class MarbleRace {
     });
     this.trackPieceSystem = toyParkFlatTrack ? 'toy-park-road-tile-modules' : 'modular-pieces';
     this.trackPieces = pieceMetadata;
+    this.toyParkBoardSequence = toyParkFlatTrack ? buildToyParkBoardSequence({ pieceMetadata, loopClosure }) : null;
     this.toyParkTrackTiles = toyParkFlatTrack ? buildToyParkTrackTileSummary({
       pieceMetadata,
       rightAngleTurns,
@@ -5217,13 +5579,28 @@ class MarbleRace {
       this.trackStats.toyParkLoopRoadTileCount = pieceMetadata.length;
       this.trackStats.toyParkLoopTotalTurnDegrees = Number(totalTurnDegrees.toFixed(3));
       this.trackStats.toyParkLoopTileSequence = this.toyParkTrackTiles?.sequence || [];
+      this.trackStats.toyParkBoardSequence = this.toyParkBoardSequence;
+      this.trackStats.toyParkBoardSequenceReadable = this.toyParkTrackTiles?.boardSequenceReadable || [];
       this.trackStats.toyParkRandomLoopSummary = this.toyParkTrackTiles?.randomLoop || null;
+      this.trackStats.toyParkIndependentBridgeModules = this.toyParkTrackTiles?.independentBridgeModules || null;
+      this.trackStats.toyParkIndependentBridgeModuleCount = this.toyParkTrackTiles?.independentBridgeModules
+        ? this.toyParkTrackTiles.independentBridgeModules.rampUp + this.toyParkTrackTiles.independentBridgeModules.elevatedStraight + this.toyParkTrackTiles.independentBridgeModules.rampDown
+        : 0;
+      this.trackStats.toyParkIndependentBridgePathHeightMode = this.toyParkTrackTiles?.independentBridgeModules?.pathHeightMode || null;
       this.trackStats.toyParkRandomGeneratedSequence = Boolean(this.toyParkTrackTiles?.randomGeneratedSequence);
       this.trackStats.toyParkLoopLeftBendCount = this.toyParkTrackTiles?.leftBendCount || 0;
       this.trackStats.toyParkLoopRightBendCount = this.toyParkTrackTiles?.rightBendCount || 0;
       this.trackStats.toyParkLoopNinetyDegreeBendCount = this.toyParkTrackTiles?.ninetyDegreeBendCount || 0;
       this.trackStats.toyParkOverlapBridges = toyParkOverlapBridges;
       this.trackStats.toyParkOverlapBridgeZoneCount = toyParkOverlapBridges.zoneCount || 0;
+      this.trackStats.toyParkStartBoardKeepout = toyParkOverlapBridges.startBoardKeepout || toyParkOverlapBridges.zones?.find((zone) => zone.startBoardKeepout)?.startBoardKeepout || null;
+      this.trackStats.toyParkStartBoardOverlapFixCount = toyParkOverlapBridges.startBoardIntrusionCount || 0;
+      this.trackStats.toyParkStartBoardOverlapFixStatus = (toyParkOverlapBridges.startBoardIntrusionCount || 0) > 0
+        ? 'road-or-bend-tile-entered-start-board-keepout-detected-but-ramp-bridge-disabled-generator-should-reject-this-route'
+        : 'start-board-keepout-active-no-road-tile-intrusion-detected';
+      this.trackStats.toyParkOverlapBridgeFlyoverSpanCount = toyParkOverlapBridges.flyoverSpanCount || 0;
+      this.trackStats.toyParkOverlapBridgeFlyoverSpans = toyParkOverlapBridges.flyoverSpans || [];
+      this.trackStats.toyParkOverlapBridgeMode = toyParkOverlapBridges.mode || null;
       this.trackStats.toyParkOverlapBridgeRaisedPointCount = toyParkOverlapBridges.raisedPointCount || 0;
       this.trackStats.toyParkOverlapBridgeMaxHeightOffset = toyParkOverlapBridges.maxHeightOffset || 0;
     }
@@ -5231,9 +5608,10 @@ class MarbleRace {
     this.rightAngleTurns = rightAngleTurns;
     this.hairpinTurnCount = rightAngleTurns.length;
     this.hairpinTurns = rightAngleTurns;
+    const bridgeCfg = this.toyParkTrackTiles?.independentBridgeModules;
     this.trackSlope = {
       enabled: !toyParkFlatTrack,
-      mode: toyParkFlatTrack ? 'flat-playset-no-gravity-drive' : 'downhill-slope',
+      mode: toyParkFlatTrack ? 'flat-playset-generator-level-road-footprint-avoidance-no-independent-bridge-height-modules' : 'downhill-slope',
       slopeDriveModel: this.slopeDrive?.model,
       startHeight,
       flatTrack: toyParkFlatTrack,
@@ -5241,6 +5619,10 @@ class MarbleRace {
       minSegmentDropPerMeter: this.slopeDrive?.minSegmentDropPerMeter,
       finishHeight: pathPoints[pathPoints.length - 1].y,
       totalDrop: startHeight - pathPoints[pathPoints.length - 1].y,
+      independentBridgeModules: bridgeCfg || null,
+      toyParkIndependentBridgeModuleCount: bridgeCfg ? (bridgeCfg.rampUp + bridgeCfg.elevatedStraight + bridgeCfg.rampDown) : 0,
+      toyParkIndependentBridgeMaxHeightOffset: bridgeCfg?.inserted ? bridgeCfg.height : 0,
+      toyParkIndependentBridgePathHeightMode: bridgeCfg?.pathHeightMode || null,
       toyParkOverlapBridges,
       everyPanelDownhill: toyParkFlatTrack
         ? pathPoints.every((point) => !point.toyParkBridgeHeightOffset || point.toyParkBridgeHeightOffset >= 0)
@@ -5274,6 +5656,7 @@ class MarbleRace {
       standardExitWidth: toyParkFlatTrack ? this.trackWidth : null,
       widthFunction: toyParkFlatTrack ? 'constant-standard-module-width-for-all-toy-park-tile-entrances-and-exits' : 'classic-variable-width-with-narrow-sections',
       toyParkTrackTiles: this.toyParkTrackTiles,
+      toyParkBoardSequence: this.toyParkBoardSequence,
       toyParkOverlapBridges,
       toyParkOverlapBridgeMode: toyParkFlatTrack ? toyParkOverlapBridges.mode : null,
       modularTrackPieces: pieceMetadata,
@@ -5339,6 +5722,7 @@ class MarbleRace {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.receiveShadow = PERFORMANCE_TUNING.shadows;
     mesh.name = options.name || mesh.name;
+    if (options.renderOrder !== undefined) mesh.renderOrder = options.renderOrder;
     mesh.userData = {
       ...(mesh.userData || {}),
       ...(options.userData || {}),
@@ -5503,18 +5887,21 @@ class MarbleRace {
     // Keep the collision lip thick and close to the visible tube so fast cornering marbles
     // cannot squeeze between short/chorded rail bodies on tight bends.
     // If a marble jumps clearly above the rail, it can still leave the track naturally.
-    const wallHeight = 1.12;
-    const wallThickness = 0.98;
-    const wallBaseOffset = -0.06;
-    const railCenterOffset = 0.58;
+    const wallHeight = this.physicsMechanicKey === 'toyPark' ? 0.72 : 1.12;
+    const wallThickness = this.physicsMechanicKey === 'toyPark' ? 0.68 : 0.98;
+    const wallBaseOffset = this.physicsMechanicKey === 'toyPark' ? -0.02 : -0.06;
+    const railCenterOffset = this.physicsMechanicKey === 'toyPark' ? 0.64 : 0.58;
+    const toyParkRailHitboxMode = this.physicsMechanicKey === 'toyPark';
     const targetBodyBudget = this.performanceProfile?.maxPhysicalRailBodies || 520;
     const budgetInterval = this.trackLength > 0 ? (this.trackLength * 2) / targetBodyBudget : 1.65;
-    const interval = clamp(
-      Math.max(this.performanceProfile?.guardRailInterval || 1.65, budgetInterval),
-      1.35,
-      2.45
-    );
-    const overlap = this.performanceProfile?.guardRailOverlap || 3.35;
+    const interval = toyParkRailHitboxMode
+      ? clamp(Math.max(0.72, Math.min(budgetInterval, 0.82)), 0.58, 0.86)
+      : clamp(
+        Math.max(this.performanceProfile?.guardRailInterval || 1.65, budgetInterval),
+        1.35,
+        2.45
+      );
+    const overlap = toyParkRailHitboxMode ? 0.42 : (this.performanceProfile?.guardRailOverlap || 3.35);
     let railBodies = 0;
     let smoothJoinBodies = 0;
     for (let d = 0; d < this.trackLength; d += interval) {
@@ -5546,7 +5933,13 @@ class MarbleRace {
           thickness: wallHeight,
           overlap,
           physicsMaterial: this.railMaterial,
-          userData: { type: 'guard-rail', railSide: side, railSampleDistance: Number(d.toFixed(2)) },
+          userData: {
+            type: 'guard-rail',
+            railSide: side,
+            railSampleDistance: Number(d.toFixed(2)),
+            toyParkInsetReduced: this.physicsMechanicKey === 'toyPark',
+            toyParkShortCornerSegments: toyParkRailHitboxMode,
+          },
         });
         railBodies += 1;
         smoothJoinBodies += 1;
@@ -5564,9 +5957,13 @@ class MarbleRace {
     this.trackStats.physicalRailOuterLipFromTrackEdge = Number((railCenterOffset + wallThickness / 2).toFixed(3));
     this.trackStats.physicalRailHeight = wallHeight;
     this.trackStats.physicalRailTopAboveTrack = wallHeight + wallBaseOffset;
-    this.trackStats.physicalRailEscapeStyle = 'thicker-low-side-lip-catches-fast-cornering-marbles-but-allows-clear-jumps';
+    this.trackStats.physicalRailEscapeStyle = this.physicsMechanicKey === 'toyPark'
+      ? 'toy-park-medium-width-short-chord-lips-contact-earlier-without-long-corner-bars'
+      : 'thicker-low-side-lip-catches-fast-cornering-marbles-but-allows-clear-jumps';
     this.trackStats.physicalRailBodyBudget = targetBodyBudget;
-    this.trackStats.railOptimization = 'denser-thicker-overlapped-side-lip-bodies';
+    this.trackStats.railOptimization = this.physicsMechanicKey === 'toyPark'
+      ? 'toy-park-medium-width-short-segment-rail-hitboxes-earlier-contact-smoother-corners'
+      : 'denser-thicker-overlapped-side-lip-bodies';
   }
 
   addTrackSegment(a, b, width, material, addPhysics, options = {}) {
@@ -5590,10 +5987,19 @@ class MarbleRace {
     }
     if (!addPhysics) return mesh;
     const body = new CANNON.Body({ mass: 0, material: options.physicsMaterial || this.trackMaterial });
-    body.addShape(new CANNON.Box(new CANNON.Vec3(width / 2, thickness / 2, (length + extraLength) / 2)));
+    const halfExtents = new CANNON.Vec3(width / 2, thickness / 2, (length + extraLength) / 2);
+    body.addShape(new CANNON.Box(halfExtents));
     body.position.copy(center);
     body.quaternion.setFromEuler(pitch, yaw, 0, 'YXZ');
-    if (options.userData) body.userData = { ...(body.userData || {}), ...options.userData };
+    body.userData = {
+      ...(body.userData || {}),
+      ...(options.userData || {}),
+      debugShape: 'box',
+      debugHalfExtents: { x: halfExtents.x, y: halfExtents.y, z: halfExtents.z },
+      debugWidth: width,
+      debugThickness: thickness,
+      debugLength: length + extraLength,
+    };
     this.world.addBody(body);
     this.trackBodies.push(body);
     return mesh ? mesh : body;
@@ -6202,11 +6608,16 @@ class MarbleRace {
           group.add(rail);
           toyParkStartSideRailChunkCount += 1;
         }
-        const body = new CANNON.Body({ mass: 0, material: this.railMaterial || this.obstacleMaterial });
-        body.addShape(new CANNON.Box(new CANNON.Vec3(railThickness / 2, railHeight / 2, railDepth / 2)));
-        body.position.copy(center.clone().add(this.localToWorldOffset(x, railHeight / 2 + 0.006, railCenterLocalZ, yaw)));
+        const body = new CANNON.Body({
+          mass: 0,
+          material: isToyParkStartTile ? this.trackMaterial : (this.railMaterial || this.obstacleMaterial),
+        });
+        const railPhysicsHalfWidth = isToyParkStartTile ? 0.34 : railThickness / 2;
+        const railPhysicsHalfHeight = isToyParkStartTile ? Math.min(0.34, railHeight / 2) : railHeight / 2;
+        body.addShape(new CANNON.Box(new CANNON.Vec3(railPhysicsHalfWidth, railPhysicsHalfHeight, railDepth / 2)));
+        body.position.copy(center.clone().add(this.localToWorldOffset(x, railPhysicsHalfHeight + 0.006, railCenterLocalZ, yaw)));
         body.quaternion.setFromEuler(pitch, yaw, 0, 'YXZ');
-        body.userData = { name: `TOY_PARK_START_BOARD_SIDE_RAIL_BODY_${sideLabel}`, startSideRailBody: true, startLaneBoard: true, outerLaneBoard: true, noInternalLaneDivider: true, matchesTrackRailSize: true, railFrontFlushWithBoard: true, railDepth, railCenterLocalZ };
+        body.userData = { name: `TOY_PARK_START_BOARD_SIDE_RAIL_BODY_${sideLabel}`, startSideRailBody: true, startLaneBoard: true, outerLaneBoard: true, noInternalLaneDivider: true, matchesTrackRailSize: true, railFrontFlushWithBoard: true, railDepth, railCenterLocalZ, reducedProtrudingHitbox: true, startSideRailSoftContact: true, contactMaterialRole: 'track-soft-start-side-rail', visualRailHalfWidth: railThickness / 2, physicsRailHalfWidth: railPhysicsHalfWidth, physicsRailInnerLipFromTrackEdge: Number(((toyParkStartSideRailOffset || 0) - railPhysicsHalfWidth).toFixed(3)), debugShape: 'box', debugHalfExtents: { x: railPhysicsHalfWidth, y: railPhysicsHalfHeight, z: railDepth / 2 } };
         this.world.addBody(body);
         this.trackBodies.push(body);
         continue;
@@ -6898,9 +7309,113 @@ class MarbleRace {
     body.addShape(new CANNON.Box(new CANNON.Vec3(halfExtents.x, halfExtents.y, halfExtents.z)));
     body.position.copy(position);
     body.quaternion.setFromEuler(0, yaw, 0);
+    body.userData = {
+      ...(body.userData || {}),
+      debugHalfExtents: { x: halfExtents.x, y: halfExtents.y, z: halfExtents.z },
+      debugShape: 'box',
+    };
     this.world.addBody(body);
     this.trackBodies.push(body);
     return body;
+  }
+
+  clearPhysicsHitboxes() {
+    if (!this.physicsHitboxGroup) return;
+    this.physicsHitboxGroup.children.slice().forEach((child) => {
+      this.physicsHitboxGroup.remove(child);
+      child.geometry?.dispose?.();
+      child.material?.dispose?.();
+    });
+    this.physicsHitboxSummary = { total: 0 };
+  }
+
+  getPhysicsHitboxMaterial(body, shapeIndex = 0) {
+    const data = body?.userData || {};
+    const color = data.startSideRailBody || data.startLaneBoard
+      ? 0xff4fd8
+      : data.trackDeck || data.trackSlopePitch !== undefined
+        ? 0x48e5ff
+        : data.name?.toLowerCase?.().includes('rail')
+          ? 0xffcc33
+          : 0x8dff65;
+    const key = `${color}-${shapeIndex}`;
+    this.physicsHitboxMaterials ||= new Map();
+    if (!this.physicsHitboxMaterials.has(key)) {
+      this.physicsHitboxMaterials.set(key, new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.28,
+        wireframe: true,
+        depthTest: false,
+      }));
+    }
+    return this.physicsHitboxMaterials.get(key);
+  }
+
+  createPhysicsHitboxMeshForShape(body, shape, shapeIndex = 0) {
+    if (!body || !shape) return null;
+    let geometry = null;
+    if (shape instanceof CANNON.Box) {
+      const he = shape.halfExtents;
+      geometry = new THREE.BoxGeometry(he.x * 2, he.y * 2, he.z * 2);
+    } else if (shape.radiusTop !== undefined && shape.radiusBottom !== undefined && shape.height !== undefined) {
+      geometry = new THREE.CylinderGeometry(shape.radiusTop, shape.radiusBottom, shape.height, 16);
+    } else if (shape.radius !== undefined) {
+      geometry = new THREE.SphereGeometry(shape.radius, 16, 12);
+    }
+    if (!geometry) return null;
+    const mesh = new THREE.Mesh(geometry, this.getPhysicsHitboxMaterial(body, shapeIndex));
+    const offset = body.shapeOffsets?.[shapeIndex] || new CANNON.Vec3(0, 0, 0);
+    const orientation = body.shapeOrientations?.[shapeIndex] || new CANNON.Quaternion(0, 0, 0, 1);
+    const bodyQuat = new THREE.Quaternion(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+    const localOffset = new THREE.Vector3(offset.x, offset.y, offset.z).applyQuaternion(bodyQuat);
+    mesh.position.set(body.position.x + localOffset.x, body.position.y + localOffset.y, body.position.z + localOffset.z);
+    const shapeQuat = new THREE.Quaternion(orientation.x, orientation.y, orientation.z, orientation.w);
+    mesh.quaternion.copy(bodyQuat).multiply(shapeQuat);
+    mesh.renderOrder = 999;
+    mesh.userData = {
+      type: 'physics-hitbox-debug-mesh',
+      bodyName: body.userData?.name || null,
+      bodyUserData: body.userData || {},
+      shapeIndex,
+    };
+    return mesh;
+  }
+
+  rebuildPhysicsHitboxes() {
+    if (!this.physicsHitboxGroup) return;
+    this.clearPhysicsHitboxes();
+    const bodies = [...(this.trackBodies || []), ...(this.obstacleBodies || [])];
+    let added = 0;
+    bodies.forEach((body) => {
+      (body.shapes || []).forEach((shape, shapeIndex) => {
+        const mesh = this.createPhysicsHitboxMeshForShape(body, shape, shapeIndex);
+        if (!mesh) return;
+        this.physicsHitboxGroup.add(mesh);
+        added += 1;
+      });
+    });
+    this.physicsHitboxGroup.visible = Boolean(this.showPhysicsHitboxes);
+    this.physicsHitboxSummary = {
+      total: added,
+      bodies: bodies.length,
+      trackBodies: this.trackBodies?.length || 0,
+      obstacleBodies: this.obstacleBodies?.length || 0,
+      visible: Boolean(this.showPhysicsHitboxes),
+    };
+    window.__MARBLE_RACE_PHYSICS_HITBOX_SUMMARY__ = this.physicsHitboxSummary;
+    return this.physicsHitboxSummary;
+  }
+
+  togglePhysicsHitboxes(force = null) {
+    this.showPhysicsHitboxes = force === null ? !this.showPhysicsHitboxes : Boolean(force);
+    if (!this.physicsHitboxGroup || !this.physicsHitboxGroup.children.length) this.rebuildPhysicsHitboxes();
+    if (this.physicsHitboxGroup) this.physicsHitboxGroup.visible = this.showPhysicsHitboxes;
+    this.physicsHitboxSummary = { ...(this.physicsHitboxSummary || {}), visible: this.showPhysicsHitboxes };
+    window.__MARBLE_RACE_PHYSICS_HITBOXES__ = this.showPhysicsHitboxes;
+    window.__MARBLE_RACE_PHYSICS_HITBOX_SUMMARY__ = this.physicsHitboxSummary;
+    console.info(`[MarbleRace] Physics hitboxes ${this.showPhysicsHitboxes ? 'shown' : 'hidden'}`, this.physicsHitboxSummary);
+    return this.showPhysicsHitboxes;
   }
 
   getTrackPointAt(distance) {
@@ -6996,16 +7511,53 @@ class MarbleRace {
     };
   }
 
-  findClosestProgress(position) {
-    let best = this.trackSamples[0];
+  findClosestProgress(position, options = {}) {
+    const minDistance = Number.isFinite(options.minDistance) ? Math.max(0, options.minDistance) : -Infinity;
+    const maxDistance = Number.isFinite(options.maxDistance) ? Math.min(this.trackLength || Infinity, options.maxDistance) : Infinity;
+    const fallbackDistance = Number.isFinite(options.fallbackDistance) ? clamp(options.fallbackDistance, 0, this.trackLength || Infinity) : null;
+    let best = null;
     let bestDist = Infinity;
     for (const sample of this.trackSamples) {
+      if (sample.d < minDistance || sample.d > maxDistance) continue;
       const dx = position.x - sample.x;
       const dz = position.z - sample.z;
       const dist = dx * dx + dz * dz;
       if (dist < bestDist) { bestDist = dist; best = sample; }
     }
-    return { distance: best.d, point: best, lateralSq: bestDist };
+    if (!best) {
+      best = fallbackDistance != null ? this.getTrackFrameAt(fallbackDistance) : this.trackSamples[0];
+      const dx = position.x - best.x;
+      const dz = position.z - best.z;
+      bestDist = dx * dx + dz * dz;
+    }
+    return { distance: best.d ?? best.distance ?? 0, point: best, lateralSq: bestDist };
+  }
+
+  findClosestProgressNearCurrent(position, data = {}, options = {}) {
+    const currentDistance = clamp(
+      Number.isFinite(data.driveDistance) ? data.driveDistance : (Number.isFinite(data.distance) ? data.distance : 0),
+      0,
+      this.trackLength || 0
+    );
+    const behind = options.behind ?? this.guidePointPolicy?.overlapProjectionWindowBehind ?? 2.4;
+    const ahead = options.ahead ?? this.guidePointPolicy?.overlapProjectionWindowAhead ?? 7.5;
+    const projected = this.findClosestProgress(position, {
+      minDistance: currentDistance - behind,
+      maxDistance: currentDistance + ahead,
+      fallbackDistance: currentDistance,
+    });
+    const raw = this.findClosestProgress(position);
+    const jump = Math.abs((raw.distance ?? 0) - (projected.distance ?? 0));
+    const maxJump = options.maxJump ?? this.guidePointPolicy?.maxNearestProgressJump ?? 8;
+    const usedWindowedProjection = this.physicsMechanicKey === 'toyPark' && jump > maxJump;
+    return {
+      ...(usedWindowedProjection ? projected : raw),
+      rawDistance: raw.distance,
+      windowedDistance: projected.distance,
+      projectionWindow: { min: Math.max(0, currentDistance - behind), max: Math.min(this.trackLength || 0, currentDistance + ahead) },
+      overlapSafeProjection: usedWindowedProjection,
+      projectionJump: jump,
+    };
   }
 
   applyRailMomentumAssist(data, closest, frame, velocity, forwardSpeed) {
@@ -11755,11 +12307,14 @@ class MarbleRace {
     const laneCount = racingGridEnabled
       ? Math.max(1, Math.floor(START_GATE_DESIGN.racingGridColumns ?? 4))
       : Math.max(1, this.startCatcher?.laneCount || Math.min(fallbackLayout.stallCount, requestedCols));
-    const racingGridRows = racingGridEnabled
+    const racingGridBaseRows = racingGridEnabled
       ? Math.max(1, Math.floor(START_GATE_DESIGN.racingGridRows ?? 4))
       : null;
     const racingGridOccupiedPerRow = racingGridEnabled
       ? Math.max(1, Math.min(laneCount, Math.floor(START_GATE_DESIGN.racingGridOccupiedPerRow ?? Math.ceil(laneCount / 2))))
+      : null;
+    const racingGridRows = racingGridEnabled
+      ? Math.max(racingGridBaseRows, Math.ceil(count / Math.max(1, racingGridOccupiedPerRow)))
       : null;
     const gateWidth = this.startCatcher?.gateWidth || fallbackLayout.gateWidth;
     const racingGridWidth = START_GATE_DESIGN.racingGridColumnSpacing ?? 1.45;
@@ -11774,9 +12329,7 @@ class MarbleRace {
       : (highCountStaging.enabled === false
         ? Infinity
         : Math.max(1, Math.floor(highCountStaging.maxRowsBeforeHoldingPattern ?? 3)));
-    const laneRowSpacing = racingGridEnabled
-      ? Math.max(0.95, START_GATE_DESIGN.racingGridRowSpacing ?? 1.28)
-      : Math.max(1.12, Math.min(laneGap * 0.92, highCountStaging.rowSpacing ?? 1.18));
+    const configuredRacingGridRowSpacing = Math.max(0.95, START_GATE_DESIGN.racingGridRowSpacing ?? 1.28);
     const gateLocalZ = this.getStartPrepLocalZForBack(START_GATE_DESIGN.gateBackDistance);
     const safeChuteBackLocalZ = -chuteDepth / 2 + 0.7;
     const safeChuteFrontLocalZ = gateLocalZ - 0.55;
@@ -11784,6 +12337,14 @@ class MarbleRace {
     const laneFrontLocalZ = racingGridEnabled
       ? racingGridFrontLocalZ
       : clamp(gateLocalZ - 0.75, safeChuteBackLocalZ, safeChuteFrontLocalZ);
+    const racingGridBackLimit = (this.startCatcher?.backLocalZ ?? -chuteDepth / 2) + 0.72;
+    const racingGridUsableDepth = Math.max(0.001, laneFrontLocalZ - racingGridBackLimit);
+    const racingGridFitRowSpacing = racingGridRows && racingGridRows > 1
+      ? racingGridUsableDepth / (racingGridRows - 1)
+      : configuredRacingGridRowSpacing;
+    const laneRowSpacing = racingGridEnabled
+      ? Math.min(configuredRacingGridRowSpacing, racingGridFitRowSpacing)
+      : Math.max(1.12, Math.min(laneGap * 0.92, highCountStaging.rowSpacing ?? 1.18));
     const laneBackLocalZ = Math.max(safeChuteBackLocalZ, laneFrontLocalZ - (maxRowsInsideChute - 1) * laneRowSpacing);
     const holdingPatternCols = laneCount;
     const holdingPatternLateralSpacing = laneGap;
@@ -11802,6 +12363,11 @@ class MarbleRace {
       laneGap,
       maxRowsInsideChute,
       laneRowSpacing,
+      configuredRacingGridRowSpacing,
+      racingGridFitRowSpacing,
+      racingGridUsableDepth,
+      racingGridBackLimit,
+      racingGridRowSpacingCompressed: racingGridEnabled ? laneRowSpacing < configuredRacingGridRowSpacing - 0.001 : false,
       holdingPatternCols,
       holdingPatternStartLocalZ,
       holdingPatternLateralSpacing,
@@ -11823,7 +12389,7 @@ class MarbleRace {
       const baseMass = 1.1 + (i % 4) * 0.04;
       const mesh = this.makeMarbleMesh(radius, color, i, identity.patternKey, identity.palette, identity.materialKey);
       const labelSprite = this.createMarbleNameLabel(identity.name);
-      const gridIndex = racingGridEnabled ? i % Math.max(1, racingGridRows * racingGridOccupiedPerRow) : i;
+      const gridIndex = racingGridEnabled ? i : i;
       const row = racingGridEnabled
         ? Math.floor(gridIndex / racingGridOccupiedPerRow)
         : Math.floor(i / cols);
@@ -11838,7 +12404,10 @@ class MarbleRace {
       let stagingMode = racingGridEnabled ? 'racing-grid' : 'lane-grid';
       if (racingGridEnabled) {
         const columnForwardOffset = 0;
-        localZ = clamp(laneFrontLocalZ - row * laneRowSpacing + columnForwardOffset, safeChuteBackLocalZ, (this.startCatcher?.frontLocalZ ?? chuteDepth / 2) - 0.6);
+        const unclampedLocalZ = laneFrontLocalZ - row * laneRowSpacing + columnForwardOffset;
+        const boardBackLimit = racingGridBackLimit;
+        const boardFrontLimit = (this.startCatcher?.frontLocalZ ?? chuteDepth / 2) - 0.6;
+        localZ = clamp(unclampedLocalZ, boardBackLimit, boardFrontLimit);
         localY = this.getStartChuteFloorTopLocalY(localZ, radius, START_GATE_DESIGN.racingGridSurfaceClearance ?? 0.018);
       } else if (row < maxRowsInsideChute) {
         localZ = clamp(laneFrontLocalZ - row * laneRowSpacing, safeChuteBackLocalZ, safeChuteFrontLocalZ);
@@ -12205,6 +12774,40 @@ class MarbleRace {
       data.body.angularVelocity.set(0, 0, 0);
       data.body.linearDamping = this.physicsMechanic?.linearDamping ?? NO_ROLLING_SLOWDOWN.marbleLinearDamping;
       data.body.angularDamping = this.physicsMechanic?.angularDamping ?? NO_ROLLING_SLOWDOWN.marbleAngularDamping;
+      if (this.physicsMechanicKey === 'toyPark' && this.toyParkSoftGuidePhysics?.enabled && startFrame?.tangent) {
+        const baseLaunchSpeed = Math.max(
+          this.toyParkSoftGuidePhysics.launchForwardVelocityMin ?? 0,
+          (this.speedPreset.maxSpeed || 0) * (this.toyParkSoftGuidePhysics.launchForwardVelocityRatio ?? 0)
+        );
+        const competitive = this.toyParkSoftGuidePhysics.competitive || {};
+        const launchVarianceRatio = competitive.enabled === false ? 0 : (competitive.launchVarianceRatio ?? 0);
+        const deterministicPhase = Math.sin((data.id + 1) * 12.9898 + (data.startSlotColumn || 0) * 78.233 + (data.startSlotRow || 0) * 37.719);
+        const launchVariance = deterministicPhase * launchVarianceRatio;
+        const rearRows = Math.max(1, (this.startStagingLayout?.racingGridRows || 1) - 1);
+        const rearRowRatio = clamp((data.startSlotRow || 0) / rearRows, 0, 1);
+        const rearRowBoost = competitive.enabled === false ? 0 : Math.min(
+          competitive.rearRowLaunchBoostMax ?? 0,
+          rearRowRatio * (competitive.rearRowLaunchBoostRatio ?? 0)
+        );
+        const launchTangent = startFrame.tangent;
+        const maxSpeed = this.speedPreset?.maxSpeed || baseLaunchSpeed;
+        const rowWarmupRatio = clamp((data.startSlotRow || 0) / Math.max(1, (this.startStagingLayout?.racingGridRows || 1) - 1), 0, 1);
+        const staggeredLaunchSpeed = Math.min(
+          maxSpeed * 0.55,
+          baseLaunchSpeed * (0.82 + rowWarmupRatio * 0.1 + launchVariance * 0.35 + rearRowBoost * 0.25)
+        );
+        data.body.velocity.x = launchTangent.x * staggeredLaunchSpeed;
+        data.body.velocity.y = Math.max(0, launchTangent.y * staggeredLaunchSpeed);
+        data.body.velocity.z = launchTangent.z * staggeredLaunchSpeed;
+        data.toyParkLaunchBaseVelocity = Number(baseLaunchSpeed.toFixed(3));
+        data.toyParkLaunchForwardVelocity = Number(staggeredLaunchSpeed.toFixed(3));
+        data.toyParkLaunchVarianceRatio = Number(launchVariance.toFixed(4));
+        data.toyParkLaunchRearRowBoost = Number(rearRowBoost.toFixed(4));
+        data.toyParkLaunchForwardVelocityApplied = true;
+        data.toyParkLaunchPolicy = 'competitive-toy-park-launch-deterministic-micro-variance-plus-small-rear-row-draft-boost';
+      } else {
+        data.toyParkLaunchForwardVelocityApplied = false;
+      }
       data.startImpulseDisabled = true;
       data.lastDriveMovementDistance = Math.max(data.distance || 0, data.lastDriveMovementDistance || 0);
       data.lastDriveMovementTime = this.elapsed;
@@ -13971,6 +14574,170 @@ class MarbleRace {
     this.directionStabilityAssistCount = (this.directionStabilityAssistCount || 0) + 1;
   }
 
+  applyToyParkSoftGuidePhysics(data, centerFrame, guide, velocity, centerForwardSpeed, maxSpeed) {
+    const assist = this.toyParkSoftGuidePhysics;
+    if (this.physicsMechanicKey !== 'toyPark' || !assist?.enabled || data.finished || !centerFrame?.p || !centerFrame?.right) return;
+    if (guide?.airborneAssistPaused) return;
+
+    const localWidth = Math.max(1, this.getTrackWidthAt(guide?.driveDistance ?? data.driveDistance ?? 0));
+    const offsetVector = new THREE.Vector3(
+      data.body.position.x - centerFrame.p.x,
+      0,
+      data.body.position.z - centerFrame.p.z
+    );
+    const lateralOffset = offsetVector.dot(centerFrame.right);
+    const offsetRatio = clamp(Math.abs(lateralOffset) / Math.max(localWidth / 2, 0.001), 0, 1);
+    const startRatio = assist.centerPullStartsAtOffsetRatio ?? 0.16;
+    const competitive = assist.competitive || {};
+    const competitiveEnabled = competitive.enabled !== false;
+    const activeRatio = clamp((offsetRatio - startRatio) / Math.max(0.001, 1 - startRatio), 0, 1);
+    const piece = this.trackPieces?.[guide?.guideTargetPieceIndex] || this.trackPieces?.find((candidate) => {
+      const d = guide?.guideDistance ?? data.guideDistance ?? 0;
+      return d >= candidate.startD && d <= candidate.endD;
+    });
+    const turnDegreesSigned = piece?.turnDegrees || 0;
+    const turnDegrees = Math.abs(turnDegreesSigned);
+    const curveRatio = clamp((turnDegrees - (assist.curveStartsAtDegrees ?? 12)) / 78, 0, 1);
+    const inwardSign = -(Math.sign(lateralOffset) || 0);
+    const insideSign = turnDegreesSigned ? -Math.sign(turnDegreesSigned) : 0;
+    const laneRole = !insideSign || Math.abs(lateralOffset) < 0.05
+      ? 'center'
+      : (Math.sign(lateralOffset) === insideSign ? 'inside' : 'outside');
+    const centerFreedomReduction = competitiveEnabled ? (competitive.offsetFreedomCenterPullReduction ?? 0) : 0;
+    const centerPullFreedomScale = 1 - clamp(centerFreedomReduction, 0, 0.75) * (1 - activeRatio) * (1 - curveRatio * 0.45);
+    const centerPullScale = ((assist.centerPull ?? 0) + curveRatio * (assist.curveAssist ?? 0)) * centerPullFreedomScale;
+    const innerCornerRailRiskRatio = competitiveEnabled && laneRole === 'inside' && curveRatio > 0
+      ? clamp((offsetRatio - (competitive.innerCornerRailRescueStartsAtOffsetRatio ?? 0.58)) / Math.max(0.001, 1 - (competitive.innerCornerRailRescueStartsAtOffsetRatio ?? 0.58)), 0, 1)
+      : 0;
+    const perComponentMaxGuideForce = assist.maxGuideForce ?? Infinity;
+    const maxCombinedGuideForce = assist.maxCombinedGuideForce ?? perComponentMaxGuideForce;
+    const centerForceStrength = Math.min(
+      perComponentMaxGuideForce,
+      data.body.mass * this.speedPreset.accel * (centerPullScale * activeRatio + innerCornerRailRiskRatio * curveRatio * (competitive.innerCornerRailRescueCenterForceScale ?? 0.72))
+    );
+    const minForwardSpeed = maxSpeed * (assist.minForwardSpeedRatio ?? 0.42);
+    const sustainForwardSpeed = maxSpeed * (assist.sustainForwardSpeedRatio ?? 0.38);
+    const fullSpeedRecoveryRatio = clamp(assist.fullSpeedRecoveryRatio ?? 0, 0, 1);
+    const fullSpeedRecoveryTarget = maxSpeed * fullSpeedRecoveryRatio;
+    const fullSpeedRecoveryGapStartRatio = clamp(assist.fullSpeedRecoveryGapStartRatio ?? 0.08, 0, 1);
+    const fullSpeedRecoveryGapFullRatio = Math.max(fullSpeedRecoveryGapStartRatio + 0.001, assist.fullSpeedRecoveryGapFullRatio ?? 0.55);
+    const fullSpeedRecoveryGapRatio = fullSpeedRecoveryTarget > 0
+      ? clamp((fullSpeedRecoveryTarget - centerForwardSpeed) / Math.max(fullSpeedRecoveryTarget, 0.001), 0, 1)
+      : 0;
+    const fullSpeedRecoveryActiveRatio = fullSpeedRecoveryRatio > 0
+      ? clamp((fullSpeedRecoveryGapRatio - fullSpeedRecoveryGapStartRatio) / Math.max(0.001, fullSpeedRecoveryGapFullRatio - fullSpeedRecoveryGapStartRatio), 0, 1)
+      : 0;
+    const forwardGapRatio = centerForwardSpeed >= minForwardSpeed ? 0 : clamp((minForwardSpeed - centerForwardSpeed) / Math.max(minForwardSpeed, 0.001), 0, 1);
+    const sustainGapRatio = centerForwardSpeed >= sustainForwardSpeed ? 0 : clamp((sustainForwardSpeed - centerForwardSpeed) / Math.max(sustainForwardSpeed, 0.001), 0, 1);
+    const bendTangentAssist = curveRatio * (assist.bendTangentAssist ?? 0);
+    const competitiveLaneSpeedRatio = competitiveEnabled && curveRatio > 0
+      ? curveRatio * (laneRole === 'inside' ? (competitive.curveInsideBoostRatio ?? 0) : laneRole === 'outside' ? -(competitive.curveOutsideSlowdownRatio ?? 0) : 0)
+      : 0;
+    const railSlowdownStart = competitive.railSlowdownStartsAtOffsetRatio ?? 0.72;
+    const railSlowdownRatio = competitiveEnabled
+      ? clamp((offsetRatio - railSlowdownStart) / Math.max(0.001, 1 - railSlowdownStart), 0, 1)
+      : 0;
+    const railSlowdownDelta = Math.min(
+      competitive.railSlowdownMaxDeltaPerFrame ?? 0,
+      Math.max(0, centerForwardSpeed) * (competitive.railSlowdownStrength ?? 0) * railSlowdownRatio
+    );
+    if (railSlowdownDelta > 0.0001 && centerFrame?.tangent) {
+      data.body.velocity.x -= centerFrame.tangent.x * railSlowdownDelta;
+      data.body.velocity.z -= centerFrame.tangent.z * railSlowdownDelta;
+      velocity.x = data.body.velocity.x;
+      velocity.z = data.body.velocity.z;
+    }
+    const laneSpeedMultiplier = Math.max(0.72, 1 + competitiveLaneSpeedRatio - railSlowdownRatio * (competitive.railSlowdownStrength ?? 0) * 0.12);
+    const innerCornerRailRescueTangentAssist = innerCornerRailRiskRatio * curveRatio * (competitive.innerCornerRailRescueTangentForceScale ?? 0.46);
+    const fullSpeedRecoveryForce = Math.min(
+      assist.fullSpeedRecoveryMaxForce ?? perComponentMaxGuideForce,
+      data.body.mass
+        * this.speedPreset.accel
+        * (assist.fullSpeedRecoveryForceScale ?? 0)
+        * (fullSpeedRecoveryActiveRatio * fullSpeedRecoveryActiveRatio)
+        * (1 - curveRatio * (1 - (assist.fullSpeedRecoveryCurveScale ?? 0.42)))
+        * (1 - railSlowdownRatio * (1 - (assist.fullSpeedRecoveryRailScale ?? 0.35)))
+    );
+    const tangentForceStrength = Math.min(
+      perComponentMaxGuideForce,
+      data.body.mass * this.speedPreset.accel * ((assist.forwardAssist ?? 0) * laneSpeedMultiplier * (0.72 * forwardGapRatio + 0.45 * sustainGapRatio) + bendTangentAssist + innerCornerRailRescueTangentAssist)
+        + fullSpeedRecoveryForce
+    );
+    if (centerForceStrength <= 0.0001 && tangentForceStrength <= 0.0001) {
+      data.toyParkSoftGuideActive = false;
+      data.toyParkSoftGuideSkippedReason = 'below-force-threshold';
+      data.toyParkSoftGuideMode = assist.mode;
+      data.toyParkSoftGuideOffset = Number(lateralOffset.toFixed(3));
+      data.toyParkSoftGuideOffsetRatio = Number(offsetRatio.toFixed(3));
+      data.toyParkSoftGuideCurveRatio = Number(curveRatio.toFixed(3));
+      data.toyParkCompetitiveEnabled = competitiveEnabled;
+      data.toyParkCompetitiveLaneRole = laneRole;
+      data.toyParkCompetitiveLaneSpeedRatio = Number(competitiveLaneSpeedRatio.toFixed(4));
+      data.toyParkCompetitiveRailSlowdownRatio = Number(railSlowdownRatio.toFixed(3));
+      data.toyParkCompetitiveRailSlowdownDelta = Number(railSlowdownDelta.toFixed(4));
+      data.toyParkCompetitiveCenterPullFreedomScale = Number(centerPullFreedomScale.toFixed(3));
+      data.toyParkCompetitiveLaneSpeedMultiplier = Number(laneSpeedMultiplier.toFixed(3));
+      data.toyParkInnerCornerRailRiskRatio = Number(innerCornerRailRiskRatio.toFixed(3));
+      data.toyParkInnerCornerRailRescueTangentAssist = Number(innerCornerRailRescueTangentAssist.toFixed(3));
+      data.toyParkFullSpeedRecoveryTarget = Number(fullSpeedRecoveryTarget.toFixed(3));
+      data.toyParkFullSpeedRecoveryGapRatio = Number(fullSpeedRecoveryGapRatio.toFixed(3));
+      data.toyParkFullSpeedRecoveryActiveRatio = Number(fullSpeedRecoveryActiveRatio.toFixed(3));
+      data.toyParkFullSpeedRecoveryForce = Number(fullSpeedRecoveryForce.toFixed(3));
+      data.toyParkHardSplineLock = Boolean(assist.hardSplineLock);
+      data.toyParkCollisionPreserved = Boolean(assist.collisionPreserved);
+      return;
+    }
+
+    const centerForce = centerFrame.right.clone().multiplyScalar(inwardSign * centerForceStrength);
+    const tangentForce = centerFrame.tangent.clone().multiplyScalar(tangentForceStrength);
+    const force = centerForce.add(tangentForce);
+    const forceMagnitude = Math.hypot(force.x, force.z);
+    if (Number.isFinite(maxCombinedGuideForce) && forceMagnitude > maxCombinedGuideForce && forceMagnitude > 0.0001) {
+      force.multiplyScalar(maxCombinedGuideForce / forceMagnitude);
+    }
+    data.body.wakeUp();
+    data.body.applyForce(new CANNON.Vec3(force.x, 0, force.z), data.body.position);
+    const velocitySustainBlend = clamp(assist.sustainVelocityBlend ?? 0, 0, 1);
+    let sustainVelocityApplied = false;
+    let sustainVelocityDelta = 0;
+    if (velocitySustainBlend > 0 && centerForwardSpeed < sustainForwardSpeed && centerFrame?.tangent) {
+      const targetForwardSpeed = lerp(centerForwardSpeed, sustainForwardSpeed, velocitySustainBlend);
+      sustainVelocityDelta = Math.max(0, targetForwardSpeed - centerForwardSpeed);
+      if (sustainVelocityDelta > 0.0001) {
+        data.body.velocity.x += centerFrame.tangent.x * sustainVelocityDelta;
+        data.body.velocity.z += centerFrame.tangent.z * sustainVelocityDelta;
+        sustainVelocityApplied = true;
+      }
+    }
+    data.toyParkSoftGuideActive = true;
+    data.toyParkSoftGuideSkippedReason = null;
+    data.toyParkSoftGuideMode = assist.mode;
+    data.toyParkSoftGuideForce = Number(Math.hypot(force.x, force.z).toFixed(3));
+    data.toyParkSoftGuideCenterForce = Number(centerForceStrength.toFixed(3));
+    data.toyParkSoftGuideTangentForce = Number(tangentForceStrength.toFixed(3));
+    data.toyParkSoftGuideMinForwardSpeed = Number(minForwardSpeed.toFixed(3));
+    data.toyParkSoftGuideSustainForwardSpeed = Number(sustainForwardSpeed.toFixed(3));
+    data.toyParkSoftGuideForwardGapRatio = Number(forwardGapRatio.toFixed(3));
+    data.toyParkSoftGuideSustainGapRatio = Number(sustainGapRatio.toFixed(3));
+    data.toyParkSoftGuideVelocitySustainApplied = sustainVelocityApplied;
+    data.toyParkSoftGuideVelocitySustainDelta = Number(sustainVelocityDelta.toFixed(3));
+    data.toyParkSoftGuideBendTangentAssist = Number(bendTangentAssist.toFixed(3));
+    data.toyParkSoftGuideMaxCombinedForce = Number((Number.isFinite(maxCombinedGuideForce) ? maxCombinedGuideForce : 0).toFixed(3));
+    data.toyParkSoftGuideOffset = Number(lateralOffset.toFixed(3));
+    data.toyParkSoftGuideOffsetRatio = Number(offsetRatio.toFixed(3));
+    data.toyParkSoftGuideCurveRatio = Number(curveRatio.toFixed(3));
+    data.toyParkCompetitiveEnabled = competitiveEnabled;
+    data.toyParkCompetitiveLaneRole = laneRole;
+    data.toyParkCompetitiveLaneSpeedRatio = Number(competitiveLaneSpeedRatio.toFixed(4));
+    data.toyParkCompetitiveRailSlowdownRatio = Number(railSlowdownRatio.toFixed(3));
+    data.toyParkCompetitiveRailSlowdownDelta = Number(railSlowdownDelta.toFixed(4));
+    data.toyParkCompetitiveCenterPullFreedomScale = Number(centerPullFreedomScale.toFixed(3));
+    data.toyParkCompetitiveLaneSpeedMultiplier = Number(laneSpeedMultiplier.toFixed(3));
+    data.toyParkHardSplineLock = Boolean(assist.hardSplineLock);
+    data.toyParkCollisionPreserved = Boolean(assist.collisionPreserved);
+    this.toyParkSoftGuideForceCount = (this.toyParkSoftGuideForceCount || 0) + 1;
+  }
+
   applySlopeForwardAcceleration(data, frame, forwardSpeed, maxSpeed, rawForwardSpeed = forwardSpeed, velocity = null) {
     const slopeDrive = this.slopeDrive;
     if (!slopeDrive?.enabled || data.finished) return;
@@ -14367,7 +15134,9 @@ class MarbleRace {
         }
         return;
       }
-      const closest = this.findClosestProgress(data.body.position);
+      const closest = this.physicsMechanicKey === 'toyPark'
+        ? this.findClosestProgressNearCurrent(data.body.position, data)
+        : this.findClosestProgress(data.body.position);
       this.applyLandingReboundAbsorber(data, closest);
       const guide = this.resolveDriveGuide(data, closest);
       const { driveDistance, driveFrameDistance, frame, centerFrame, slopeFrame, slopeFrameSource, forecastAheadDistance, forecastBehindTolerance } = guide;
@@ -14389,6 +15158,11 @@ class MarbleRace {
       data.airborneGuideClearance = guide.airborneClearance;
       data.driveFrameDistance = driveFrameDistance;
       data.closestProgressDistance = closest.distance;
+      data.rawClosestProgressDistance = closest.rawDistance ?? closest.distance;
+      data.windowedClosestProgressDistance = closest.windowedDistance ?? closest.distance;
+      data.overlapSafeProjection = Boolean(closest.overlapSafeProjection);
+      data.overlapProjectionJump = Number.isFinite(closest.projectionJump) ? Number(closest.projectionJump.toFixed(3)) : 0;
+      data.overlapProjectionWindow = closest.projectionWindow || null;
       const velocity = new THREE.Vector3(data.body.velocity.x, data.body.velocity.y, data.body.velocity.z);
       const speedPresetMax = this.speedPreset.maxSpeed;
       const progress = clamp(driveDistance / Math.max(this.trackLength, 0.001), 0, 1);
@@ -14397,6 +15171,34 @@ class MarbleRace {
       const baseMaxSpeed = progress > 0.88 ? slopeTopSpeed * (this.finalApproachAssist?.maxSpeedRatio || 1.02) : slopeTopSpeed;
       const catchupMaxSpeed = this.getCatchupSpeedLimit(data, baseMaxSpeed, leaderDistance, guide);
       const maxSpeed = this.getObstacleBoostSpeedLimit(data, catchupMaxSpeed);
+      if (this.physicsMechanicKey === 'toyPark'
+        && this.toyParkSoftGuidePhysics?.enabled
+        && this.elapsed <= (this.toyParkSoftGuidePhysics.startForwardSustainSeconds ?? 0)
+        && centerFrame?.tangent) {
+        const targetStartForwardSpeed = Math.min(
+          maxSpeed,
+          Math.max(
+            this.toyParkSoftGuidePhysics.startForwardVelocityMin ?? 0,
+            maxSpeed * (this.toyParkSoftGuidePhysics.startForwardVelocityRatio ?? 0)
+          )
+        );
+        const currentStartForwardSpeed = velocity.dot(centerFrame.tangent);
+        const startForwardDelta = clamp(
+          targetStartForwardSpeed - currentStartForwardSpeed,
+          0,
+          this.toyParkSoftGuidePhysics.startForwardMaxDeltaPerFrame ?? 0.72
+        );
+        if (startForwardDelta > 0.0001) {
+          data.body.velocity.x += centerFrame.tangent.x * startForwardDelta;
+          data.body.velocity.z += centerFrame.tangent.z * startForwardDelta;
+          velocity.x = data.body.velocity.x;
+          velocity.z = data.body.velocity.z;
+          data.toyParkStartForwardSustainApplied = true;
+          data.toyParkStartForwardSustainDelta = Number(startForwardDelta.toFixed(3));
+          data.toyParkStartForwardSustainTarget = Number(targetStartForwardSpeed.toFixed(3));
+          data.toyParkStartForwardSustainPolicy = 'short-uniform-start-window-prevents-flat-grid-lane-contact-from-leaving-some-marbles-stationary';
+        }
+      }
       data.catchupMaxSpeed = catchupMaxSpeed;
       data.orbitRingBoostNormalMaxSpeed = catchupMaxSpeed;
       data.orbitRingBoostEffectiveMaxSpeed = this.getOrbitRingSpeedLimit(data, catchupMaxSpeed);
@@ -14407,6 +15209,21 @@ class MarbleRace {
       if (guide.airborneAssistPaused) {
         data.guideAssistPausedReason = 'airborne-waiting-for-landing-recalculation';
         data.forwardAccelerationActive = false;
+        if (this.physicsMechanicKey === 'toyPark' && this.toyParkSoftGuidePhysics?.enabled && this.elapsed <= 2.6 && centerFrame?.tangent) {
+          const startSustainSpeed = Math.max(
+            this.toyParkSoftGuidePhysics.launchForwardVelocityMin ?? 0,
+            maxSpeed * (this.toyParkSoftGuidePhysics.sustainForwardSpeedRatio ?? 0.38)
+          );
+          const currentStartForward = Math.max(0, velocity.dot(centerFrame.tangent));
+          const startSustainDelta = Math.max(0, startSustainSpeed - currentStartForward);
+          if (startSustainDelta > 0.0001) {
+            data.body.velocity.x += centerFrame.tangent.x * startSustainDelta;
+            data.body.velocity.z += centerFrame.tangent.z * startSustainDelta;
+            data.toyParkStartAirborneSustainApplied = true;
+            data.toyParkStartAirborneSustainDelta = Number(startSustainDelta.toFixed(3));
+            data.toyParkStartAirborneSustainSpeed = Number(startSustainSpeed.toFixed(3));
+          }
+        }
         data.finalSpeedCapApplied = false;
         return;
       }
@@ -14439,6 +15256,7 @@ class MarbleRace {
       data.centerForwardSpeed = centerForwardSpeed;
       data.centerRawForwardSpeed = centerRawForwardSpeed;
       this.applySlopeForwardAcceleration(data, slopeFrame, forwardSpeed, maxSpeed, rawForwardSpeed, velocity);
+      this.applyToyParkSoftGuidePhysics(data, centerFrame, guide, velocity, centerForwardSpeed, maxSpeed);
       this.applyDirectionStabilityAssist(data, closest, frame, velocity, rawForwardSpeed, maxSpeed, progress, centerFrame);
       this.applyMinimumForwardSpeed(data, centerFrame, centerForwardSpeed, maxSpeed, progress, velocity);
       const postAssistHorizontalSpeed = Math.hypot(data.body.velocity.x, data.body.velocity.z);
@@ -14463,7 +15281,8 @@ class MarbleRace {
         data.finalSpeedCapLimit = maxSpeed;
       }
 
-      if (data.body.position.y < frame.p.y - 5 || closest.lateralSq > (this.trackWidth * this.trackWidth * 3.2)) {
+      const beforeStartChuteHandoff = this.isMarbleBeforeStartChuteHandoff(data);
+      if (!beforeStartChuteHandoff && (data.body.position.y < frame.p.y - 5 || closest.lateralSq > (this.trackWidth * this.trackWidth * 3.2))) {
         this.scheduleFallRespawn(data, closest.distance);
         return;
       }
@@ -15207,6 +16026,10 @@ class MarbleRace {
         lastObstacleHitPieceType: d.lastObstacleHitPieceType || null,
         guideFrameSource: d.guideFrameSource || null,
         guideTargetPieceIndex: d.guideTargetPieceIndex ?? null,
+        rawClosestProgressDistance: d.rawClosestProgressDistance ?? null,
+        windowedClosestProgressDistance: d.windowedClosestProgressDistance ?? null,
+        overlapSafeProjection: Boolean(d.overlapSafeProjection),
+        overlapProjectionJump: d.overlapProjectionJump ?? 0,
         guidePointAheadDistance: d.guidePointAheadDistance ?? null,
       })),
       catchupAssistEnabled: this.catchupAssistEnabled,
@@ -15261,6 +16084,13 @@ class MarbleRace {
         airborneGuideMitigation: 'airborne guide assists pause until landing and then recalculate an ahead guide between marble and finish',
         airborneGuidePolicy: this.airborneGuidePolicy,
         guidePointPolicy: this.guidePointPolicy,
+        toyParkOverlapProjectionPolicy: this.physicsMechanicKey === 'toyPark' ? {
+          mode: 'windowed-nearest-progress-to-prevent-stacked-road-guide-steal',
+          behind: this.guidePointPolicy?.overlapProjectionWindowBehind,
+          ahead: this.guidePointPolicy?.overlapProjectionWindowAhead,
+          maxNearestProgressJump: this.guidePointPolicy?.maxNearestProgressJump,
+          scopedToToyPark: true,
+        } : null,
         guidePointBias: this.slopeDrive?.guidePointBias,
         guidePointBiasLabel: this.slopeDrive?.guidePointBiasLabel,
         guideTargetPolicy: 'same-piece-lookahead-then-piece-exit-then-next-piece-entrance-or-finish-centerline',
@@ -15477,10 +16307,16 @@ class MarbleRace {
       variableTrackWidth: true,
       trackWidthProfile: this.trackWidthProfile,
       trackPieceSystem: this.trackPieceSystem,
+      toyParkTrackTiles: this.physicsMechanicKey === 'toyPark' ? (this.toyParkTrackTiles || null) : null,
+      toyParkBoardSequence: this.physicsMechanicKey === 'toyPark' ? (this.toyParkBoardSequence || this.toyParkTrackTiles?.boardSequence || null) : null,
+      toyParkBoardSequenceReadable: this.physicsMechanicKey === 'toyPark' ? (this.toyParkTrackTiles?.boardSequenceReadable || this.trackStats?.toyParkBoardSequenceReadable || []) : [],
       modularTrackPieces: this.trackPieces,
       modularTrackPieceCounts: {
         straight: this.trackPieces.filter((piece) => piece.type === 'straight').length,
         variableBend: this.trackPieces.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend?.key).length,
+        rampUp: this.trackPieces.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampUp?.key).length,
+        elevatedStraight: this.trackPieces.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight?.key).length,
+        rampDown: this.trackPieces.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampDown?.key).length,
         uTurn180: 0,
         corner45: this.trackPieces.filter((piece) => Math.abs(piece.turnDegrees) === 45).length,
         corner90: this.trackPieces.filter((piece) => Math.abs(piece.turnDegrees) === 90).length,
@@ -15771,7 +16607,7 @@ class MarbleRace {
       trackDebugCopyUi: {
         enabled: Boolean(this.ui.trackCodeOutput && this.ui.copyTrackCode),
         codePrefix: 'MR1:',
-        includesReproductionSettings: ['seed', 'trackPresetKey', 'customTrackLength', 'widthPresetKey', 'speedIndex', 'obstacleIndex', 'curveStyleKey', 'trackPieces', 'driveAssist'],
+        includesReproductionSettings: ['seed', 'trackPresetKey', 'customTrackLength', 'widthPresetKey', 'speedIndex', 'obstacleIndex', 'curveStyleKey', 'trackPieces', 'toyParkBoardSequence', 'driveAssist'],
       },
       trackDebugImportUi: {
         enabled: Boolean(this.ui.trackCodeImport && this.ui.importTrackCode),

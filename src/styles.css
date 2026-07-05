@@ -404,13 +404,28 @@ button:hover {
   text-align: right;
 }
 
+.visible-track-code-row,
 .debug-track-code-row {
-  margin-top: 0;
   margin-bottom: 10px;
   padding: 9px;
   border: 1px solid rgba(124, 247, 212, 0.14);
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.18);
+}
+
+.visible-track-code-row {
+  border-color: rgba(255, 209, 102, 0.26);
+  background: rgba(255, 209, 102, 0.08);
+}
+
+.visible-track-code-row label {
+  color: var(--accent);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.debug-track-code-row {
+  margin-top: 0;
 }
 
 .debug-track-code-row + #debug-console {

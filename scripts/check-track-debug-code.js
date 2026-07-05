@@ -27,6 +27,8 @@ const jsRequirements = [
   ['debug payload method', /getTrackDebugPayload\(\)\s*{/],
   ['seed included in payload', /seed:\s*this\.seed/],
   ['track pieces included in payload', /trackPieces:\s*this\.trackPieces\.map/],
+  ['toy park board sequence included in payload', /toyParkBoardSequence:\s*this\.physicsMechanicKey === 'toyPark'/],
+  ['toy park board sequence visible in debug copy settings', /includesReproductionSettings:\s*\[[^\]]*'toyParkBoardSequence'[^\]]*\]/s],
   ['obstacle settings included in payload', /obstacleIndex:\s*this\.obstacleIndex[\s\S]*obstacleMultiplier:/],
   ['speed setting included in payload', /speedIndex:\s*this\.speedIndex/],
   ['clipboard fallback', /navigator\.clipboard\?\.writeText[\s\S]*document\.execCommand\('copy'\)/],

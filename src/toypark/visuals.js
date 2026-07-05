@@ -39,6 +39,9 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
       transparent: false,
       opacity: 1,
       side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
     });
     const variableBendMat = new THREE.MeshPhysicalMaterial({
       color: 0xffc86e,
@@ -49,6 +52,9 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
       transparent: false,
       opacity: 1,
       side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
 
     straightMat.userData = {
@@ -64,11 +70,15 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
       angleVariable: true,
       sourceTrackMaterialStyle: sourceMaterial?.userData?.style || null,
     };
-    const counts = { straight: 0, variableBend: 0, uTurn180: 0, corner45: 0 };
+    const cancelledBridgeSurfaceMaterials = new Map();
+    const counts = { straight: 0, rampUp: 0, elevatedStraight: 0, rampDown: 0, variableBend: 0, uTurn180: 0, corner45: 0 };
     app.trackPieces.forEach((piece, index) => {
       if (!piece.tileKey) return;
       const isVariableBend = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend.key;
-      const material = isVariableBend ? variableBendMat : straightMat;
+      const isRampUp = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampUp.key;
+      const isElevatedStraight = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight.key;
+      const isRampDown = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampDown.key;
+      const material = cancelledBridgeSurfaceMaterials.get(piece.tileKey) || (isVariableBend ? variableBendMat : straightMat);
       const samples = [];
       const startD = clamp(piece.startD, 0, app.trackLength);
       const endD = clamp(piece.endD, startD, app.trackLength);
@@ -77,14 +87,21 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
         const d = startD + (endD - startD) * (i / steps);
         samples.push({ ...app.getTrackPointAt(d), d });
       }
-      const tileType = isVariableBend ? 'toy-park-variable-angle-bend-tile' : 'toy-park-straight-road-tile';
+      const tileType = piece.tileKey;
       const tileName = isVariableBend
         ? `TOY_PARK_VARIABLE_ANGLE_BEND_TILE_SURFACE_${counts.variableBend}`
-        : `TOY_PARK_STRAIGHT_ROAD_TILE_SURFACE_${counts.straight}`;
+        : isRampUp
+          ? `TOY_PARK_RAMP_UP_ROAD_TILE_SURFACE_${counts.rampUp}`
+          : isElevatedStraight
+            ? `TOY_PARK_ELEVATED_STRAIGHT_ROAD_TILE_SURFACE_${counts.elevatedStraight}`
+            : isRampDown
+              ? `TOY_PARK_RAMP_DOWN_ROAD_TILE_SURFACE_${counts.rampDown}`
+              : `TOY_PARK_STRAIGHT_ROAD_TILE_SURFACE_${counts.straight}`;
       const mesh = app.addTrackRibbon(samples, app.trackWidth, material, {
         name: tileName,
         distanceStart: Number(startD.toFixed(2)),
         distanceEnd: Number(endD.toFixed(2)),
+        renderOrder: isVariableBend ? 2 : 1,
         userData: {
           type: tileType,
           tileKey: piece.tileKey,
@@ -96,21 +113,41 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
           surfaceRole: 'direct-colored-track-board-surface',
           markerRole: 'none-direct-track-surface-color',
           physicsPreserved: true,
-          tileSurfaceColor: isVariableBend ? 'warm-orange-variable-bend' : 'sky-blue',
+          tileSurfaceColor: isVariableBend
+            ? 'warm-orange-variable-bend'
+            : isRampUp
+              ? 'mint-green-ramp-up'
+              : isElevatedStraight
+                ? 'lavender-elevated-straight'
+                : isRampDown
+                  ? 'mint-green-ramp-down'
+                  : 'sky-blue',
           variableAngleDegrees: piece.variableAngleDegrees ?? null,
+          elevationRole: piece.elevationRole ?? null,
+          bridgeModule: Boolean(piece.bridgeModule),
+          bridgeModuleRole: piece.bridgeModuleRole ?? null,
+          bridgeHeight: piece.bridgeHeight ?? 0,
+          pathHeightMode: piece.pathHeightMode ?? null,
           uTurn180: false,
         },
       });
       mesh.userData.tileIndex = index;
       if (isVariableBend) counts.variableBend += 1;
+      else if (isRampUp) counts.rampUp += 1;
+      else if (isElevatedStraight) counts.elevatedStraight += 1;
+      else if (isRampDown) counts.rampDown += 1;
       else counts.straight += 1;
     });
     app.trackStats.toyParkRoadTileMarkers = 0;
     app.trackStats.toyParkRoadTileMarkerStyle = 'disabled-user-request-direct-track-board-colors';
     app.trackStats.toyParkRoadTileSurfaceColoring = {
-      mode: 'direct-colored-track-board-surfaces-no-tile-marker-overlays',
+      mode: 'direct-colored-track-board-surfaces-polygon-offset-bend-above-straight-to-avoid-90-degree-seam-z-fighting',
       straightColor: 'sky-blue',
+      rampUpColor: null,
+      elevatedStraightColor: null,
+      rampDownColor: null,
       variableBendColor: 'warm-orange',
+      bridgeModuleSurfaceColoring: 'cancelled-no-ramp-up-elevated-ramp-down-bridge-board-surfaces',
       uTurn180Color: null,
       uTurn180Cancelled: true,
       corner45Color: null,
@@ -118,6 +155,8 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
       markerOverlayCount: 0,
       physicsPreserved: true,
     };
+    app.trackStats.toyParkRoadTileSurfaceColoring.independentBridgeModules = app.toyParkTrackTiles?.independentBridgeModules || null;
+    app.trackStats.toyParkRoadTileSurfaceColoring.pathHeightMode = app.toyParkTrackTiles?.independentBridgeModules?.pathHeightMode || null;
   
 }
 
@@ -410,16 +449,52 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
     const railChunkGap = 0.035;
     const tileConnectorOverlap = TOY_PARK_RAIL_TILE_CONNECTOR_OVERLAP;
     const { red: redMaterial, white: whiteMaterial, innerGray: innerGrayMaterial, straightBlue: straightBlueMaterial } = createToyParkRailMaterialSet(app, material);
+    const makeBridgeRailMaterial = (color, role) => {
+      const bridgeMat = new THREE.MeshPhysicalMaterial({
+        color,
+        roughness: 0.86,
+        metalness: 0,
+        clearcoat: 0.05,
+        clearcoatRoughness: 0.9,
+        transparent: false,
+        opacity: 1,
+        side: THREE.DoubleSide,
+      });
+      bridgeMat.userData = {
+        type: `toy-park-${role}-bridge-board-rail-material`,
+        opaqueClay: true,
+        transparentTexture: false,
+        role: `toy-park-${role}-bridge-board-half-round-rail-matches-board-surface`,
+        materialFeel: 'rough pitted molded clay-plastic bridge board rail',
+      };
+      return bridgeMat;
+    };
+    const bridgeRailMaterials = new Map([
+      [TOY_PARK_TRACK_TILE_LIBRARY.rampUp.key, makeBridgeRailMaterial(0x95f0c8, 'ramp-up')],
+      [TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight.key, makeBridgeRailMaterial(0xcdb7ff, 'elevated-straight')],
+      [TOY_PARK_TRACK_TILE_LIBRARY.rampDown.key, makeBridgeRailMaterial(0x95f0c8, 'ramp-down')],
+    ]);
     const radialSegments = Math.max(10, app.performanceProfile?.railTubeRadialSegments ?? PERFORMANCE_TUNING.railTubeRadialSegments ?? 10);
     let stripedOuterRailChunks = 0;
     let grayInnerRailChunks = 0;
     let ninetyDegreeInnerRailRemoved = 0;
     let ninetyDegreeOuterRailChunks = 0;
     let straightBlueRailSegments = 0;
+    let bridgeBoardRailSegments = 0;
+    let rampUpBridgeRailSegments = 0;
+    let elevatedBridgeRailSegments = 0;
+    let rampDownBridgeRailSegments = 0;
     let tileConnectorRailSegments = 0;
     const bendRailRoleSummary = [];
     const straightPieces = (app.trackPieces || [])
       .filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.straight.key);
+    const bridgeTileKeys = new Set([
+      TOY_PARK_TRACK_TILE_LIBRARY.rampUp.key,
+      TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight.key,
+      TOY_PARK_TRACK_TILE_LIBRARY.rampDown.key,
+    ]);
+    const bridgePieces = (app.trackPieces || [])
+      .filter((piece) => bridgeTileKeys.has(piece.tileKey));
     const bendTileKeys = new Set([
       TOY_PARK_TRACK_TILE_LIBRARY.variableBend.key,
     ]);
@@ -452,10 +527,8 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
       const [firstSide, secondSide] = sideSummaries;
       const outerSide = firstSide.railPathLength >= secondSide.railPathLength ? firstSide.side : secondSide.side;
       const innerSide = outerSide === -1 ? 1 : -1;
-      if (!isNinetyDegreeBend) {
-        markInnerBendJoinSide(piece.startD, innerSide);
-        markInnerBendJoinSide(piece.endD, innerSide);
-      }
+      markInnerBendJoinSide(piece.startD, innerSide);
+      markInnerBendJoinSide(piece.endD, innerSide);
     });
     let grayInnerJoinConnectorSegments = 0;
     let ninetyDegreeJoinConnectorSkipped = 0;
@@ -509,6 +582,52 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
         );
         app.trackGroup.add(tube);
         straightBlueRailSegments += 1;
+      });
+
+      bridgePieces.forEach((piece) => {
+        const startD = clamp(piece.startD, 0, app.trackLength);
+        const endD = clamp(piece.endD, startD, app.trackLength);
+        const samples = buildToyParkRailCurve(app, startD, endD, side, width, railOffset, railBaseLift);
+        const role = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampUp.key
+          ? 'ramp-up'
+          : piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight.key
+            ? 'elevated-straight'
+            : 'ramp-down';
+        const railMaterial = bridgeRailMaterials.get(piece.tileKey) || straightBlueMaterial;
+        const tube = buildToyParkHalfRoundRailMesh(app,
+          samples,
+          railRadius,
+          railMaterial,
+          `toy-park-half-round-${role}-bridge-board-rail-${side < 0 ? 'left' : 'right'}-${bridgeBoardRailSegments}`,
+          {
+            type: `toy-park-${role}-bridge-board-half-round-rail`,
+            railSide: side,
+            curveRole: `${role}-bridge-board-continuous`,
+            tileKey: piece.tileKey,
+            tileLabel: piece.tileLabel,
+            bridgeBoardRail: true,
+            bridgeModule: true,
+            bridgeModuleRole: piece.bridgeModuleRole ?? null,
+            elevationRole: piece.elevationRole ?? null,
+            bridgeHeight: piece.bridgeHeight ?? 0,
+            continuousRail: true,
+            segmentedChunks: false,
+            distanceStart: Number(startD.toFixed(2)),
+            distanceEnd: Number(endD.toFixed(2)),
+            tileRailConnectorOverlap: 0,
+            railJoinFix: 'bridge-board-rails-restored-for-ramp-up-elevated-and-ramp-down-modules-with-flush-tile-boundaries',
+            materialFeel: `${role} bridge board has continuous rough molded-clay half-round side rail matching the bridge surface`,
+            cameraOccluder: true,
+            cameraOccluderType: 'toy-park-bridge-board-half-round-rail',
+            cameraOccluderDistanceStart: startD,
+            cameraOccluderDistanceEnd: endD,
+          }
+        );
+        app.trackGroup.add(tube);
+        bridgeBoardRailSegments += 1;
+        if (piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampUp.key) rampUpBridgeRailSegments += 1;
+        else if (piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight.key) elevatedBridgeRailSegments += 1;
+        else if (piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampDown.key) rampDownBridgeRailSegments += 1;
       });
 
       const tileBoundaries = (app.trackPieces || [])
@@ -582,28 +701,6 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
           if (role === 'inner') {
             const pieceTurnDegrees = Number(piece.turnDegrees || 0);
             const isNinetyDegreeBend = Math.abs(pieceTurnDegrees) === 90;
-            if (isNinetyDegreeBend) {
-              bendRailRoleSummary.push({
-                side: bendSide,
-                role,
-                materialRole: 'removed-user-request-no-90-degree-inner-rail',
-                tileKey: piece.tileKey || null,
-                turnDegrees: piece.turnDegrees ?? null,
-                outerSide,
-                innerSide,
-                railPathLength: Number(sideSummary.railPathLength.toFixed(3)),
-                oppositeRailPathLength: Number(sideLengthMap[outerSide].toFixed(3)),
-                distanceStart: Number(piece.startD.toFixed(2)),
-                distanceEnd: Number(piece.endD.toFixed(2)),
-                chunkIndex: null,
-                continuousRail: false,
-                segmentedChunks: false,
-                removed: true,
-                removalReason: 'ninety-degree-bend-inner-rail-removed-user-request',
-              });
-              ninetyDegreeInnerRailRemoved += 1;
-              return;
-            }
             const innerFlushSamples = buildToyParkRailCurve(app, piece.startD, piece.endD, bendSide, width, railOffset, railBaseLift);
             const innerFlushRailPathLength = measureToyParkRailCurveLength(innerFlushSamples);
             const tube = buildToyParkHalfRoundRailMesh(app,
@@ -636,7 +733,9 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
                 tileRailConnectorOverlap: 0,
                 innerRailFlushButtJoint: true,
                 railJoinFix: 'inner-short-side-generated-as-one-continuous-smooth-gray-rail-length-based-role',
-                materialFeel: 'large 30%-smaller one-piece smooth gray molded-clay half-round rail on the shorter inside of the variable-angle bend; 180-degree U-turn tile cancelled',
+                materialFeel: isNinetyDegreeBend
+                  ? 'large 30%-smaller one-piece smooth gray molded-clay half-round rail restored on the shorter inside of the 90-degree bend by user request; flush butt joints preserved at tile boundaries'
+                  : 'large 30%-smaller one-piece smooth gray molded-clay half-round rail on the shorter inside of the variable-angle bend; 180-degree U-turn tile cancelled',
                 cameraOccluder: true,
                 cameraOccluderType: 'toy-park-gray-inner-rail',
                 cameraOccluderDistanceStart: pieceStart,
@@ -661,6 +760,9 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
               segmentedChunks: false,
             });
             grayInnerRailChunks += 1;
+            if (isNinetyDegreeBend) {
+              ninetyDegreeInnerRailRemoved += 1;
+            }
             return;
           }
 
@@ -739,15 +841,21 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
           });
         });
       });
-    app.trackStats.railTubes += stripedOuterRailChunks + grayInnerRailChunks + straightBlueRailSegments + tileConnectorRailSegments;
+    app.trackStats.railTubes += stripedOuterRailChunks + grayInnerRailChunks + straightBlueRailSegments + bridgeBoardRailSegments + tileConnectorRailSegments;
     app.trackStats.toyParkMarbleGuardRailBeads = 0;
     app.trackStats.toyParkStripedOuterRailChunks = stripedOuterRailChunks;
     app.trackStats.toyParkGrayInnerRailChunks = grayInnerRailChunks;
-    app.trackStats.toyParkNinetyDegreeInnerRailRemoved = true;
-    app.trackStats.toyParkNinetyDegreeInnerRailCount = 0;
-    app.trackStats.toyParkNinetyDegreeInnerRailRemovedCount = ninetyDegreeInnerRailRemoved;
+    app.trackStats.toyParkBridgeBoardRailSegments = bridgeBoardRailSegments;
+    app.trackStats.toyParkRampUpBridgeRailSegments = rampUpBridgeRailSegments;
+    app.trackStats.toyParkElevatedBridgeRailSegments = elevatedBridgeRailSegments;
+    app.trackStats.toyParkRampDownBridgeRailSegments = rampDownBridgeRailSegments;
+    app.trackStats.toyParkBridgeBoardRailStatus = 'ramp-up-elevated-straight-and-ramp-down-bridge-board-side-rails-restored-continuous-half-round-flush-boundaries';
+    app.trackStats.toyParkNinetyDegreeInnerRailRestored = true;
+    app.trackStats.toyParkNinetyDegreeInnerRailRemoved = false;
+    app.trackStats.toyParkNinetyDegreeInnerRailCount = ninetyDegreeInnerRailRemoved;
+    app.trackStats.toyParkNinetyDegreeInnerRailRemovedCount = 0;
     app.trackStats.toyParkNinetyDegreeOuterRailCount = ninetyDegreeOuterRailChunks;
-    app.trackStats.toyParkNinetyDegreeRailStatus = 'ninety-degree-bend-inner-rail-removed-user-request-outer-rail-kept';
+    app.trackStats.toyParkNinetyDegreeRailStatus = 'ninety-degree-bend-inner-rail-restored-user-request-flush-butt-joints-kept';
     app.trackStats.toyParkGrayInnerJoinConnectorSegments = 0;
     app.trackStats.toyParkGrayInnerJoinConnectorSkipped = grayInnerJoinConnectorSegments;
     app.trackStats.toyParkStraightBlueRailSegments = straightBlueRailSegments;
@@ -755,14 +863,16 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
     app.trackStats.toyParkNinetyDegreeJoinConnectorSkipped = ninetyDegreeJoinConnectorSkipped;
     app.trackStats.toyParkStraightBlueNinetyDegreeBoundaryClips = straightBlueNinetyDegreeBoundaryClips;
     app.trackStats.toyParkNinetyDegreeBoundaryFlushButtJoint = true;
-    app.trackStats.toyParkNinetyDegreeBoundaryOverlapFix = 'straight-and-outer-bend-rails-stop-at-90-degree-tile-boundaries-and-blue-connector-caps-are-skipped';
+    app.trackStats.toyParkNinetyDegreeBoundaryOverlapFix = 'straight-blue-rails-and restored-90-degree-inner-gray-rails use flush butt joints at 90-degree tile boundaries; blue connector caps stay skipped to avoid collars';
+    app.trackStats.toyParkNinetyDegreeInnerGapFillSegments = 0;
+    app.trackStats.toyParkNinetyDegreeInnerGapFillConnectorStyle = 'disabled-after-user-request-restored-full-90-degree-inner-gray-rail';
     app.trackStats.toyParkBlueConnectorSkipsInnerGrayJoins = true;
     app.trackStats.toyParkStraightBlueRailChunks = 0;
     app.trackStats.toyParkStraightRailSegmentedChunks = false;
     app.trackStats.toyParkStraightRailStyle = 'single-continuous-sky-blue-rail-per-side';
     app.trackStats.visualRailSmoothing = 'large-30pct-smaller-grounded-half-round-dense-striped-clay-toy-rails';
-    app.trackStats.guardRailStyle = 'toy-park-large-30pct-smaller-grounded-half-round-rails-straight-road-continuous-sky-blue-matches-track-surface-corner-outer-red-white-inner-gray-with-invisible-containment-lip';
-    app.trackStats.guardRailMaterialFeel = '強泥膠感 / rough pitted molded clay-plastic; straight road tile rails are single continuous sky-blue rails matching the straight track surface, variable-angle bend keeps outer dense red-white and inner smooth gray; 180-degree U-turn tile cancelled';
+    app.trackStats.guardRailStyle = 'toy-park-large-30pct-smaller-grounded-half-round-rails-straight-road-continuous-sky-blue-bridge-boards-continuous-matching-rails-corner-outer-red-white-inner-gray-with-invisible-containment-lip';
+    app.trackStats.guardRailMaterialFeel = '強泥膠感 / rough pitted molded clay-plastic; straight road tile rails are single continuous sky-blue rails, ramp-up/elevated/ramp-down bridge boards have matching continuous half-round side rails, variable-angle bend keeps outer dense red-white and inner smooth gray; 180-degree U-turn tile cancelled';
     app.trackStats.toyParkStraightRailColor = 'sky-blue-matches-straight-track-surface';
     app.trackStats.toyParkBendRailStyle = 'variable-angle-bend-only-length-based-longer-outer-red-white-striped-shorter-inner-one-continuous-smooth-gray-half-round-rails-no-u-turn';
     app.trackStats.toyParkBendOuterRailMaterial = 'red-white-striped';
