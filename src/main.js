@@ -2584,9 +2584,32 @@ class MarbleRace {
   }
 
   drawVerticalViewerCanvasOverlay({ ctx, canvas, ranking = [], leaderProgress = 0, leaderDistance = 0, caption = {}, summaryTarget = 'recording', toyParkOverlay = false } = {}) {
-    const w = canvas.width;
-    const h = canvas.height;
-    const verticalContentScale = 0.74;
+    let w = canvas.width;
+    let h = canvas.height;
+    const toyParkWebStageTransform = toyParkOverlay && summaryTarget === 'web' && w < 600
+      ? (() => {
+        const designW = 720;
+        const designH = 1280;
+        const scale = Math.min(w / designW, h / designH);
+        return {
+          designW,
+          designH,
+          scale,
+          offsetX: (w - designW * scale) / 2,
+          offsetY: (h - designH * scale) / 2,
+          viewportW: w,
+          viewportH: h,
+        };
+      })()
+      : null;
+    if (toyParkWebStageTransform) {
+      ctx.save();
+      ctx.translate(toyParkWebStageTransform.offsetX, toyParkWebStageTransform.offsetY);
+      ctx.scale(toyParkWebStageTransform.scale, toyParkWebStageTransform.scale);
+      w = toyParkWebStageTransform.designW;
+      h = toyParkWebStageTransform.designH;
+    }
+    const verticalContentScale = toyParkWebStageTransform ? toyParkWebStageTransform.scale : 0.74;
     const margin = 58;
 
     // Compact Shorts event card at the top. Toy Park intentionally omits this component in both web and recording overlays.
@@ -2631,11 +2654,12 @@ class MarbleRace {
       toyPark: toyParkOverlay,
     });
 
-    // Toy Park vertical keeps the CTA away from the lower track action on 720p Shorts/composite previews.
-    const ctaW = toyParkOverlay ? (toyParkNarrowWebPreview ? 160 : 180) : w - margin * 2;
-    const ctaH = toyParkOverlay ? (toyParkNarrowWebPreview ? 44 : 46) : 64;
-    const ctaX = toyParkOverlay ? (toyParkNarrowWebPreview ? Math.round((w - ctaW) / 2) : w - 48 - ctaW) : margin;
-    const ctaY = toyParkOverlay ? (toyParkNarrowWebPreview ? h - ctaH - 24 : 48) : h - 216;
+    // Toy Park vertical uses a fixed 9:16 overlay-stage composition: leaderboard top-left,
+    // CTA bottom-right, matching the clean overlay-only reference frame.
+    const ctaW = toyParkOverlay ? 330 : w - margin * 2;
+    const ctaH = toyParkOverlay ? 52 : 64;
+    const ctaX = toyParkOverlay ? w - margin - ctaW : margin;
+    const ctaY = toyParkOverlay ? h - margin - ctaH : h - 216;
     let ctaSummary = null;
     if (toyParkOverlay) {
       ctaSummary = this.drawToyParkArcadeCta({ ctx, x: ctaX, y: ctaY, width: ctaW, height: ctaH, vertical: true });
@@ -2673,6 +2697,8 @@ class MarbleRace {
       this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, infoX + infoW / 2, infoY + 69, { font: '800 16px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, align: 'center', maxWidth: infoW - 68 });
     }
 
+    if (toyParkWebStageTransform) ctx.restore();
+
     this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
     const survivorSpotlightSummary = this.drawCanvasSurvivorSpotlight({ ctx, canvas, summaryTarget });
     if (survivorSpotlightSummary && summaryTarget !== 'web') this.survivorLeague.lastCanvasSurvivorSpotlightSummary = survivorSpotlightSummary;
@@ -2681,8 +2707,16 @@ class MarbleRace {
       enabled: true,
       target: summaryTarget,
       layout: 'vertical',
-      canvasSize: `${w}x${h}`,
+      canvasSize: toyParkWebStageTransform ? `${toyParkWebStageTransform.viewportW}x${toyParkWebStageTransform.viewportH}` : `${w}x${h}`,
+      designCanvasSize: toyParkWebStageTransform ? `${w}x${h}` : null,
       verticalContentScale,
+      toyParkWebStageTransform: toyParkWebStageTransform ? {
+        designSize: `${toyParkWebStageTransform.designW}x${toyParkWebStageTransform.designH}`,
+        viewportSize: `${toyParkWebStageTransform.viewportW}x${toyParkWebStageTransform.viewportH}`,
+        scale: Number(toyParkWebStageTransform.scale.toFixed(3)),
+        offsetX: Number(toyParkWebStageTransform.offsetX.toFixed(1)),
+        offsetY: Number(toyParkWebStageTransform.offsetY.toFixed(1)),
+      } : null,
       verticalLayoutMetrics: {
         margin,
         eventCard: { x: capX, y: capY, width: capW, height: capH },
