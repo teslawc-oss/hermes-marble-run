@@ -665,6 +665,8 @@ const BROADCAST_CAMERA = {
     positionSmoothing: 0.04,
     targetSmoothing: 0.085,
     fov: 32.4,
+    toyParkZoomInFactor: 0.7,
+    toyParkZoomInLabel: 'Toy Park lead-pack camera uses a 30% tighter FOV while keeping normal lead-pack positioning',
     obstacleAwareDistance: 36.7,
     obstaclePullback: 2.9,
     obstacleHeightBoost: 2.7,
@@ -18341,6 +18343,9 @@ class MarbleRace {
         },
         targetLiftMode: cfg.useTrackNormalHeight ? 'track-local-up' : 'world-y',
         fov: cfg.fov,
+        toyParkZoomInFactor: this.isToyParkViewerOverlayActive() ? (cfg.toyParkZoomInFactor || 1) : 1,
+        toyParkZoomInActive: Boolean(this.isToyParkViewerOverlayActive() && (cfg.toyParkZoomInFactor || 1) < 1),
+        effectiveFov: Number((this.isToyParkViewerOverlayActive() ? (cfg.fov || 44) * (cfg.toyParkZoomInFactor || 1) : (cfg.fov || 44)).toFixed(2)),
       };
     } else if (activeCameraMode === 'selected' && selected) {
       const cfg = BROADCAST_CAMERA.selected;
@@ -18456,7 +18461,7 @@ class MarbleRace {
     const toyParkNarrowPortraitPreview = Boolean(
       this.toyParkPreviewEndpoint
       && this.isToyParkViewerOverlayActive()
-      && window.innerWidth < 600
+      && window.innerWidth <= 800
       && window.innerHeight > window.innerWidth * 1.35
       && (activeCameraMode === 'leadPack' || activeCameraMode === 'cinematicLeader')
     );
@@ -18473,7 +18478,7 @@ class MarbleRace {
       : (activeCameraMode === 'toyParkBroadcast'
         ? (this.toyParkBroadcastCameraState?.fov || 38)
         : (activeCameraMode === 'leadPack'
-          ? (BROADCAST_CAMERA.leadPack.fov || 44)
+          ? ((BROADCAST_CAMERA.leadPack.fov || 44) * (this.isToyParkViewerOverlayActive() ? (BROADCAST_CAMERA.leadPack.toyParkZoomInFactor || 1) : 1))
           : (activeCameraMode === 'replayHighlight' ? 38 : 58)));
     const portraitPreviewFovBoost = toyParkNarrowPortraitPreview ? 1.12 : 1;
     const viewportDesiredFov = portraitPreviewFovBoost > 1
