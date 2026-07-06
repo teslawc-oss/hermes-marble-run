@@ -18126,7 +18126,6 @@ class MarbleRace {
       || this.getRanking({ force: false })[0];
     if (this.finishSlowMotion?.active) return 'finish';
     if (this.state === 'finished') return BROADCAST_CAMERA.podium360.enabled ? 'podium360' : 'finish';
-    if (this.getToyParkBroadcastTarget()) return 'toyParkBroadcast';
     if (this.countdownActive || this.state === 'ready' || this.state === 'idle') return 'leadPack';
     if (this.finishers.length > 0) {
       const holdUntil = Number.isFinite(this.defaultCameraPhaseUntil) ? this.defaultCameraPhaseUntil : 0;
