@@ -577,15 +577,18 @@ const BROADCAST_CAMERA = {
   birdEyeCameraAngle: true,
   toyParkBroadcast: {
     enabled: true,
-    label: 'Toy Park broadcast camera: low start close-up, first-corner top-three chase, mid-race traffic/overtake cuts, final leader-plus-nearest-challenger, and short zoom punches on collisions/overtakes',
+    label: 'Toy Park broadcast camera: mostly high-angle look-across coverage, intermittent cinematic-forward sweeps, first-corner top-three chase, mid-race traffic/overtake cuts, final leader-plus-nearest-challenger, and short zoom punches on collisions/overtakes',
     momentZoomSeconds: 1.45,
     firstCornerProgressEnd: 0.24,
     finalLeaderProgressStart: 0.74,
-    startClose: { back: -2.2, side: 1.05, height: 5.8, targetLift: 0.72, fov: 48, positionSmoothing: 0.22, targetSmoothing: 0.24, label: 'start: low-angle close-up on the staged front pack' },
-    firstCorner: { back: -6.2, side: 2.6, height: 14.5, lookAhead: 8.5, targetLift: 1.05, fov: 38, positionSmoothing: 0.075, targetSmoothing: 0.12, label: 'first corner: chase the top three' },
-    actionSpot: { back: -4.8, side: -3.0, height: 13.0, lookAhead: 6.5, targetLift: 0.95, fov: 36, positionSmoothing: 0.12, targetSmoothing: 0.16, label: 'mid race: cut to the tightest traffic / overtake pocket' },
-    leaderDuel: { back: -7.0, side: 2.1, height: 16.5, lookAhead: 9.2, targetLift: 1.05, fov: 34, positionSmoothing: 0.07, targetSmoothing: 0.12, label: 'final: follow leader plus nearest challenger' },
-    momentZoom: { back: -2.8, side: 1.2, height: 8.2, lookAhead: 4.4, targetLift: 0.85, fov: 30, positionSmoothing: 0.32, targetSmoothing: 0.34, label: 'collision / overtake / lead-change short zoom punch' },
+    cinematicForwardCycleSeconds: 14,
+    cinematicForwardHoldSeconds: 3.2,
+    startClose: { back: -5.0, side: 1.25, height: 16.5, lookAhead: 6.2, targetLift: 0.9, fov: 42, positionSmoothing: 0.16, targetSmoothing: 0.2, label: 'start: higher broadcast angle across the staged front pack' },
+    firstCorner: { back: -7.6, side: 3.0, height: 24.0, lookAhead: 10.5, targetLift: 1.15, fov: 40, positionSmoothing: 0.07, targetSmoothing: 0.11, label: 'first corner: high-angle chase of the top three' },
+    actionSpot: { back: -6.8, side: -3.2, height: 22.5, lookAhead: 9.0, targetLift: 1.05, fov: 39, positionSmoothing: 0.1, targetSmoothing: 0.14, label: 'mid race: high-angle cut to the tightest traffic / overtake pocket' },
+    cinematicForward: { back: -10.8, side: 0.4, height: 26.5, lookAhead: 13.5, targetLift: 1.15, fov: 36, positionSmoothing: 0.09, targetSmoothing: 0.13, label: 'intermittent cinematic-forward sweep looking ahead along the route' },
+    leaderDuel: { back: -8.8, side: 2.4, height: 24.5, lookAhead: 11.5, targetLift: 1.15, fov: 37, positionSmoothing: 0.065, targetSmoothing: 0.11, label: 'final: high-angle follow on leader plus nearest challenger' },
+    momentZoom: { back: -4.6, side: 1.4, height: 15.5, lookAhead: 6.2, targetLift: 0.95, fov: 34, positionSmoothing: 0.28, targetSmoothing: 0.3, label: 'collision / overtake / lead-change short zoom punch from a higher angle' },
   },
   initialVerticalAxisRotationDegrees: 150,
   defaultCameraPitchUpDegrees: 58,
@@ -18064,20 +18067,28 @@ class MarbleRace {
         || null;
       targetRanking = [primary, secondary].filter(Boolean);
     } else {
-      phase = 'actionSpot';
-      const candidates = [];
-      for (let i = 0; i < Math.min(ranking.length - 1, 6); i += 1) {
-        const a = ranking[i];
-        const b = ranking[i + 1];
-        if (!a || !b) continue;
-        const gap = Math.abs((a.distance || 0) - (b.distance || 0));
-        const progress = this.trackLength ? (((a.distance || 0) + (b.distance || 0)) / 2) / this.trackLength : 0;
-        candidates.push({ a, b, gap, progress, score: gap + Math.abs(progress - 0.52) * 2.5 });
+      const cycle = Math.max(0, now - 1.2) % Math.max(1, cfgRoot.cinematicForwardCycleSeconds || 14);
+      if (cycle < Math.max(0, cfgRoot.cinematicForwardHoldSeconds || 0)) {
+        phase = 'cinematicForward';
+        targetRanking = fullRanking.slice(0, 3);
+        primary = targetRanking[0] || leader;
+        secondary = targetRanking[1] || null;
+      } else {
+        phase = 'actionSpot';
+        const candidates = [];
+        for (let i = 0; i < Math.min(ranking.length - 1, 6); i += 1) {
+          const a = ranking[i];
+          const b = ranking[i + 1];
+          if (!a || !b) continue;
+          const gap = Math.abs((a.distance || 0) - (b.distance || 0));
+          const progress = this.trackLength ? (((a.distance || 0) + (b.distance || 0)) / 2) / this.trackLength : 0;
+          candidates.push({ a, b, gap, progress, score: gap + Math.abs(progress - 0.52) * 2.5 });
+        }
+        const traffic = candidates.sort((a, b) => a.score - b.score)[0];
+        primary = traffic?.a || leader;
+        secondary = traffic?.b || fullRanking.find((data) => data.id !== primary.id) || null;
+        targetRanking = [primary, secondary].filter(Boolean);
       }
-      const traffic = candidates.sort((a, b) => a.score - b.score)[0];
-      primary = traffic?.a || leader;
-      secondary = traffic?.b || fullRanking.find((data) => data.id !== primary.id) || null;
-      targetRanking = [primary, secondary].filter(Boolean);
     }
 
     const center = new THREE.Vector3();
@@ -18212,6 +18223,7 @@ class MarbleRace {
       this.toyParkBroadcastCameraState = {
         enabled: true,
         phase: toyParkBroadcast.phase,
+        style: toyParkBroadcast.phase === 'cinematicForward' ? 'cinematic-forward' : 'high-angle-look-across',
         label: cfg.label || BROADCAST_CAMERA.toyParkBroadcast.label,
         primary: toyParkBroadcast.primary?.name || null,
         secondary: toyParkBroadcast.secondary?.name || null,
