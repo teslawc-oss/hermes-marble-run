@@ -600,14 +600,17 @@ const BROADCAST_CAMERA = {
   cinematicLeaderFromProgress: 0.8,
   toyParkDefaultAlternatingPhaseSize: 1,
   toyParkDefaultAlternatingSequence: ['cinematicLeader'],
-  toyParkDefaultAlternatingLabel: 'Toy Park Default Auto uses cinematic leader from ready/countdown through the full pre-finish race; finish slow-motion, first-finish hold, and podium rules stay unchanged',
+  toyParkDefaultAlternatingLabel: 'Toy Park Default Auto uses cinematic leader from ready/countdown until the final approach, then holds the finish-line shot so the crossing is visible before first-finish/podium rules continue',
+  toyParkFinalApproachProgress: 0.94,
+  toyParkFinalApproachDistance: 15,
+  toyParkFinalApproachLabel: 'Toy Park final approach: once the leader reaches 94% progress or is within 15 track units of the line, Default Auto switches to the finish-line shot to capture the crossing instead of staying on cinematicLeader',
   finishSlowMotionCameraHoldSeconds: 3.4,
   finishSlowMotionCameraLabel: 'when finish slow motion triggers near/crossing the line, Default Auto holds the finish-line shot through the slow-mo window so the slow finish camera remains visible before returning to race/podium coverage',
   postFirstFinish: {
-    finishHoldSeconds: 4,
+    finishHoldSeconds: 7,
     followModeAfterHold: 'cinematicLeader',
     snapOnLeadPackSwitch: true,
-    label: 'after the first marble finishes, hold the finisher for 4 seconds, then snap to a close-up of the leading unfinished marble until every racer completes',
+    label: 'after the first marble finishes, hold the finisher for 7 seconds, then snap to a close-up of the leading unfinished marble until every racer completes',
   },
   lineOfSight: {
     enabled: true,
@@ -18167,6 +18170,10 @@ class MarbleRace {
     if (BROADCAST_CAMERA.highAngleBattleEnabled && this.getLeadBattleTarget()) return 'leadBattle';
     const leaderProgress = this.trackLength && leader ? clamp((leader.distance || 0) / this.trackLength, 0, 1) : 0;
     if (this.isToyParkViewerOverlayActive()) {
+      const remainingToFinish = this.trackLength && leader ? Math.max(0, this.trackLength - (leader.distance || 0)) : Infinity;
+      const finalProgress = BROADCAST_CAMERA.toyParkFinalApproachProgress ?? 0.94;
+      const finalDistance = BROADCAST_CAMERA.toyParkFinalApproachDistance ?? 15;
+      if (leaderProgress >= finalProgress || remainingToFinish <= finalDistance) return 'finish';
       const phaseSize = Math.max(0.01, BROADCAST_CAMERA.toyParkDefaultAlternatingPhaseSize || 0.2);
       const sequence = Array.isArray(BROADCAST_CAMERA.toyParkDefaultAlternatingSequence) && BROADCAST_CAMERA.toyParkDefaultAlternatingSequence.length
         ? BROADCAST_CAMERA.toyParkDefaultAlternatingSequence
