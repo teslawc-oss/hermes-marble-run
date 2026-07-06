@@ -2353,6 +2353,7 @@ class MarbleRace {
     const layoutKey = this.videoCanvasLayoutKey || (w < h ? 'vertical' : 'horizontal');
     const isVertical = layoutKey === 'vertical' || h > w * 1.2;
     const minDim = Math.min(w, h);
+    const toyParkStyle = this.isToyParkViewerOverlayActive();
     const goHoldSeconds = Math.max(0.1, CANVAS_START_HOOK.postStartHoldSeconds || 1.8);
     const goFadeStartSeconds = Math.min(goHoldSeconds - 0.05, Math.max(0, CANVAS_START_HOOK.goFadeStartSeconds ?? goHoldSeconds * 0.64));
     const pulse = Math.sin(state.beat * Math.PI);
@@ -2360,51 +2361,124 @@ class MarbleRace {
     const fade = state.isGo ? clamp(1 - Math.max(0, state.ageSeconds - goFadeStartSeconds) / Math.max(0.1, goHoldSeconds - goFadeStartSeconds), 0, 1) : 1;
     const cx = w / 2;
     const cy = isVertical ? h * 0.47 : h * 0.5;
-    const cardW = isVertical ? w * 0.84 : w * 0.56;
-    const cardH = isVertical ? h * 0.27 : h * 0.32;
+    const cardW = toyParkStyle ? (isVertical ? w * 0.70 : w * 0.48) : (isVertical ? w * 0.84 : w * 0.56);
+    const cardH = toyParkStyle ? (isVertical ? h * 0.20 : h * 0.25) : (isVertical ? h * 0.27 : h * 0.32);
     const cardX = cx - cardW / 2;
     const cardY = cy - cardH / 2;
     const radius = minDim * (isVertical ? 0.04 : 0.03);
+    const textStroke = '#17131f';
+    const drawChecker = (x, y, cw, ch) => {
+      const cell = Math.max(7, ch / 4);
+      ctx.save();
+      this.drawViewerRoundedRect(ctx, x, y, cw, ch, 7);
+      ctx.clip();
+      for (let yy = y - cell; yy < y + ch + cell; yy += cell) {
+        for (let xx = x - cell; xx < x + cw + cell; xx += cell) {
+          const odd = (Math.floor((xx - x) / cell) + Math.floor((yy - y) / cell)) % 2;
+          ctx.fillStyle = odd ? textStroke : '#ffffff';
+          ctx.fillRect(xx, yy, cell, cell);
+        }
+      }
+      ctx.restore();
+    };
+
     ctx.save();
     ctx.globalAlpha = fade;
     const vignette = ctx.createRadialGradient(cx, cy, minDim * 0.08, cx, cy, minDim * 0.72);
-    vignette.addColorStop(0, 'rgba(255, 224, 90, 0.18)');
-    vignette.addColorStop(0.42, 'rgba(6, 10, 24, 0.22)');
-    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.48)');
+    vignette.addColorStop(0, toyParkStyle ? 'rgba(255, 224, 90, 0.12)' : 'rgba(255, 224, 90, 0.18)');
+    vignette.addColorStop(0.42, toyParkStyle ? 'rgba(6, 10, 24, 0.12)' : 'rgba(6, 10, 24, 0.22)');
+    vignette.addColorStop(1, toyParkStyle ? 'rgba(0, 0, 0, 0.28)' : 'rgba(0, 0, 0, 0.48)');
     ctx.fillStyle = vignette;
     ctx.fillRect(0, 0, w, h);
 
     ctx.translate(cx, cy);
     ctx.scale(popScale, popScale);
     ctx.translate(-cx, -cy);
-    this.drawViewerRoundedRect(ctx, cardX, cardY, cardW, cardH, radius);
-    const cardGradient = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
-    cardGradient.addColorStop(0, 'rgba(4, 9, 24, 0.78)');
-    cardGradient.addColorStop(0.52, 'rgba(12, 18, 40, 0.64)');
-    cardGradient.addColorStop(1, state.isGo ? 'rgba(255, 44, 72, 0.76)' : 'rgba(255, 178, 36, 0.58)');
-    ctx.fillStyle = cardGradient;
-    ctx.fill();
-    ctx.strokeStyle = state.isGo ? 'rgba(255,255,255,0.82)' : 'rgba(255, 223, 98, 0.72)';
-    ctx.lineWidth = Math.max(4, minDim * 0.006);
-    ctx.stroke();
 
-    const topLabel = state.isGo ? 'GO!' : CANVAS_START_HOOK.gateLabel;
-    const valueFont = isVertical ? `900 ${Math.round(minDim * (state.isGo ? 0.19 : 0.25))}px Arial Black, Impact, sans-serif` : `900 ${Math.round(minDim * (state.isGo ? 0.16 : 0.22))}px Arial Black, Impact, sans-serif`;
-    this.drawViewerText(ctx, topLabel, cx, cardY + cardH * 0.20, { font: `900 ${Math.round(minDim * 0.04)}px Arial Black, Impact, sans-serif`, fill: state.isGo ? '#ffffff' : '#ffec8a', strokeWidth: Math.max(4, minDim * 0.007), align: 'center', maxWidth: cardW - 50 });
-    this.drawViewerText(ctx, state.value, cx, cardY + cardH * 0.53, { font: valueFont, fill: state.isGo ? '#ffffff' : '#ffd83e', stroke: state.isGo ? 'rgba(255,36,66,0.88)' : 'rgba(0,0,0,0.86)', strokeWidth: Math.max(8, minDim * 0.018), align: 'center', maxWidth: cardW - 60 });
-    this.drawViewerText(ctx, CANVAS_START_HOOK.preRaceTagline, cx, cardY + cardH * 0.83, { font: `900 ${Math.round(minDim * (isVertical ? 0.038 : 0.032))}px Arial Black, Impact, sans-serif`, fill: '#8df7ff', strokeWidth: Math.max(4, minDim * 0.007), align: 'center', maxWidth: cardW - 64 });
+    if (toyParkStyle) {
+      const skew = isVertical ? 20 : 30;
+      ctx.beginPath();
+      ctx.moveTo(cardX + skew, cardY);
+      ctx.lineTo(cardX + cardW, cardY);
+      ctx.lineTo(cardX + cardW - skew, cardY + cardH);
+      ctx.lineTo(cardX, cardY + cardH);
+      ctx.closePath();
+      const cardGradient = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
+      cardGradient.addColorStop(0, state.isGo ? '#45c95d' : '#38c9ff');
+      cardGradient.addColorStop(0.60, state.isGo ? '#7cff7c' : '#8fd8ff');
+      cardGradient.addColorStop(1, state.isGo ? '#ffe04b' : '#f9a72e');
+      ctx.fillStyle = cardGradient;
+      ctx.fill();
+      ctx.strokeStyle = textStroke;
+      ctx.lineWidth = Math.max(5, minDim * 0.009);
+      ctx.stroke();
 
-    if (!state.isGo) {
-      const barW = cardW * 0.72;
-      const barH = Math.max(12, minDim * 0.016);
-      const barX = cx - barW / 2;
-      const barY = cardY + cardH - barH - cardH * 0.08;
-      this.drawViewerRoundedRect(ctx, barX, barY, barW, barH, barH / 2);
-      ctx.fillStyle = 'rgba(255,255,255,0.23)';
+      const badgeSize = isVertical ? Math.min(128, cardH * 0.55) : Math.min(150, cardH * 0.62);
+      const badgeX = cardX + cardW * 0.10;
+      const badgeY = cy - badgeSize / 2;
+      this.drawViewerRoundedRect(ctx, badgeX, badgeY, badgeSize, badgeSize, badgeSize * 0.22);
+      ctx.fillStyle = state.isGo ? '#ff5b6e' : '#ffd43d';
       ctx.fill();
-      this.drawViewerRoundedRect(ctx, barX, barY, Math.max(barH, barW * state.countdownProgress), barH, barH / 2);
-      ctx.fillStyle = '#ffdb43';
+      ctx.strokeStyle = textStroke;
+      ctx.lineWidth = Math.max(4, minDim * 0.007);
+      ctx.stroke();
+      drawChecker(cardX + cardW - badgeSize * 0.72, cardY + cardH * 0.12, badgeSize * 0.55, badgeSize * 0.36);
+
+      const topLabel = state.isGo ? 'RUSH!' : CANVAS_START_HOOK.gateLabel;
+      const valueFont = `900 ${Math.round(minDim * (isVertical ? (state.isGo ? 0.17 : 0.22) : (state.isGo ? 0.14 : 0.19)))}px Arial Black, Impact, sans-serif`;
+      this.drawViewerText(ctx, topLabel, cardX + cardW * 0.58, cardY + cardH * 0.27, {
+        font: `900 ${Math.round(minDim * (isVertical ? 0.038 : 0.034))}px Arial Black, Impact, sans-serif`,
+        fill: state.isGo ? '#ffffff' : '#ffd43d', stroke: textStroke, strokeWidth: Math.max(4, minDim * 0.008), align: 'center', maxWidth: cardW * 0.66,
+      });
+      this.drawViewerText(ctx, state.value, cardX + cardW * 0.58, cardY + cardH * 0.61, {
+        font: valueFont,
+        fill: state.isGo ? '#ffffff' : '#ffd43d', stroke: textStroke, strokeWidth: Math.max(7, minDim * 0.016), align: 'center', maxWidth: cardW * 0.66,
+      });
+      this.drawViewerText(ctx, state.isGo ? 'GO GO GO!' : `${Math.max(1, this.marbleData?.length || 8)} MARBLES READY`, cardX + cardW * 0.58, cardY + cardH * 0.86, {
+        font: `900 ${Math.round(minDim * (isVertical ? 0.026 : 0.024))}px Arial Black, Impact, sans-serif`,
+        fill: '#ffffff', stroke: textStroke, strokeWidth: Math.max(3, minDim * 0.006), align: 'center', maxWidth: cardW * 0.66,
+      });
+
+      if (!state.isGo) {
+        const barW = cardW * 0.58;
+        const barH = Math.max(10, minDim * 0.014);
+        const barX = cardX + cardW * 0.29;
+        const barY = cardY + cardH - barH - cardH * 0.06;
+        this.drawViewerRoundedRect(ctx, barX, barY, barW, barH, barH / 2);
+        ctx.fillStyle = 'rgba(23,19,31,0.35)';
+        ctx.fill();
+        this.drawViewerRoundedRect(ctx, barX, barY, Math.max(barH, barW * state.countdownProgress), barH, barH / 2);
+        ctx.fillStyle = '#ffd43d';
+        ctx.fill();
+      }
+    } else {
+      this.drawViewerRoundedRect(ctx, cardX, cardY, cardW, cardH, radius);
+      const cardGradient = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
+      cardGradient.addColorStop(0, 'rgba(4, 9, 24, 0.78)');
+      cardGradient.addColorStop(0.52, 'rgba(12, 18, 40, 0.64)');
+      cardGradient.addColorStop(1, state.isGo ? 'rgba(255, 44, 72, 0.76)' : 'rgba(255, 178, 36, 0.58)');
+      ctx.fillStyle = cardGradient;
       ctx.fill();
+      ctx.strokeStyle = state.isGo ? 'rgba(255,255,255,0.82)' : 'rgba(255, 223, 98, 0.72)';
+      ctx.lineWidth = Math.max(4, minDim * 0.006);
+      ctx.stroke();
+      const topLabel = state.isGo ? 'GO!' : CANVAS_START_HOOK.gateLabel;
+      const valueFont = isVertical ? `900 ${Math.round(minDim * (state.isGo ? 0.19 : 0.25))}px Arial Black, Impact, sans-serif` : `900 ${Math.round(minDim * (state.isGo ? 0.16 : 0.22))}px Arial Black, Impact, sans-serif`;
+      this.drawViewerText(ctx, topLabel, cx, cardY + cardH * 0.20, { font: `900 ${Math.round(minDim * 0.04)}px Arial Black, Impact, sans-serif`, fill: state.isGo ? '#ffffff' : '#ffec8a', strokeWidth: Math.max(4, minDim * 0.007), align: 'center', maxWidth: cardW - 50 });
+      this.drawViewerText(ctx, state.value, cx, cardY + cardH * 0.53, { font: valueFont, fill: state.isGo ? '#ffffff' : '#ffd83e', stroke: state.isGo ? 'rgba(255,36,66,0.88)' : 'rgba(0,0,0,0.86)', strokeWidth: Math.max(8, minDim * 0.018), align: 'center', maxWidth: cardW - 60 });
+      this.drawViewerText(ctx, CANVAS_START_HOOK.preRaceTagline, cx, cardY + cardH * 0.83, { font: `900 ${Math.round(minDim * (isVertical ? 0.038 : 0.032))}px Arial Black, Impact, sans-serif`, fill: '#8df7ff', strokeWidth: Math.max(4, minDim * 0.007), align: 'center', maxWidth: cardW - 64 });
+      if (!state.isGo) {
+        const barW = cardW * 0.72;
+        const barH = Math.max(12, minDim * 0.016);
+        const barX = cx - barW / 2;
+        const barY = cardY + cardH - barH - cardH * 0.08;
+        this.drawViewerRoundedRect(ctx, barX, barY, barW, barH, barH / 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.23)';
+        ctx.fill();
+        this.drawViewerRoundedRect(ctx, barX, barY, Math.max(barH, barW * state.countdownProgress), barH, barH / 2);
+        ctx.fillStyle = '#ffdb43';
+        ctx.fill();
+      }
     }
     ctx.restore();
 
@@ -2417,7 +2491,8 @@ class MarbleRace {
       isGo: state.isGo,
       countdownRemaining: state.countdownRemaining,
       countdownProgress: state.countdownProgress,
-      style: CANVAS_START_HOOK.style,
+      style: toyParkStyle ? 'toy-park-arcade-standing-style-start-hook' : CANVAS_START_HOOK.style,
+      toyParkStyle,
     };
     if (summaryTarget !== 'web') this.startHookLastSummary = summary;
     return summary;
@@ -2640,7 +2715,7 @@ class MarbleRace {
     }
     ctx.restore();
 
-    this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
+    const startHookSummary = this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
     const survivorSpotlightSummary = this.drawCanvasSurvivorSpotlight({ ctx, canvas, summaryTarget });
     if (survivorSpotlightSummary && summaryTarget !== 'web') this.survivorLeague.lastCanvasSurvivorSpotlightSummary = survivorSpotlightSummary;
 
@@ -2671,6 +2746,7 @@ class MarbleRace {
       ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
       ctaStyle: ctaSummary?.style || 'classic-red-cta',
       ctaPosition: ctaSummary || { x: ctaX, y: ctaY, width: ctaW, height: ctaH, layout: 'horizontal' },
+      startHook: startHookSummary,
       elapsed: Number(this.elapsed.toFixed(2)),
       leaderProgress: Number(leaderProgress.toFixed(3)),
       leaderDistance: Number(leaderDistance.toFixed(1)),
@@ -2796,7 +2872,7 @@ class MarbleRace {
 
     if (toyParkWebStageTransform) ctx.restore();
 
-    this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
+    const startHookSummary = this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
     const survivorSpotlightSummary = this.drawCanvasSurvivorSpotlight({ ctx, canvas, summaryTarget });
     if (survivorSpotlightSummary && summaryTarget !== 'web') this.survivorLeague.lastCanvasSurvivorSpotlightSummary = survivorSpotlightSummary;
 
@@ -2836,11 +2912,12 @@ class MarbleRace {
       standingAnimationMoves: liveStandingSummary.standingAnimationMoves || [],
       toyParkOverlay,
       liveStandingCompact: liveStandingSummary.compact === true,
-      maxStandingRows: maxRows,
+      maxStandingRows: ranking.length,
       channelHandle: CANVAS_VIEWER_OVERLAY.channelHandle,
       ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
       ctaStyle: ctaSummary?.style || 'classic-red-cta',
       ctaPosition: ctaSummary || { x: ctaX, y: ctaY, width: ctaW, height: ctaH, layout: 'vertical' },
+      startHook: startHookSummary,
       elapsed: Number(this.elapsed.toFixed(2)),
       leaderProgress: Number(leaderProgress.toFixed(3)),
       leaderDistance: Number(leaderDistance.toFixed(1)),
