@@ -1924,11 +1924,11 @@ class MarbleRace {
       const currentLap = Math.max(1, Math.min(totalLaps, Math.floor(leaderProgress * totalLaps) + 1));
       const raceNumber = this.cupMode?.active ? (this.cupMode.stageIndex || 0) + 1 : 1;
       const compactVertical = vertical && width <= 260;
-      const headerH = compactVertical ? 52 : (vertical ? 108 : 114);
-      const rankW = compactVertical ? 24 : (vertical ? 48 : 56);
-      const rowH = compactVertical ? 30 : (vertical ? 46 : 54);
-      const gap = compactVertical ? 4 : (vertical ? 8 : 9);
-      const avatar = compactVertical ? 23 : (vertical ? 40 : 48);
+      const headerH = compactVertical ? 64 : (vertical ? 108 : 114);
+      const rankW = compactVertical ? 30 : (vertical ? 48 : 56);
+      const rowH = compactVertical ? Math.max(34, rowHeight || 34) : (vertical ? 46 : 54);
+      const gap = compactVertical ? 5 : (vertical ? 8 : 9);
+      const avatar = compactVertical ? 26 : (vertical ? 40 : 48);
       const rowX = x + rankW;
       const rowW = width - rankW;
       const boardHeight = headerH + rows * rowH + Math.max(0, rows - 1) * gap + 16;
@@ -2019,15 +2019,15 @@ class MarbleRace {
       ctx.beginPath();
       ctx.arc(iconX + iconR, iconY + iconR * 1.08, iconR * 0.22, 0.12 * Math.PI, 0.88 * Math.PI);
       ctx.stroke();
-      this.drawViewerText(ctx, `RACE ${raceNumber}`, iconX + iconR * 2 + (compactVertical ? 8 : 15), y + (compactVertical ? 21 : (vertical ? 36 : 39)), {
-        font: compactVertical ? '900 13px Arial Black, Impact, sans-serif' : (vertical ? '900 27px Arial Black, Impact, sans-serif' : '900 32px Arial Black, Impact, sans-serif'),
-        fill: '#ffd43d', stroke: textStroke, strokeWidth: compactVertical ? 4 : 7, maxWidth: width - rankW - (compactVertical ? 48 : 90),
+      this.drawViewerText(ctx, `RACE ${raceNumber}`, iconX + iconR * 2 + (compactVertical ? 9 : 15), y + (compactVertical ? 22 : (vertical ? 36 : 39)), {
+        font: compactVertical ? '900 15px Arial Black, Impact, sans-serif' : (vertical ? '900 27px Arial Black, Impact, sans-serif' : '900 32px Arial Black, Impact, sans-serif'),
+        fill: '#ffd43d', stroke: textStroke, strokeWidth: compactVertical ? 3 : 7, maxWidth: width - rankW - (compactVertical ? 36 : 90),
       });
-      this.drawViewerText(ctx, `LAP ${currentLap}/${totalLaps}`, iconX + iconR * 2 + (compactVertical ? 8 : 15), y + (compactVertical ? 43 : (vertical ? 74 : 84)), {
-        font: compactVertical ? '900 20px Arial Black, Impact, sans-serif' : (vertical ? '900 38px Arial Black, Impact, sans-serif' : '900 47px Arial Black, Impact, sans-serif'),
-        fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 5 : 9, maxWidth: width - rankW - (compactVertical ? 48 : 90),
+      this.drawViewerText(ctx, `LAP ${currentLap}/${totalLaps}`, iconX + iconR * 2 + (compactVertical ? 9 : 15), y + (compactVertical ? 49 : (vertical ? 74 : 84)), {
+        font: compactVertical ? '900 21px Arial Black, Impact, sans-serif' : (vertical ? '900 38px Arial Black, Impact, sans-serif' : '900 47px Arial Black, Impact, sans-serif'),
+        fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 4 : 9, maxWidth: width - rankW - (compactVertical ? 36 : 90),
       });
-      drawChecker(x + width - (compactVertical ? 34 : (vertical ? 62 : 72)), y + (compactVertical ? 27 : (vertical ? 40 : 44)), compactVertical ? 28 : (vertical ? 50 : 58), compactVertical ? 19 : (vertical ? 34 : 40));
+      drawChecker(x + width - (compactVertical ? 34 : (vertical ? 62 : 72)), y + (compactVertical ? 32 : (vertical ? 40 : 44)), compactVertical ? 26 : (vertical ? 50 : 58), compactVertical ? 18 : (vertical ? 34 : 40));
 
       const summaryRows = [];
       ranking.forEach((data, index) => {
@@ -2068,20 +2068,20 @@ class MarbleRace {
         if (index === 0) drawChecker(rowX + rowW - (compactVertical ? 30 : (vertical ? 52 : 60)), rowY + (compactVertical ? 6 : 8), compactVertical ? 22 : (vertical ? 38 : 45), rowH - (compactVertical ? 12 : 16));
         ctx.restore();
         this.drawViewerText(ctx, `${index + 1}`, x + rankW * 0.48, rowY + rowH * 0.62, {
-          font: compactVertical ? '900 18px Arial Black, Impact, sans-serif' : (vertical ? '900 32px Arial Black, Impact, sans-serif' : '900 40px Arial Black, Impact, sans-serif'),
-          fill: '#ffd43d', stroke: textStroke, strokeWidth: compactVertical ? 5 : (vertical ? 7 : 8), align: 'center',
+          font: compactVertical ? '900 20px Arial Black, Impact, sans-serif' : (vertical ? '900 32px Arial Black, Impact, sans-serif' : '900 40px Arial Black, Impact, sans-serif'),
+          fill: '#ffd43d', stroke: textStroke, strokeWidth: compactVertical ? 4 : (vertical ? 7 : 8), align: 'center',
         });
-        drawAvatar(data, rowX + (compactVertical ? 5 : (vertical ? 8 : 10)), rowY + (rowH - avatar) / 2, avatar, index);
-        this.drawViewerText(ctx, data.name || `Marble ${data.id + 1}`, rowX + avatar + (compactVertical ? 12 : (vertical ? 18 : 22)), rowY + rowH * 0.57, {
-          font: compactVertical ? '900 12px Arial Black, Impact, sans-serif' : (vertical ? '900 23px Arial Black, Impact, sans-serif' : '900 28px Arial Black, Impact, sans-serif'),
-          fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 3.5 : (vertical ? 6 : 7),
-          maxWidth: rowW - avatar - (compactVertical ? 78 : (vertical ? 130 : 154)),
+        drawAvatar(data, rowX + (compactVertical ? 6 : (vertical ? 8 : 10)), rowY + (rowH - avatar) / 2, avatar, index);
+        this.drawViewerText(ctx, data.name || `Marble ${data.id + 1}`, rowX + avatar + (compactVertical ? 13 : (vertical ? 18 : 22)), rowY + rowH * 0.57, {
+          font: compactVertical ? '900 13px Arial Black, Impact, sans-serif' : (vertical ? '900 23px Arial Black, Impact, sans-serif' : '900 28px Arial Black, Impact, sans-serif'),
+          fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 3 : (vertical ? 6 : 7),
+          maxWidth: rowW - avatar - (compactVertical ? 86 : (vertical ? 130 : 154)),
         });
         const lapLabel = data.defeated ? 'DNF' : data.finished ? 'FIN' : `LAP ${lap}/${totalLaps}`;
-        this.drawViewerText(ctx, lapLabel, rowX + rowW - (compactVertical ? 8 : (vertical ? 14 : 18)), rowY + rowH * 0.57, {
-          font: compactVertical ? '900 10px Arial Black, Impact, sans-serif' : (vertical ? '900 15px Arial Black, Impact, sans-serif' : '900 18px Arial Black, Impact, sans-serif'),
-          fill: data.defeated ? '#ff5b6e' : '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 3 : (vertical ? 5 : 6), align: 'right',
-          maxWidth: compactVertical ? 55 : (vertical ? 82 : 98),
+        this.drawViewerText(ctx, lapLabel, rowX + rowW - (compactVertical ? 10 : (vertical ? 14 : 18)), rowY + rowH * 0.57, {
+          font: compactVertical ? '900 12px Arial Black, Impact, sans-serif' : (vertical ? '900 15px Arial Black, Impact, sans-serif' : '900 18px Arial Black, Impact, sans-serif'),
+          fill: data.defeated ? '#ff5b6e' : '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 2.5 : (vertical ? 5 : 6), align: 'right',
+          maxWidth: compactVertical ? 70 : (vertical ? 82 : 98),
         });
       });
       ctx.restore();
@@ -2613,9 +2613,9 @@ class MarbleRace {
 
     // Shorts-friendly top-three standings card. Keep it compact so the middle race action stays visible.
     const compactToyParkStanding = toyParkOverlay;
-    const boardW = compactToyParkStanding ? Math.round(w * 0.30) : w - margin * 2;
-    const rowH = compactToyParkStanding ? 28 : 48;
-    const boardX = compactToyParkStanding ? 16 : margin;
+    const boardW = compactToyParkStanding ? Math.min(Math.round(w * 0.40), 178) : w - margin * 2;
+    const rowH = compactToyParkStanding ? 34 : 48;
+    const boardX = compactToyParkStanding ? 18 : margin;
     const boardY = compactToyParkStanding ? 18 : Math.min(h - 595, 196);
     const liveStandingSummary = this.drawViewerLiveStandingPanel({
       ctx,
@@ -2629,10 +2629,10 @@ class MarbleRace {
     });
 
     // Bottom stacked CTA. Toy Park uses the same arcade styling as its leaderboard, placed bottom-right to keep the start area clear.
-    const ctaW = toyParkOverlay ? Math.min(Math.round(w * 0.42), 176) : w - margin * 2;
-    const ctaH = toyParkOverlay ? 48 : 64;
-    const ctaX = toyParkOverlay ? w - 16 - ctaW : margin;
-    const ctaY = toyParkOverlay ? h - ctaH - 86 : h - 216;
+    const ctaW = toyParkOverlay ? Math.min(Math.round(w * 0.52), 224) : w - margin * 2;
+    const ctaH = toyParkOverlay ? 56 : 64;
+    const ctaX = toyParkOverlay ? w - 18 - ctaW : margin;
+    const ctaY = toyParkOverlay ? h - ctaH - 108 : h - 216;
     let ctaSummary = null;
     if (toyParkOverlay) {
       ctaSummary = this.drawToyParkArcadeCta({ ctx, x: ctaX, y: ctaY, width: ctaW, height: ctaH, vertical: true });
