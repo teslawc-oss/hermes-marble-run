@@ -1988,7 +1988,7 @@ class MarbleRace {
         const initial = String(data.name || 'M').slice(0, 1).toUpperCase();
         this.drawViewerText(ctx, initial, ax + size * 0.5, ay + size * 0.84, {
           font: `900 ${Math.round(size * 0.22)}px Arial Black, Impact, sans-serif`,
-          fill: '#ffffff', stroke: textStroke, strokeWidth: 2.5, align: 'center',
+          fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 1.5 : 2.5, align: 'center',
         });
         ctx.restore();
       };
@@ -2021,12 +2021,12 @@ class MarbleRace {
       ctx.arc(iconX + iconR, iconY + iconR * 1.08, iconR * 0.22, 0.12 * Math.PI, 0.88 * Math.PI);
       ctx.stroke();
       this.drawViewerText(ctx, `RACE ${raceNumber}`, iconX + iconR * 2 + (compactVertical ? 9 : 15), y + (compactVertical ? 22 : (vertical ? 36 : 39)), {
-        font: compactVertical ? '900 15px Arial Black, Impact, sans-serif' : (vertical ? '900 27px Arial Black, Impact, sans-serif' : '900 32px Arial Black, Impact, sans-serif'),
-        fill: '#ffd43d', stroke: textStroke, strokeWidth: compactVertical ? 3 : 7, maxWidth: width - rankW - (compactVertical ? 36 : 90),
+        font: compactVertical ? '900 14px Arial Black, Impact, sans-serif' : (vertical ? '900 27px Arial Black, Impact, sans-serif' : '900 32px Arial Black, Impact, sans-serif'),
+        fill: '#ffd43d', stroke: textStroke, strokeWidth: compactVertical ? 2 : 7, maxWidth: width - rankW - (compactVertical ? 36 : 90),
       });
       this.drawViewerText(ctx, `LAP ${currentLap}/${totalLaps}`, iconX + iconR * 2 + (compactVertical ? 9 : 15), y + (compactVertical ? 49 : (vertical ? 74 : 84)), {
-        font: compactVertical ? '900 21px Arial Black, Impact, sans-serif' : (vertical ? '900 38px Arial Black, Impact, sans-serif' : '900 47px Arial Black, Impact, sans-serif'),
-        fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 4 : 9, maxWidth: width - rankW - (compactVertical ? 36 : 90),
+        font: compactVertical ? '900 19px Arial Black, Impact, sans-serif' : (vertical ? '900 38px Arial Black, Impact, sans-serif' : '900 47px Arial Black, Impact, sans-serif'),
+        fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 2.5 : 9, maxWidth: width - rankW - (compactVertical ? 36 : 90),
       });
       drawChecker(x + width - (compactVertical ? 34 : (vertical ? 62 : 72)), y + (compactVertical ? 32 : (vertical ? 40 : 44)), compactVertical ? 26 : (vertical ? 50 : 58), compactVertical ? 18 : (vertical ? 34 : 40));
 
@@ -2069,19 +2069,19 @@ class MarbleRace {
         if (index === 0) drawChecker(rowX + rowW - (compactVertical ? 30 : (vertical ? 52 : 60)), rowY + (compactVertical ? 6 : 8), compactVertical ? 22 : (vertical ? 38 : 45), rowH - (compactVertical ? 12 : 16));
         ctx.restore();
         this.drawViewerText(ctx, `${index + 1}`, x + rankW * 0.48, rowY + rowH * 0.62, {
-          font: compactVertical ? '900 20px Arial Black, Impact, sans-serif' : (vertical ? '900 32px Arial Black, Impact, sans-serif' : '900 40px Arial Black, Impact, sans-serif'),
-          fill: '#ffd43d', stroke: textStroke, strokeWidth: compactVertical ? 4 : (vertical ? 7 : 8), align: 'center',
+          font: compactVertical ? '900 19px Arial Black, Impact, sans-serif' : (vertical ? '900 32px Arial Black, Impact, sans-serif' : '900 40px Arial Black, Impact, sans-serif'),
+          fill: '#ffd43d', stroke: textStroke, strokeWidth: compactVertical ? 2.5 : (vertical ? 7 : 8), align: 'center',
         });
         drawAvatar(data, rowX + (compactVertical ? 6 : (vertical ? 8 : 10)), rowY + (rowH - avatar) / 2, avatar, index);
         this.drawViewerText(ctx, data.name || `Marble ${data.id + 1}`, rowX + avatar + (compactVertical ? 13 : (vertical ? 18 : 22)), rowY + rowH * 0.57, {
-          font: compactVertical ? '900 13px Arial Black, Impact, sans-serif' : (vertical ? '900 23px Arial Black, Impact, sans-serif' : '900 28px Arial Black, Impact, sans-serif'),
-          fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 3 : (vertical ? 6 : 7),
+          font: compactVertical ? '900 12px Arial Black, Impact, sans-serif' : (vertical ? '900 23px Arial Black, Impact, sans-serif' : '900 28px Arial Black, Impact, sans-serif'),
+          fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 1.75 : (vertical ? 6 : 7),
           maxWidth: rowW - avatar - (compactVertical ? 86 : (vertical ? 130 : 154)),
         });
         const lapLabel = data.defeated ? 'DNF' : data.finished ? 'FIN' : `LAP ${lap}/${totalLaps}`;
         this.drawViewerText(ctx, lapLabel, rowX + rowW - (compactVertical ? 10 : (vertical ? 14 : 18)), rowY + rowH * 0.57, {
-          font: compactVertical ? '900 12px Arial Black, Impact, sans-serif' : (vertical ? '900 15px Arial Black, Impact, sans-serif' : '900 18px Arial Black, Impact, sans-serif'),
-          fill: data.defeated ? '#ff5b6e' : '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 2.5 : (vertical ? 5 : 6), align: 'right',
+          font: compactVertical ? '900 11px Arial Black, Impact, sans-serif' : (vertical ? '900 15px Arial Black, Impact, sans-serif' : '900 18px Arial Black, Impact, sans-serif'),
+          fill: data.defeated ? '#ff5b6e' : '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 1.5 : (vertical ? 5 : 6), align: 'right',
           maxWidth: compactVertical ? 70 : (vertical ? 82 : 98),
         });
       });
@@ -2643,8 +2643,8 @@ class MarbleRace {
       ? (toyParkNarrowWebPreview ? Math.min(Math.round(w * 0.37), 150) : Math.min(Math.round(w * 0.32), 240))
       : w - margin * 2;
     const rowH = compactToyParkStanding ? (toyParkNarrowWebPreview ? 32 : 40) : 48;
-    const boardX = compactToyParkStanding ? (toyParkNarrowWebPreview ? 14 : 58) : margin;
-    const boardY = compactToyParkStanding ? (toyParkNarrowWebPreview ? 22 : 42) : Math.min(h - 595, 196);
+    const boardX = compactToyParkStanding ? (toyParkNarrowWebPreview ? 36 : 32) : margin;
+    const boardY = compactToyParkStanding ? (toyParkNarrowWebPreview ? 28 : 28) : Math.min(h - 595, 196);
     const liveStandingSummary = this.drawViewerLiveStandingPanel({
       ctx,
       ranking,
