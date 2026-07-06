@@ -3081,6 +3081,13 @@ class MarbleRace {
       this.visualTheme = MARBLE_VISUAL_THEMES[requestedTheme];
     }
 
+    if (toyParkPreview && this.ui.count) {
+      const countParam = params.get('count') || params.get('marbleCount') || params.get('marbles');
+      const requestedCount = Math.max(1, Math.floor(Number(countParam) || 8));
+      this.ui.count.value = String(requestedCount);
+      this.ui.count.dataset.toyParkDefaultCount = countParam ? 'query-param' : '8';
+    }
+
     const obstaclePresetAliases = { none: 0, standard: 1, many: 2, extreme: 3 };
     const requestedObstaclePreset = String(params.get('obstaclePreset') || (toyParkPreview ? 'none' : '')).trim().toLowerCase();
     if (requestedObstaclePreset && this.ui.obstacle) {
@@ -3109,6 +3116,7 @@ class MarbleRace {
       path: pathKey || '/',
       physicsMechanic: mechanic || null,
       toyParkPreview,
+      toyParkDefaultCount: toyParkPreview && this.ui.count ? this.ui.count.dataset.toyParkDefaultCount || null : null,
       visualThemeKey: this.visualThemeKey,
       obstaclePresetIndex: this.ui.obstacle ? Number(this.ui.obstacle.value) : this.obstacleIndex,
       obstacleTypes: [...(this.enabledObstacleTypes || new Set())],
