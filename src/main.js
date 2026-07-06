@@ -2396,59 +2396,85 @@ class MarbleRace {
     ctx.translate(-cx, -cy);
 
     if (toyParkStyle) {
-      const skew = isVertical ? 20 : 30;
+      const accent = state.isGo ? '#42d96b' : '#ffd43d';
+      const accent2 = state.isGo ? '#9dff89' : '#5ddcff';
+      const panelStroke = Math.max(5, minDim * 0.008);
+      const discSize = isVertical ? Math.min(210, minDim * 0.29) : Math.min(170, minDim * 0.24);
+      const discCy = cy + (isVertical ? minDim * 0.02 : 0);
+      const labelW = Math.min(cardW * 0.68, discSize * 2.2);
+      const labelH = Math.max(46, minDim * 0.062);
+      const labelX = cx - labelW / 2;
+      const labelY = discCy - discSize / 2 - labelH * 0.82;
+      const footerW = Math.min(cardW * 0.62, discSize * 2.0);
+      const footerH = Math.max(38, minDim * 0.052);
+      const footerX = cx - footerW / 2;
+      const footerY = discCy + discSize / 2 + footerH * 0.26;
+
+      const glow = ctx.createRadialGradient(cx, discCy, discSize * 0.22, cx, discCy, discSize * 1.35);
+      glow.addColorStop(0, state.isGo ? 'rgba(83, 255, 126, 0.35)' : 'rgba(255, 212, 61, 0.34)');
+      glow.addColorStop(0.48, state.isGo ? 'rgba(66, 217, 107, 0.15)' : 'rgba(93, 220, 255, 0.12)');
+      glow.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(cx - discSize * 1.55, discCy - discSize * 1.55, discSize * 3.1, discSize * 3.1);
+
+      this.drawViewerRoundedRect(ctx, labelX, labelY, labelW, labelH, labelH / 2);
+      ctx.fillStyle = 'rgba(23, 19, 31, 0.88)';
+      ctx.fill();
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = Math.max(3, minDim * 0.0045);
+      ctx.stroke();
+
+      const flagW = Math.max(48, labelH * 1.25);
+      drawChecker(labelX + labelW - flagW - 12, labelY + labelH * 0.24, flagW, labelH * 0.46);
+
       ctx.beginPath();
-      ctx.moveTo(cardX + skew, cardY);
-      ctx.lineTo(cardX + cardW, cardY);
-      ctx.lineTo(cardX + cardW - skew, cardY + cardH);
-      ctx.lineTo(cardX, cardY + cardH);
-      ctx.closePath();
-      const cardGradient = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
-      cardGradient.addColorStop(0, state.isGo ? '#45c95d' : '#38c9ff');
-      cardGradient.addColorStop(0.60, state.isGo ? '#7cff7c' : '#8fd8ff');
-      cardGradient.addColorStop(1, state.isGo ? '#ffe04b' : '#f9a72e');
-      ctx.fillStyle = cardGradient;
+      ctx.arc(cx, discCy, discSize / 2, 0, Math.PI * 2);
+      const discGradient = ctx.createRadialGradient(cx - discSize * 0.18, discCy - discSize * 0.20, discSize * 0.08, cx, discCy, discSize * 0.62);
+      discGradient.addColorStop(0, '#ffffff');
+      discGradient.addColorStop(0.20, state.isGo ? '#9dff89' : '#fff28a');
+      discGradient.addColorStop(1, state.isGo ? '#31bf5e' : '#ffd43d');
+      ctx.fillStyle = discGradient;
       ctx.fill();
+      ctx.lineWidth = panelStroke;
       ctx.strokeStyle = textStroke;
-      ctx.lineWidth = Math.max(5, minDim * 0.009);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, discCy, discSize * 0.39, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(23,19,31,0.22)';
+      ctx.lineWidth = Math.max(4, minDim * 0.006);
       ctx.stroke();
 
-      const badgeSize = isVertical ? Math.min(128, cardH * 0.55) : Math.min(150, cardH * 0.62);
-      const badgeX = cardX + cardW * 0.10;
-      const badgeY = cy - badgeSize / 2;
-      this.drawViewerRoundedRect(ctx, badgeX, badgeY, badgeSize, badgeSize, badgeSize * 0.22);
-      ctx.fillStyle = state.isGo ? '#ff5b6e' : '#ffd43d';
-      ctx.fill();
-      ctx.strokeStyle = textStroke;
-      ctx.lineWidth = Math.max(4, minDim * 0.007);
-      ctx.stroke();
-      drawChecker(cardX + cardW - badgeSize * 0.72, cardY + cardH * 0.12, badgeSize * 0.55, badgeSize * 0.36);
+      const topLabel = state.isGo ? 'RUSH!' : 'RACE STARTS IN';
+      this.drawViewerText(ctx, topLabel, cx - flagW * 0.28, labelY + labelH * 0.52, {
+        font: `900 ${Math.round(minDim * (isVertical ? 0.031 : 0.026))}px Arial Black, Impact, sans-serif`,
+        fill: '#ffffff', stroke: textStroke, strokeWidth: Math.max(3, minDim * 0.005), align: 'center', maxWidth: labelW - flagW - 34,
+      });
+      this.drawViewerText(ctx, state.value, cx, discCy + discSize * 0.05, {
+        font: `900 ${Math.round(discSize * (state.isGo ? 0.32 : 0.64))}px Arial Black, Impact, sans-serif`,
+        fill: '#ffffff', stroke: textStroke, strokeWidth: Math.max(8, minDim * 0.015), align: 'center', maxWidth: discSize * 1.10,
+      });
 
-      const topLabel = state.isGo ? 'RUSH!' : CANVAS_START_HOOK.gateLabel;
-      const valueFont = `900 ${Math.round(minDim * (isVertical ? (state.isGo ? 0.17 : 0.22) : (state.isGo ? 0.14 : 0.19)))}px Arial Black, Impact, sans-serif`;
-      this.drawViewerText(ctx, topLabel, cardX + cardW * 0.58, cardY + cardH * 0.27, {
-        font: `900 ${Math.round(minDim * (isVertical ? 0.038 : 0.034))}px Arial Black, Impact, sans-serif`,
-        fill: state.isGo ? '#ffffff' : '#ffd43d', stroke: textStroke, strokeWidth: Math.max(4, minDim * 0.008), align: 'center', maxWidth: cardW * 0.66,
-      });
-      this.drawViewerText(ctx, state.value, cardX + cardW * 0.58, cardY + cardH * 0.61, {
-        font: valueFont,
-        fill: state.isGo ? '#ffffff' : '#ffd43d', stroke: textStroke, strokeWidth: Math.max(7, minDim * 0.016), align: 'center', maxWidth: cardW * 0.66,
-      });
-      this.drawViewerText(ctx, state.isGo ? 'GO GO GO!' : `${Math.max(1, this.marbleData?.length || 8)} MARBLES READY`, cardX + cardW * 0.58, cardY + cardH * 0.86, {
-        font: `900 ${Math.round(minDim * (isVertical ? 0.026 : 0.024))}px Arial Black, Impact, sans-serif`,
-        fill: '#ffffff', stroke: textStroke, strokeWidth: Math.max(3, minDim * 0.006), align: 'center', maxWidth: cardW * 0.66,
+      this.drawViewerRoundedRect(ctx, footerX, footerY, footerW, footerH, footerH / 2);
+      ctx.fillStyle = 'rgba(23, 19, 31, 0.84)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.38)';
+      ctx.lineWidth = Math.max(2, minDim * 0.0035);
+      ctx.stroke();
+      this.drawViewerText(ctx, state.isGo ? 'GO GO GO!' : `${Math.max(1, this.marbleData?.length || 8)} MARBLES READY`, cx, footerY + footerH * 0.52, {
+        font: `900 ${Math.round(minDim * (isVertical ? 0.024 : 0.020))}px Arial Black, Impact, sans-serif`,
+        fill: accent2, stroke: textStroke, strokeWidth: Math.max(3, minDim * 0.005), align: 'center', maxWidth: footerW - 28,
       });
 
       if (!state.isGo) {
-        const barW = cardW * 0.58;
-        const barH = Math.max(10, minDim * 0.014);
-        const barX = cardX + cardW * 0.29;
-        const barY = cardY + cardH - barH - cardH * 0.06;
+        const barW = footerW * 0.74;
+        const barH = Math.max(8, minDim * 0.010);
+        const barX = cx - barW / 2;
+        const barY = footerY + footerH + barH * 0.65;
         this.drawViewerRoundedRect(ctx, barX, barY, barW, barH, barH / 2);
-        ctx.fillStyle = 'rgba(23,19,31,0.35)';
+        ctx.fillStyle = 'rgba(23,19,31,0.42)';
         ctx.fill();
         this.drawViewerRoundedRect(ctx, barX, barY, Math.max(barH, barW * state.countdownProgress), barH, barH / 2);
-        ctx.fillStyle = '#ffd43d';
+        ctx.fillStyle = accent;
         ctx.fill();
       }
     } else {
