@@ -598,6 +598,9 @@ const BROADCAST_CAMERA = {
   outOfBoundsIgnoreAfterSeconds: 1.0,
   outOfBoundsIgnoreLabel: 'auto camera: if a marble is outside the track for more than 1 second, stop targeting it until it respawns/returns',
   cinematicLeaderFromProgress: 0.8,
+  toyParkDefaultAlternatingPhaseSize: 0.2,
+  toyParkDefaultAlternatingSequence: ['leadPack', 'cinematicLeader'],
+  toyParkDefaultAlternatingLabel: 'Toy Park Default Auto alternates by leader progress: 0-20% lead pack, 20-40% cinematic leader, repeating every 20% until finish; finish/slow-motion/podium rules stay unchanged',
   finishSlowMotionCameraHoldSeconds: 3.4,
   finishSlowMotionCameraLabel: 'when finish slow motion triggers near/crossing the line, Default Auto holds the finish-line shot through the slow-mo window so the slow finish camera remains visible before returning to race/podium coverage',
   postFirstFinish: {
@@ -17445,8 +17448,12 @@ class MarbleRace {
       cupVideoStageTargetSeconds: this.cupMode?.active ? CUP_VIDEO_TIMING.stageTargetSeconds?.[this.getCupStage()] ?? null : null,
       cupVideoStageTargetTrackLength: this.cupMode?.active ? CUP_VIDEO_TIMING.stageTrackLengths?.[this.getCupStage()] ?? null : null,
       defaultCameraMode: BROADCAST_CAMERA.defaultMode,
-      defaultCameraPreference: 'default auto every race/stage: finish-line shot owns the camera whenever finish slow-motion is active, including after the race flips to finished; otherwise lead-pack through countdown and 0-80% race progress; cinematic leader after 80%; after first finish, briefly hold finish then follow remaining racers; podium/orbit when fully finished',
+      defaultCameraPreference: this.isToyParkViewerOverlayActive()
+        ? BROADCAST_CAMERA.toyParkDefaultAlternatingLabel
+        : 'default auto every race/stage: finish-line shot owns the camera whenever finish slow-motion is active, including after the race flips to finished; otherwise lead-pack through countdown and 0-80% race progress; cinematic leader after 80%; after first finish, briefly hold finish then follow remaining racers; podium/orbit when fully finished',
       defaultCameraPhaseSwitchProgress: BROADCAST_CAMERA.cinematicLeaderFromProgress,
+      toyParkDefaultAlternatingPhaseSize: BROADCAST_CAMERA.toyParkDefaultAlternatingPhaseSize,
+      toyParkDefaultAlternatingSequence: BROADCAST_CAMERA.toyParkDefaultAlternatingSequence,
       finishSlowMotionCameraHoldSeconds: BROADCAST_CAMERA.finishSlowMotionCameraHoldSeconds,
       finishSlowMotionCameraLabel: BROADCAST_CAMERA.finishSlowMotionCameraLabel,
       activeDefaultCameraShot: this.getDefaultCameraMode(),
@@ -18136,6 +18143,14 @@ class MarbleRace {
     }
     if (BROADCAST_CAMERA.highAngleBattleEnabled && this.getLeadBattleTarget()) return 'leadBattle';
     const leaderProgress = this.trackLength && leader ? clamp((leader.distance || 0) / this.trackLength, 0, 1) : 0;
+    if (this.isToyParkViewerOverlayActive()) {
+      const phaseSize = Math.max(0.01, BROADCAST_CAMERA.toyParkDefaultAlternatingPhaseSize || 0.2);
+      const sequence = Array.isArray(BROADCAST_CAMERA.toyParkDefaultAlternatingSequence) && BROADCAST_CAMERA.toyParkDefaultAlternatingSequence.length
+        ? BROADCAST_CAMERA.toyParkDefaultAlternatingSequence
+        : ['leadPack', 'cinematicLeader'];
+      const phaseIndex = Math.floor(Math.min(0.999999, leaderProgress + 1e-9) / phaseSize);
+      return sequence[phaseIndex % sequence.length] || 'leadPack';
+    }
     if (leaderProgress >= BROADCAST_CAMERA.cinematicLeaderFromProgress) return 'cinematicLeader';
     return 'leadPack';
   }
