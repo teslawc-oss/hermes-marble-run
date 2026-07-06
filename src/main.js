@@ -714,7 +714,14 @@ const BROADCAST_CAMERA = {
   },
   selected: { back: -2.6, side: -0.7, height: 26.0 },
   unfinished: { back: -2.6, side: 0.8, height: 27.0 },
-  finish: { forward: 3.3, height: 27.5, fov: 44 },
+  finish: { forward: 3.3, height: 27.5, targetLift: 1.05, fov: 44 },
+  toyParkFinish: {
+    forward: 2.0,
+    height: 22.5,
+    targetLift: 0.72,
+    fov: 38,
+    label: 'Toy Park finish-line camera: lower and tighter framing on the checkered line so the final shot reads as a finish instead of a distant overview',
+  },
   podium360: {
     enabled: true,
     label: 'race-complete-360-degree-podium-orbit',
@@ -18160,9 +18167,12 @@ class MarbleRace {
       || this.getAutoCameraRanking({ includeFinished: true })[0]
       || this.getRanking({ force: false })[0];
     if (this.finishSlowMotion?.active) return 'finish';
-    if (this.state === 'finished') return BROADCAST_CAMERA.podium360.enabled ? 'podium360' : 'finish';
+    if (this.state === 'finished') return this.isToyParkViewerOverlayActive()
+      ? 'finish'
+      : (BROADCAST_CAMERA.podium360.enabled ? 'podium360' : 'finish');
     if (this.countdownActive || this.state === 'ready' || this.state === 'idle') return this.isToyParkViewerOverlayActive() ? 'cinematicLeader' : 'leadPack';
     if (this.finishers.length > 0) {
+      if (this.isToyParkViewerOverlayActive()) return 'finish';
       const holdUntil = Number.isFinite(this.defaultCameraPhaseUntil) ? this.defaultCameraPhaseUntil : 0;
       if ((this.elapsed || 0) < holdUntil) return 'finish';
       return BROADCAST_CAMERA.postFirstFinish?.followModeAfterHold || 'cinematicLeader';
@@ -18497,10 +18507,20 @@ class MarbleRace {
         effectiveFov: Number((this.isToyParkViewerOverlayActive() ? (cfg.fov || 40) * (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) : (cfg.fov || 40)).toFixed(2)),
       };
     } else if (activeCameraMode === 'finish') {
-      const cfg = BROADCAST_CAMERA.finish;
+      const cfg = this.isToyParkViewerOverlayActive()
+        ? (BROADCAST_CAMERA.toyParkFinish || BROADCAST_CAMERA.finish)
+        : BROADCAST_CAMERA.finish;
       const frame = this.getTrackFrameAt(this.trackLength);
-      target.set(frame.p.x, frame.p.y + 1.05, frame.p.z);
+      target.set(frame.p.x, frame.p.y + (cfg.targetLift ?? 1.05), frame.p.z);
       desired.copy(target).add(frame.tangent.clone().multiplyScalar(cfg.forward)).add(new THREE.Vector3(0, cfg.height, 0));
+      this.finishCameraState = {
+        mode: this.isToyParkViewerOverlayActive() ? 'toyParkFinish' : 'finish',
+        forward: cfg.forward,
+        height: cfg.height,
+        targetLift: cfg.targetLift ?? 1.05,
+        fov: cfg.fov || BROADCAST_CAMERA.finish.fov || 44,
+        label: cfg.label || null,
+      };
     } else if (activeCameraMode === 'podium360') {
       const cfg = BROADCAST_CAMERA.podium360;
       const podiumTarget = this.getPodiumCameraTarget() || new THREE.Vector3(0, 1.2, 0);
@@ -18552,7 +18572,7 @@ class MarbleRace {
         : (activeCameraMode === 'leadPack'
           ? (BROADCAST_CAMERA.leadPack.fov || 44)
           : (activeCameraMode === 'finish'
-            ? (BROADCAST_CAMERA.finish.fov || 44)
+            ? (this.finishCameraState?.fov || BROADCAST_CAMERA.finish.fov || 44)
             : (activeCameraMode === 'replayHighlight' ? 38 : 58))));
     const toyParkDefaultZoomModes = ['leadPack', 'cinematicLeader', 'leadBattle', 'finish', 'podium360'];
     const toyParkDefaultZoomInActive = Boolean(
