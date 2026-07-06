@@ -13030,7 +13030,7 @@ class MarbleRace {
           </section>` : '';
         const podiumRows = ranking.slice(1, 3).map((data, index) => `<li class="podium-medalist rank-${index + 2}" style="--medal-color:${escapeHtml(data.colorHex || '#ffffff')}"><strong>${medals[index + 1]} #${index + 2}</strong><span class="showcase-racer-name" data-marble-id="${escapeHtml(data.id)}" title="Double-click to copy reusable marble identity" style="--medal-color:${escapeHtml(data.colorHex || '#ffffff')}">${escapeHtml(data.name)}</span><span class="toypark-result-row-time">${finishText(data)}</span></li>`).join('');
         this.ui.finalShowcase.classList.add('toypark-final-result');
-        this.ui.finalShowcase.innerHTML = `<div class="toypark-result-flags" aria-hidden="true"><span></span><span></span></div><h2>${escapeHtml(showcaseTitle)}</h2><p class="copy-hint">${escapeHtml(showcaseHint)}</p>${winnerHtml}<ol class="podium-list toypark-result-podium">${podiumRows}</ol>`;
+        this.ui.finalShowcase.innerHTML = `<div class="toypark-result-flags" aria-hidden="true"><span></span><span></span></div><h2>${escapeHtml(showcaseTitle)}</h2>${winnerHtml}<ol class="podium-list toypark-result-podium">${podiumRows}</ol>`;
       } else {
         this.ui.finalShowcase.classList.remove('toypark-final-result');
         const top3 = ranking.slice(0, 3).map((data, index) => `<li class="podium-medalist rank-${index + 1}"><strong>${medals[index]} #${index + 1}</strong> <span class="showcase-racer-name" data-marble-id="${data.id}" title="Double-click to copy reusable marble identity" style="--medal-color:${data.colorHex}">${data.name}</span> <span>${data.finishTime?.toFixed(2) ?? '--'}s</span></li>`).join('');

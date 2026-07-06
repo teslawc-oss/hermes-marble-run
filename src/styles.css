@@ -1267,7 +1267,7 @@ body.recording-cursor-hidden #canvas-container canvas {
 }
 
 .final-showcase.toypark-final-result h2 {
-  margin: 6px 0 0;
+  margin: 18px 0 16px;
   text-align: center;
   color: #ffd43d;
   font-family: 'Arial Black', Impact, system-ui, sans-serif;
