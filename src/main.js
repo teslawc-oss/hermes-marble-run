@@ -652,6 +652,27 @@ const BROADCAST_CAMERA = {
     obstacleLookAheadBoost: 3.2,
     label: 'mid/late-race leader chase shot: zoomed out about 8% so P1 and more upcoming track stay visible without feeling too distant',
   },
+  toyParkInitialCinematicLeader: {
+    maxProgress: 0.08,
+    back: -7.2,
+    side: 1.08,
+    height: 34,
+    lookAhead: 9.2,
+    targetLookAheadScale: 0.2,
+    targetGuideBlend: 0.32,
+    targetLift: 1.05,
+    dynamicLookAheadBySpeed: 4.2,
+    maxSideWave: 0.06,
+    sideWaveSpeed: 0.18,
+    positionSmoothing: 0.055,
+    targetSmoothing: 0.105,
+    fov: 26.4,
+    obstacleAwareDistance: 24,
+    obstaclePullback: 0.8,
+    obstacleHeightBoost: 2.4,
+    obstacleLookAheadBoost: 2.5,
+    label: 'Toy Park opening cinematic leader: higher off the track and closer zoom, framing the start gate and marbles like a mobile three-quarter overhead shot',
+  },
   leadPack: {
     back: -8.2,
     side: 0.89,
@@ -18385,7 +18406,12 @@ class MarbleRace {
       target.set(frame.p.x, frame.p.y + 0.8, frame.p.z);
       desired.copy(target).add(frame.right.clone().multiplyScalar(Math.sin(t) * 28)).add(frame.tangent.clone().multiplyScalar(-22)).add(new THREE.Vector3(0, 17 + Math.cos(t * 0.7) * 5, 0));
     } else if (activeCameraMode === 'cinematicLeader' && leader) {
-      const cfg = BROADCAST_CAMERA.leader;
+      const cfg = (
+        this.isToyParkViewerOverlayActive()
+        && (leader.distance || 0) / Math.max(1, this.trackLength || 1) <= (BROADCAST_CAMERA.toyParkInitialCinematicLeader?.maxProgress ?? 0)
+      )
+        ? BROADCAST_CAMERA.toyParkInitialCinematicLeader
+        : BROADCAST_CAMERA.leader;
       const leaderDistance = leader.distance || 0;
       const velocity = leader.body?.velocity;
       const speed = velocity ? Math.hypot(velocity.x || 0, velocity.y || 0, velocity.z || 0) : 0;
@@ -18438,6 +18464,9 @@ class MarbleRace {
         targetYMode: 'track-local-up-leader-target',
         trackTargetY: Number(trackTarget.y.toFixed(2)),
         fov: cfg.fov,
+        toyParkOpeningShotActive: cfg === BROADCAST_CAMERA.toyParkInitialCinematicLeader,
+        toyParkOpeningShotMaxProgress: BROADCAST_CAMERA.toyParkInitialCinematicLeader?.maxProgress ?? null,
+        shotLabel: cfg.label || null,
         toyParkZoomInFactor: this.isToyParkViewerOverlayActive() ? (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) : 1,
         toyParkZoomInActive: Boolean(this.isToyParkViewerOverlayActive() && (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) < 1),
         effectiveFov: Number((this.isToyParkViewerOverlayActive() ? (cfg.fov || 40) * (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) : (cfg.fov || 40)).toFixed(2)),
@@ -18492,7 +18521,7 @@ class MarbleRace {
       target.y += 0.25;
     }
     const baseDesiredFov = activeCameraMode === 'cinematicLeader'
-      ? (BROADCAST_CAMERA.leader.fov || 40)
+      ? (this.cinematicLeaderCameraState?.fov || BROADCAST_CAMERA.leader.fov || 40)
       : (activeCameraMode === 'toyParkBroadcast'
         ? (this.toyParkBroadcastCameraState?.fov || 38)
         : (activeCameraMode === 'leadPack'
