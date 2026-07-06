@@ -1993,10 +1993,11 @@ class MarbleRace {
         ctx.restore();
       };
 
+      const noDropShadow = toyPark;
       ctx.save();
-      ctx.shadowColor = 'rgba(0,0,0,0.38)';
-      ctx.shadowBlur = 12;
-      ctx.shadowOffsetY = 6;
+      ctx.shadowColor = noDropShadow ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.38)';
+      ctx.shadowBlur = noDropShadow ? 0 : 12;
+      ctx.shadowOffsetY = noDropShadow ? 0 : 6;
       const iconR = compactVertical ? 13 : (vertical ? 27 : 31);
       const iconX = x + rankW + 4;
       const iconY = y + 10;
@@ -2037,10 +2038,10 @@ class MarbleRace {
         summaryRows.push({ rank: index + 1, name: data.name || `Marble ${data.id + 1}`, lap, totalLaps, progress: Math.round(progress * 100) });
         const skew = compactVertical ? 6 : (vertical ? 9 : 13);
         ctx.save();
-        ctx.shadowColor = 'rgba(0,0,0,0.36)';
-        ctx.shadowBlur = 8;
-        ctx.shadowOffsetX = 4;
-        ctx.shadowOffsetY = 5;
+        ctx.shadowColor = noDropShadow ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.36)';
+        ctx.shadowBlur = noDropShadow ? 0 : 8;
+        ctx.shadowOffsetX = noDropShadow ? 0 : 4;
+        ctx.shadowOffsetY = noDropShadow ? 0 : 5;
         ctx.beginPath();
         ctx.moveTo(rowX + skew, rowY);
         ctx.lineTo(rowX + rowW, rowY);
@@ -2098,6 +2099,7 @@ class MarbleRace {
         hasAvatars: true,
         hasLapLabels: true,
         compact: compactVertical,
+        dropShadow: !noDropShadow,
       };
     }
     const headerHeight = toyPark ? (vertical ? 94 : 126) : (vertical ? 66 : 94);
