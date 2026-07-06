@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import obstacleCatalogData from './obstacle-catalog.json';
 import {
   TOY_PARK_MARBLE_VISUAL_THEME,
+  TOY_PARK_MARBLE_IDENTITIES,
   TOY_PARK_SOLID_BACKGROUND,
   TOY_PARK_SOFT_GUIDE_PHYSICS,
   TOY_PARK_START_GATE_OVERRIDES,
@@ -3530,6 +3531,22 @@ class MarbleRace {
     const patternStyles = (theme.patternKeys || [])
       .map((key) => MARBLE_PATTERN_STYLES.find((style) => style.key === key))
       .filter(Boolean);
+    if (theme.key === 'toyPark' && TOY_PARK_MARBLE_IDENTITIES.length) {
+      return {
+        colorStyles: TOY_PARK_MARBLE_IDENTITIES.map((identity) => ({
+          label: identity.colorLabel,
+          hex: identity.hex,
+          color: identity.color,
+          palette: identity.palette,
+          material: identity.materialKey,
+        })),
+        patternStyles: TOY_PARK_MARBLE_IDENTITIES.map((identity) => ({
+          key: identity.patternKey,
+          label: identity.patternName,
+        })),
+        materialOverride: theme.materialOverride || null,
+      };
+    }
     return {
       colorStyles: colorStyles.length ? colorStyles : MARBLE_COLOR_STYLES,
       patternStyles: patternStyles.length ? patternStyles : MARBLE_PATTERN_STYLES,
@@ -13234,7 +13251,7 @@ class MarbleRace {
       const profile = this.physicsMechanic || PHYSICS_MECHANIC_PROFILES[DEFAULT_PHYSICS_MECHANIC_KEY];
       const radius = identity.radius * (profile.marbleRadiusScale ?? 1);
       const baseMass = 1.1 + (i % 4) * 0.04;
-      const mesh = this.makeMarbleMesh(radius, color, i, identity.patternKey, identity.palette, identity.materialKey);
+      const mesh = this.makeMarbleMesh(radius, color, i, identity.patternKey, identity.palette, identity.materialKey, identity);
       const labelSprite = this.createMarbleNameLabel(identity.name);
       const gridIndex = racingGridEnabled ? i : i;
       const row = racingGridEnabled
@@ -13399,6 +13416,43 @@ class MarbleRace {
 
   createMarbleIdentity(index, count = this.marbleData.length) {
     const theme = this.visualTheme || MARBLE_VISUAL_THEMES[DEFAULT_MARBLE_VISUAL_THEME_KEY];
+    const toyParkIdentity = theme.key === 'toyPark' && count === TOY_PARK_MARBLE_IDENTITIES.length
+      ? TOY_PARK_MARBLE_IDENTITIES[index % TOY_PARK_MARBLE_IDENTITIES.length]
+      : null;
+    if (toyParkIdentity) {
+      const materialKey = toyParkIdentity.materialKey || 'candy';
+      const materialStyle = MARBLE_MATERIAL_STYLES[materialKey] || MARBLE_MATERIAL_STYLES.candy;
+      const sizeStyle = MARBLE_SIZE_STYLES[index % MARBLE_SIZE_STYLES.length];
+      const paletteHex = toyParkIdentity.palette?.length ? toyParkIdentity.palette : [toyParkIdentity.hex];
+      const palette = paletteHex.map((hex) => Number.parseInt(hex.replace('#', ''), 16));
+      const patternName = toyParkIdentity.patternName || toyParkIdentity.name;
+      const visualTagline = toyParkIdentity.tagline || `${materialStyle.label} ${patternName}`;
+      const codeNumber = String(index + 1).padStart(Math.max(2, String(count).length), '0');
+      const code = `MB-${codeNumber}-TOY-${toyParkIdentity.hex.slice(1, 4).toUpperCase()}-${toyParkIdentity.patternKey.slice(0, 3).toUpperCase()}-${materialKey.slice(0, 3).toUpperCase()}-${sizeStyle.key}`;
+      return {
+        id: index,
+        code,
+        name: toyParkIdentity.name,
+        displayName: `${code} ${toyParkIdentity.name}`,
+        visualThemeKey: theme.key,
+        visualThemeName: theme.label,
+        visualThemeDescription: theme.description,
+        color: toyParkIdentity.color,
+        colorHex: toyParkIdentity.hex,
+        colorName: toyParkIdentity.colorLabel,
+        palette,
+        paletteHex,
+        materialKey,
+        materialName: materialStyle.label,
+        patternKey: toyParkIdentity.patternKey,
+        patternName,
+        visualTagline,
+        toyParkCharacterIcon: toyParkIdentity.icon,
+        sizeKey: sizeStyle.key,
+        sizeName: sizeStyle.label,
+        radius: sizeStyle.radius,
+      };
+    }
     const themeStyles = this.getVisualThemeStyles(theme);
     const colorStyle = themeStyles.colorStyles[index % themeStyles.colorStyles.length];
     const patternStyle = themeStyles.patternStyles[Math.floor(index / themeStyles.colorStyles.length) % themeStyles.patternStyles.length];
@@ -13435,7 +13489,7 @@ class MarbleRace {
     };
   }
 
-  makeMarbleMesh(radius, color, index, patternKey = 'rings', palette = null, materialKey = 'glass') {
+  makeMarbleMesh(radius, color, index, patternKey = 'rings', palette = null, materialKey = 'glass', identity = null) {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 128;
@@ -13475,6 +13529,96 @@ class MarbleRace {
           ctx.fillRect(x, y, cell, cell);
         }
       }
+    } else if (patternKey === 'candy-captain') {
+      ctx.fillStyle = accent;
+      for (let x = -canvas.height; x < canvas.width; x += 34) {
+        ctx.save();
+        ctx.translate(x, 0);
+        ctx.rotate(-0.42);
+        ctx.fillRect(0, -20, 15, canvas.height + 50);
+        ctx.restore();
+      }
+      ctx.fillStyle = accent2;
+      ctx.fillRect(94, 35, 68, 16);
+      ctx.beginPath();
+      ctx.moveTo(108, 35); ctx.lineTo(128, 17); ctx.lineTo(148, 35); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#271215';
+      ctx.beginPath(); ctx.arc(116, 70, 5, 0, Math.PI * 2); ctx.arc(140, 70, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#271215'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(128, 73, 19, 0.2, Math.PI - 0.2); ctx.stroke();
+    } else if (patternKey === 'bubble-goblin') {
+      for (let i = 0; i < 22; i += 1) {
+        const x = (i * 37 + index * 11) % canvas.width;
+        const y = (i * 29 + index * 17) % canvas.height;
+        ctx.strokeStyle = i % 2 ? accent : accent2;
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.55;
+        ctx.beginPath(); ctx.arc(x, y, 6 + (i % 5) * 3, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.ellipse(108, 66, 18, 25, -0.18, 0, Math.PI * 2); ctx.ellipse(148, 66, 18, 25, 0.18, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#1b0f2f';
+      ctx.beginPath(); ctx.arc(114, 67, 8, 0, Math.PI * 2); ctx.arc(142, 67, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#1b0f2f'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(104, 48); ctx.lineTo(88, 38); ctx.moveTo(152, 48); ctx.lineTo(168, 38); ctx.stroke();
+    } else if (patternKey === 'rocket-bunny') {
+      ctx.fillStyle = accent;
+      for (let i = 0; i < 18; i += 1) {
+        const x = (i * 41 + 13) % canvas.width;
+        const y = (i * 23 + 19) % canvas.height;
+        ctx.beginPath();
+        for (let p = 0; p < 10; p += 1) {
+          const a = -Math.PI / 2 + p * Math.PI / 5;
+          const r = p % 2 ? 3 : 8;
+          ctx[p ? 'lineTo' : 'moveTo'](x + Math.cos(a) * r, y + Math.sin(a) * r);
+        }
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.ellipse(118, 45, 9, 25, -0.2, 0, Math.PI * 2); ctx.ellipse(138, 45, 9, 25, 0.2, 0, Math.PI * 2); ctx.arc(128, 78, 24, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = accent3; ctx.beginPath(); ctx.moveTo(165, 82); ctx.lineTo(205, 68); ctx.lineTo(184, 105); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#172554'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(120, 75, 3, 0, Math.PI * 2); ctx.arc(136, 75, 3, 0, Math.PI * 2); ctx.stroke();
+    } else if (patternKey === 'choco-bear') {
+      ctx.fillStyle = accent;
+      for (let x = 0; x < canvas.width; x += 34) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.bezierCurveTo(x + 18, 25, x - 6, 42, x + 12, 64); ctx.lineTo(x + 26, 0); ctx.fill();
+      }
+      ctx.fillStyle = accent2;
+      ctx.beginPath(); ctx.arc(103, 58, 18, 0, Math.PI * 2); ctx.arc(153, 58, 18, 0, Math.PI * 2); ctx.arc(128, 78, 34, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#3b1b0f';
+      ctx.beginPath(); ctx.arc(116, 75, 4, 0, Math.PI * 2); ctx.arc(140, 75, 4, 0, Math.PI * 2); ctx.ellipse(128, 88, 9, 6, 0, 0, Math.PI * 2); ctx.fill();
+    } else if (patternKey === 'neon-penguin') {
+      ctx.strokeStyle = accent; ctx.lineWidth = 4;
+      for (let y = 14; y < canvas.height; y += 24) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(80, y); ctx.lineTo(80, y + 12); ctx.lineTo(canvas.width, y + 12); ctx.stroke(); }
+      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(128, 76, 30, 40, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = accent2; ctx.fillRect(100, 59, 56, 13);
+      ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.arc(114, 65, 9, 0, Math.PI * 2); ctx.arc(142, 65, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffb703'; ctx.beginPath(); ctx.moveTo(128, 76); ctx.lineTo(140, 86); ctx.lineTo(116, 86); ctx.closePath(); ctx.fill();
+    } else if (patternKey === 'rainbow-unicorn') {
+      [accent, accent2, accent3, '#ffe66d'].forEach((hex, i) => {
+        ctx.fillStyle = hex;
+        for (let n = 0; n < 9; n += 1) ctx.fillRect((n * 39 + i * 12) % canvas.width, (n * 17 + i * 23) % canvas.height, 18, 5);
+      });
+      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(128, 76, 30, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffe66d'; ctx.beginPath(); ctx.moveTo(128, 32); ctx.lineTo(139, 62); ctx.lineTo(117, 62); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#9b5cff'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(116, 75, 7, 0.05, Math.PI - 0.05); ctx.arc(140, 75, 7, 0.05, Math.PI - 0.05); ctx.stroke();
+    } else if (patternKey === 'mecha-duck') {
+      ctx.fillStyle = accent;
+      ctx.fillRect(0, 0, canvas.width / 2, canvas.height);
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
+      for (let x = 18; x < 120; x += 24) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+      ctx.fillStyle = '#fff7b8'; ctx.beginPath(); ctx.arc(128, 74, 34, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = accent2; ctx.fillRect(132, 50, 28, 23);
+      ctx.fillStyle = accent3; ctx.beginPath(); ctx.ellipse(127, 84, 28, 10, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.arc(118, 65, 4, 0, Math.PI * 2); ctx.arc(146, 61, 7, 0, Math.PI * 2); ctx.fill();
+    } else if (patternKey === 'lava-dragon') {
+      ctx.strokeStyle = accent2; ctx.lineWidth = 8;
+      for (let i = 0; i < 10; i += 1) { ctx.beginPath(); ctx.moveTo((i * 31) % canvas.width, 0); ctx.lineTo((i * 53 + 35) % canvas.width, canvas.height); ctx.stroke(); }
+      ctx.strokeStyle = accent; ctx.lineWidth = 3;
+      for (let i = 0; i < 12; i += 1) { ctx.beginPath(); ctx.moveTo((i * 43) % canvas.width, 0); ctx.lineTo((i * 67 + 20) % canvas.width, canvas.height); ctx.stroke(); }
+      ctx.fillStyle = accent2; ctx.beginPath(); ctx.arc(128, 72, 32, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = accent; ctx.beginPath(); ctx.ellipse(128, 72, 24, 12, -0.12, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#101010'; ctx.beginPath(); ctx.ellipse(128, 72, 5, 13, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = accent2; ctx.beginPath(); ctx.moveTo(102, 47); ctx.lineTo(113, 24); ctx.lineTo(122, 52); ctx.moveTo(154, 47); ctx.lineTo(143, 24); ctx.lineTo(134, 52); ctx.fill();
     }
 
     ctx.globalAlpha = 0.72;
