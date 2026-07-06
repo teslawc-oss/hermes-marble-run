@@ -575,6 +575,8 @@ const BROADCAST_CAMERA = {
   angleStyle: 'broadcast-auto-director-mid-race-leader-chase-watchability-trial',
   highAngleBattleEnabled: false,
   birdEyeCameraAngle: true,
+  toyParkDefaultCameraZoomInFactor: 0.7,
+  toyParkDefaultCameraZoomInLabel: 'Toy Park Default Auto camera uses a 30% tighter FOV across its default-mode shots while keeping normal camera positioning',
   toyParkBroadcast: {
     enabled: true,
     label: 'Toy Park broadcast camera: mostly high-angle look-across coverage, intermittent cinematic-forward sweeps, first-corner top-three chase, mid-race traffic/overtake cuts, final leader-plus-nearest-challenger, and short zoom punches on collisions/overtakes',
@@ -665,8 +667,6 @@ const BROADCAST_CAMERA = {
     positionSmoothing: 0.04,
     targetSmoothing: 0.085,
     fov: 32.4,
-    toyParkZoomInFactor: 0.7,
-    toyParkZoomInLabel: 'Toy Park lead-pack camera uses a 30% tighter FOV while keeping normal lead-pack positioning',
     obstacleAwareDistance: 36.7,
     obstaclePullback: 2.9,
     obstacleHeightBoost: 2.7,
@@ -18343,9 +18343,9 @@ class MarbleRace {
         },
         targetLiftMode: cfg.useTrackNormalHeight ? 'track-local-up' : 'world-y',
         fov: cfg.fov,
-        toyParkZoomInFactor: this.isToyParkViewerOverlayActive() ? (cfg.toyParkZoomInFactor || 1) : 1,
-        toyParkZoomInActive: Boolean(this.isToyParkViewerOverlayActive() && (cfg.toyParkZoomInFactor || 1) < 1),
-        effectiveFov: Number((this.isToyParkViewerOverlayActive() ? (cfg.fov || 44) * (cfg.toyParkZoomInFactor || 1) : (cfg.fov || 44)).toFixed(2)),
+        toyParkZoomInFactor: this.isToyParkViewerOverlayActive() ? (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) : 1,
+        toyParkZoomInActive: Boolean(this.isToyParkViewerOverlayActive() && (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) < 1),
+        effectiveFov: Number((this.isToyParkViewerOverlayActive() ? (cfg.fov || 44) * (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) : (cfg.fov || 44)).toFixed(2)),
       };
     } else if (activeCameraMode === 'selected' && selected) {
       const cfg = BROADCAST_CAMERA.selected;
@@ -18423,6 +18423,9 @@ class MarbleRace {
         targetYMode: 'track-local-up-leader-target',
         trackTargetY: Number(trackTarget.y.toFixed(2)),
         fov: cfg.fov,
+        toyParkZoomInFactor: this.isToyParkViewerOverlayActive() ? (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) : 1,
+        toyParkZoomInActive: Boolean(this.isToyParkViewerOverlayActive() && (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) < 1),
+        effectiveFov: Number((this.isToyParkViewerOverlayActive() ? (cfg.fov || 40) * (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) : (cfg.fov || 40)).toFixed(2)),
       };
     } else if (activeCameraMode === 'finish') {
       const cfg = BROADCAST_CAMERA.finish;
@@ -18473,13 +18476,21 @@ class MarbleRace {
       desired.set(target.x + horizontalOffset.x, desired.y + 1.8, target.z + horizontalOffset.z);
       target.y += 0.25;
     }
-    const desiredFov = activeCameraMode === 'cinematicLeader'
+    const baseDesiredFov = activeCameraMode === 'cinematicLeader'
       ? (BROADCAST_CAMERA.leader.fov || 40)
       : (activeCameraMode === 'toyParkBroadcast'
         ? (this.toyParkBroadcastCameraState?.fov || 38)
         : (activeCameraMode === 'leadPack'
-          ? ((BROADCAST_CAMERA.leadPack.fov || 44) * (this.isToyParkViewerOverlayActive() ? (BROADCAST_CAMERA.leadPack.toyParkZoomInFactor || 1) : 1))
+          ? (BROADCAST_CAMERA.leadPack.fov || 44)
           : (activeCameraMode === 'replayHighlight' ? 38 : 58)));
+    const toyParkDefaultZoomModes = ['leadPack', 'cinematicLeader', 'leadBattle', 'finish', 'podium360'];
+    const toyParkDefaultZoomInActive = Boolean(
+      requestedMode === 'default'
+      && this.isToyParkViewerOverlayActive()
+      && toyParkDefaultZoomModes.includes(activeCameraMode)
+    );
+    const toyParkDefaultZoomInFactor = toyParkDefaultZoomInActive ? (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) : 1;
+    const desiredFov = baseDesiredFov * toyParkDefaultZoomInFactor;
     const portraitPreviewFovBoost = toyParkNarrowPortraitPreview ? 1.12 : 1;
     const viewportDesiredFov = portraitPreviewFovBoost > 1
       ? clamp(THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(desiredFov) / 2) * portraitPreviewFovBoost)), desiredFov, 78)
@@ -18505,6 +18516,9 @@ class MarbleRace {
       verticalRenderZoomOutFactor: Number(verticalRenderZoomOutFactor.toFixed(2)),
       rawCropFactor: Number(rawCropFactor.toFixed(3)),
       cropFactor: Number(cropFactor.toFixed(3)),
+      toyParkDefaultZoomInActive,
+      toyParkDefaultZoomInFactor: Number(toyParkDefaultZoomInFactor.toFixed(2)),
+      defaultZoomBaseFov: Number(baseDesiredFov.toFixed(2)),
       baseFov: Number(desiredFov.toFixed(2)),
       viewportFov: Number(viewportDesiredFov.toFixed(2)),
       portraitPreviewFovBoost: Number(portraitPreviewFovBoost.toFixed(2)),
