@@ -634,15 +634,16 @@ const BROADCAST_CAMERA = {
   },
   leader: {
     back: -9.9,
-    side: 0.92,
+    side: 1.16,
     height: 27,
-    lookAhead: 12.4,
-    targetLookAheadScale: 0.24,
-    targetGuideBlend: 0.36,
+    lookAhead: 14.8,
+    targetLookAheadScale: 0.3,
+    targetGuideBlend: 0.44,
     targetLift: 1.2,
     dynamicLookAheadBySpeed: 6.5,
-    maxSideWave: 0.12,
+    maxSideWave: 0.18,
     sideWaveSpeed: 0.24,
+    cameraYawDegrees: 11,
     positionSmoothing: 0.065,
     targetSmoothing: 0.13,
     fov: 30.2,
@@ -655,15 +656,16 @@ const BROADCAST_CAMERA = {
   toyParkInitialCinematicLeader: {
     maxProgress: 0.08,
     back: -7.2,
-    side: 1.08,
+    side: 1.22,
     height: 34,
-    lookAhead: 9.2,
-    targetLookAheadScale: 0.2,
-    targetGuideBlend: 0.32,
+    lookAhead: 10.8,
+    targetLookAheadScale: 0.26,
+    targetGuideBlend: 0.4,
     targetLift: 1.05,
     dynamicLookAheadBySpeed: 4.2,
     maxSideWave: 0.06,
     sideWaveSpeed: 0.18,
+    cameraYawDegrees: 10,
     positionSmoothing: 0.055,
     targetSmoothing: 0.105,
     fov: 26.4,
@@ -18435,13 +18437,19 @@ class MarbleRace {
       const desiredBack = cfg.back - obstacleFactor * (cfg.obstaclePullback || 0);
       const desiredSide = cfg.side + sideWave;
       const desiredHeight = cfg.height + obstacleFactor * (cfg.obstacleHeightBoost || 0);
-      target.copy(lookPoint);
-      this.cameraTargetSmoothed.lerp(target, cfg.targetSmoothing || 0.075);
-      target.copy(this.cameraTargetSmoothed);
-      desired.copy(leader.mesh.position)
+      const rawDesired = leader.mesh.position.clone()
         .add(frame.tangent.clone().multiplyScalar(desiredBack))
         .add(frame.right.clone().multiplyScalar(desiredSide))
         .add(leaderTrackUp.clone().multiplyScalar(desiredHeight));
+      const yawDegrees = (cfg.cameraYawDegrees || 0) + sideWave * 4;
+      const yawRadians = THREE.MathUtils.degToRad(yawDegrees);
+      const yawAdjusted = yawDegrees
+        ? lookPoint.clone().add(rawDesired.clone().sub(lookPoint).applyAxisAngle(leaderTrackUp, yawRadians))
+        : rawDesired;
+      target.copy(lookPoint);
+      this.cameraTargetSmoothed.lerp(target, cfg.targetSmoothing || 0.075);
+      target.copy(this.cameraTargetSmoothed);
+      desired.copy(yawAdjusted);
       this.cinematicLeaderCameraState = {
         speed: Number(speed.toFixed(2)),
         speedFactor: Number(speedFactor.toFixed(2)),
@@ -18455,6 +18463,9 @@ class MarbleRace {
         desiredBack: Number(desiredBack.toFixed(2)),
         desiredSide: Number(desiredSide.toFixed(2)),
         desiredHeight: Number(desiredHeight.toFixed(2)),
+        cameraYawDegrees: Number(yawDegrees.toFixed(2)),
+        sideShotActive: Math.abs(yawDegrees) > 0.01 || Math.abs(desiredSide) > 0.01,
+        forwardTrackLead: Number(targetLead.toFixed(2)),
         angleReference: 'lead-pack-style track-local tangent/right/up',
         trackUp: {
           x: Number(leaderTrackUp.x.toFixed(3)),
