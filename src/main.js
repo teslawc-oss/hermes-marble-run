@@ -2496,7 +2496,7 @@ class MarbleRace {
       ctx.strokeStyle = textStroke;
       ctx.lineWidth = Math.max(4, minDim * 0.006);
       ctx.stroke();
-      this.drawViewerText(ctx, state.isGo ? 'RUSH!' : 'TOY PARK START', cx, labelY + labelH * 0.54, {
+      this.drawViewerText(ctx, state.isGo ? 'RUSH!' : 'GET READY', cx, labelY + labelH * 0.54, {
         font: `900 ${Math.round(minDim * (isVertical ? 0.027 : 0.022))}px Arial Black, Impact, sans-serif`,
         fill: '#ffffff', stroke: textStroke, strokeWidth: Math.max(3, minDim * 0.005), align: 'center', maxWidth: labelW - 28,
       });
