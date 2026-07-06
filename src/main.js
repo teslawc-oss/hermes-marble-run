@@ -1658,6 +1658,10 @@ class MarbleRace {
     this.initTtsVoiceSelector();
     this.buildObstacleTypeToggles();
     this.applyInitialPreviewParams();
+    if (this.toyParkPreviewEndpoint) {
+      this.leftUICollapsed = true;
+      this.applyLeftUIState();
+    }
     this.buildRaceThemeOverlay();
     this.initThree();
     this.initPhysics();
@@ -2609,10 +2613,10 @@ class MarbleRace {
 
     // Shorts-friendly top-three standings card. Keep it compact so the middle race action stays visible.
     const compactToyParkStanding = toyParkOverlay;
-    const boardW = compactToyParkStanding ? Math.round(w * 0.32) : w - margin * 2;
-    const rowH = compactToyParkStanding ? 30 : 48;
-    const boardX = compactToyParkStanding ? margin : margin;
-    const boardY = compactToyParkStanding ? 42 : Math.min(h - 595, 196);
+    const boardW = compactToyParkStanding ? Math.round(w * 0.30) : w - margin * 2;
+    const rowH = compactToyParkStanding ? 28 : 48;
+    const boardX = compactToyParkStanding ? 16 : margin;
+    const boardY = compactToyParkStanding ? 18 : Math.min(h - 595, 196);
     const liveStandingSummary = this.drawViewerLiveStandingPanel({
       ctx,
       ranking,
@@ -2625,10 +2629,10 @@ class MarbleRace {
     });
 
     // Bottom stacked CTA. Toy Park uses the same arcade styling as its leaderboard, placed bottom-right to keep the start area clear.
-    const ctaW = toyParkOverlay ? Math.round(w * 0.46) : w - margin * 2;
-    const ctaH = toyParkOverlay ? 50 : 64;
-    const ctaX = toyParkOverlay ? w - margin - ctaW : margin;
-    const ctaY = toyParkOverlay ? h - ctaH - 58 : h - 216;
+    const ctaW = toyParkOverlay ? Math.min(Math.round(w * 0.42), 176) : w - margin * 2;
+    const ctaH = toyParkOverlay ? 48 : 64;
+    const ctaX = toyParkOverlay ? w - 16 - ctaW : margin;
+    const ctaY = toyParkOverlay ? h - ctaH - 86 : h - 216;
     let ctaSummary = null;
     if (toyParkOverlay) {
       ctaSummary = this.drawToyParkArcadeCta({ ctx, x: ctaX, y: ctaY, width: ctaW, height: ctaH, vertical: true });
@@ -3007,6 +3011,7 @@ class MarbleRace {
     const mechanic = String(params.get('physicsMechanic') || '').trim();
     const toyParkPreview = pathKey === 'toypark' || mechanic.toLowerCase() === 'toypark';
     this.toyParkPreviewEndpoint = toyParkPreview;
+    document.body?.classList.toggle('toypark-preview-endpoint', toyParkPreview);
     const requestedMechanic = toyParkPreview ? 'toyPark' : (PHYSICS_MECHANIC_PROFILES[mechanic] ? mechanic : DEFAULT_PHYSICS_MECHANIC_KEY);
     this.applyPhysicsMechanic(requestedMechanic, { source: toyParkPreview ? 'toypark-endpoint' : (mechanic ? 'query-param' : 'default-render-safe') });
     const requestedTheme = params.get('visualTheme') || (toyParkPreview ? 'toyPark' : '');

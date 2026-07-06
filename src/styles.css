@@ -659,6 +659,10 @@ button.recording {
   bottom: 66px;
 }
 
+body.toypark-preview-endpoint .left-ui-toggle {
+  display: none !important;
+}
+
 .hud-left,
 .hud-right {
   transition: opacity 0.2s ease;
