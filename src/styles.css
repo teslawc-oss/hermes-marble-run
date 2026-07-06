@@ -660,7 +660,7 @@ button.recording {
 }
 
 body.toypark-preview-endpoint .left-ui-toggle {
-  display: none !important;
+  display: inline-flex !important;
 }
 
 .hud-left,
