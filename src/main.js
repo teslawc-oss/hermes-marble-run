@@ -2464,8 +2464,11 @@ class MarbleRace {
     const layoutKey = this.videoCanvasLayoutKey || (w < h ? 'vertical' : 'horizontal');
     const isVertical = layoutKey === 'vertical' || h > w * 1.2;
     const toyParkOverlay = this.isToyParkViewerOverlayActive();
-    const maxRows = isVertical && !toyParkOverlay ? 3 : CANVAS_VIEWER_OVERLAY.maxStandingRows;
-    const ranking = this.getRanking({ force: false }).slice(0, maxRows);
+    const rankingSource = this.getRanking({ force: false });
+    const maxRows = toyParkOverlay
+      ? rankingSource.length
+      : (isVertical ? 3 : CANVAS_VIEWER_OVERLAY.maxStandingRows);
+    const ranking = rankingSource.slice(0, maxRows);
     const leader = ranking[0] || null;
     const leaderProgress = clamp(leader?.progress || 0, 0, 1);
     const leaderDistance = Math.max(0, Math.min(this.trackLength || 0, leader?.distance || 0));
@@ -2584,7 +2587,7 @@ class MarbleRace {
       liveStandingRows: liveStandingSummary.rows,
       toyParkOverlay,
       layout: 'horizontal',
-      maxStandingRows: CANVAS_VIEWER_OVERLAY.maxStandingRows,
+      maxStandingRows: maxRows,
       horizontalContentScale: Number(horizontalContentScale.toFixed(3)),
       horizontalDesignSize: `${horizontalDesignWidth}x${horizontalDesignHeight}`,
       logicalCanvasSize: `${Math.round(logicalW)}x${Math.round(logicalH)}`,
@@ -2751,7 +2754,7 @@ class MarbleRace {
       liveStandingRows: liveStandingSummary.rows,
       toyParkOverlay,
       liveStandingCompact: liveStandingSummary.compact === true,
-      maxStandingRows: toyParkOverlay ? CANVAS_VIEWER_OVERLAY.maxStandingRows : 3,
+      maxStandingRows: maxRows,
       channelHandle: CANVAS_VIEWER_OVERLAY.channelHandle,
       ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
       ctaStyle: ctaSummary?.style || 'classic-red-cta',
