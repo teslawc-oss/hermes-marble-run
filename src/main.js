@@ -575,6 +575,18 @@ const BROADCAST_CAMERA = {
   angleStyle: 'broadcast-auto-director-mid-race-leader-chase-watchability-trial',
   highAngleBattleEnabled: false,
   birdEyeCameraAngle: true,
+  toyParkBroadcast: {
+    enabled: true,
+    label: 'Toy Park broadcast camera: low start close-up, first-corner top-three chase, mid-race traffic/overtake cuts, final leader-plus-nearest-challenger, and short zoom punches on collisions/overtakes',
+    momentZoomSeconds: 1.45,
+    firstCornerProgressEnd: 0.24,
+    finalLeaderProgressStart: 0.74,
+    startClose: { back: -2.2, side: 1.05, height: 5.8, targetLift: 0.72, fov: 48, positionSmoothing: 0.22, targetSmoothing: 0.24, label: 'start: low-angle close-up on the staged front pack' },
+    firstCorner: { back: -6.2, side: 2.6, height: 14.5, lookAhead: 8.5, targetLift: 1.05, fov: 38, positionSmoothing: 0.075, targetSmoothing: 0.12, label: 'first corner: chase the top three' },
+    actionSpot: { back: -4.8, side: -3.0, height: 13.0, lookAhead: 6.5, targetLift: 0.95, fov: 36, positionSmoothing: 0.12, targetSmoothing: 0.16, label: 'mid race: cut to the tightest traffic / overtake pocket' },
+    leaderDuel: { back: -7.0, side: 2.1, height: 16.5, lookAhead: 9.2, targetLift: 1.05, fov: 34, positionSmoothing: 0.07, targetSmoothing: 0.12, label: 'final: follow leader plus nearest challenger' },
+    momentZoom: { back: -2.8, side: 1.2, height: 8.2, lookAhead: 4.4, targetLift: 0.85, fov: 30, positionSmoothing: 0.32, targetSmoothing: 0.34, label: 'collision / overtake / lead-change short zoom punch' },
+  },
   initialVerticalAxisRotationDegrees: 150,
   defaultCameraPitchUpDegrees: 58,
   defaultPitchModes: ['leadPack', 'leadBattle', 'unfinishedOrder'],
@@ -1134,6 +1146,8 @@ class MarbleRace {
     this.initialCameraRotationApplied = false;
     this.leadBattleInitialized = false;
     this.leadBattleState = null;
+    this.toyParkBroadcastCameraState = null;
+    this.toyParkBroadcastMoment = null;
     this.defaultCameraPhaseUntil = 0;
     this.defaultCameraFocusId = null;
     this.firstFinishTime = 0;
@@ -1503,6 +1517,8 @@ class MarbleRace {
     this.lastPaceBand = null;
     this.previousTopFiveIds = [];
     this.topFiveSnapshot = [];
+    this.toyParkBroadcastMoment = null;
+    this.toyParkBroadcastCameraState = null;
     this.lastFinalStretchAt = -Infinity;
     this.activeCaption = null;
     this.replayHighlight = { active: false, stage: null, events: [], startedAt: 0, startedAtMs: 0, duration: 0, playback: null };
@@ -4136,6 +4152,8 @@ class MarbleRace {
     this.lastPaceBand = null;
     this.previousTopFiveIds = [];
     this.topFiveSnapshot = [];
+    this.toyParkBroadcastMoment = null;
+    this.toyParkBroadcastCameraState = null;
     this.lastFinalStretchAt = -Infinity;
     this.raceHistoryBuffer = [];
     this.lastRaceHistorySampleAt = -Infinity;
@@ -12180,6 +12198,7 @@ class MarbleRace {
       lines,
       preparedAudio,
     };
+    this.noteToyParkBroadcastMoment(event);
     this.broadcastEvents.unshift(event);
     this.broadcastEvents = this.broadcastEvents.slice(0, 10);
     this.activeCaption = { ...event, expiresAt: this.elapsed + 2.8 };
@@ -17428,7 +17447,7 @@ class MarbleRace {
       activeDefaultCameraShot: this.getDefaultCameraMode(),
       defaultCameraSequence: BROADCAST_CAMERA.sequence,
       defaultCameraTrackingDirection: 'xy/xz direction sampled from next tracking point back toward previous tracking point',
-      defaultCameraOffsets: { leader: BROADCAST_CAMERA.leader, leadPack: BROADCAST_CAMERA.leadPack },
+      defaultCameraOffsets: { leader: BROADCAST_CAMERA.leader, leadPack: BROADCAST_CAMERA.leadPack, toyParkBroadcast: BROADCAST_CAMERA.toyParkBroadcast },
       cameraLineOfSight: {
         config: BROADCAST_CAMERA.lineOfSight,
         state: this.cameraLineOfSightState || null,
@@ -17436,6 +17455,8 @@ class MarbleRace {
       },
       cinematicLeaderCamera: this.cinematicLeaderCameraState || null,
       leadPackCamera: this.leadPackCameraState || null,
+      toyParkBroadcastCamera: this.toyParkBroadcastCameraState || null,
+      toyParkBroadcastMoment: this.toyParkBroadcastMoment || null,
       videoCompositeCameraCrop: this.videoCompositeCameraCropState || null,
       videoCompositeCanvas: this.getVideoCompositeCanvasInfo(),
       canvasStartHook: this.startHookLastSummary || this.getStartHookState() || { active: false },
@@ -18000,12 +18021,101 @@ class MarbleRace {
     return boosted;
   }
 
+  getToyParkBroadcastTarget() {
+    const cfgRoot = BROADCAST_CAMERA.toyParkBroadcast;
+    if (!cfgRoot?.enabled || !this.isToyParkViewerOverlayActive()) return null;
+    const ranking = this.getAutoCameraRanking({ includeFinished: false });
+    const fullRanking = ranking.length ? ranking : this.getAutoCameraRanking({ includeFinished: true });
+    if (!fullRanking.length) return null;
+    const leader = fullRanking[0];
+    const leaderProgress = this.trackLength ? clamp((leader.distance || 0) / this.trackLength, 0, 1) : 0;
+    const now = this.elapsed || 0;
+    const moment = this.toyParkBroadcastMoment && now <= (this.toyParkBroadcastMoment.expiresAt || 0)
+      ? this.toyParkBroadcastMoment
+      : null;
+    if (!moment && this.toyParkBroadcastMoment) this.toyParkBroadcastMoment = null;
+
+    let phase = 'actionSpot';
+    let targetRanking = fullRanking.slice(0, 3);
+    let primary = leader;
+    let secondary = fullRanking.find((data) => data.id !== leader.id) || null;
+    if (moment) {
+      phase = 'momentZoom';
+      primary = this.marbleData.find((data) => data.id === moment.marbleId) || leader;
+      secondary = this.marbleData.find((data) => data.id === moment.rivalId) || secondary;
+      targetRanking = [primary, secondary].filter(Boolean);
+    } else if (this.countdownActive || this.state === 'ready' || this.state === 'idle' || now < 1.2) {
+      phase = 'startClose';
+      targetRanking = fullRanking.slice(0, 3);
+      primary = targetRanking[0] || leader;
+      secondary = targetRanking[1] || null;
+    } else if (leaderProgress < (cfgRoot.firstCornerProgressEnd ?? 0.24)) {
+      phase = 'firstCorner';
+      targetRanking = fullRanking.slice(0, 3);
+      primary = targetRanking[0] || leader;
+      secondary = targetRanking[1] || null;
+    } else if (leaderProgress >= (cfgRoot.finalLeaderProgressStart ?? 0.74)) {
+      phase = 'leaderDuel';
+      primary = leader;
+      secondary = ranking
+        .filter((data) => data.id !== leader.id)
+        .sort((a, b) => Math.abs((leader.distance || 0) - (a.distance || 0)) - Math.abs((leader.distance || 0) - (b.distance || 0)))[0]
+        || fullRanking.find((data) => data.id !== leader.id)
+        || null;
+      targetRanking = [primary, secondary].filter(Boolean);
+    } else {
+      phase = 'actionSpot';
+      const candidates = [];
+      for (let i = 0; i < Math.min(ranking.length - 1, 6); i += 1) {
+        const a = ranking[i];
+        const b = ranking[i + 1];
+        if (!a || !b) continue;
+        const gap = Math.abs((a.distance || 0) - (b.distance || 0));
+        const progress = this.trackLength ? (((a.distance || 0) + (b.distance || 0)) / 2) / this.trackLength : 0;
+        candidates.push({ a, b, gap, progress, score: gap + Math.abs(progress - 0.52) * 2.5 });
+      }
+      const traffic = candidates.sort((a, b) => a.score - b.score)[0];
+      primary = traffic?.a || leader;
+      secondary = traffic?.b || fullRanking.find((data) => data.id !== primary.id) || null;
+      targetRanking = [primary, secondary].filter(Boolean);
+    }
+
+    const center = new THREE.Vector3();
+    let avgDistance = 0;
+    targetRanking.forEach((data) => {
+      center.add(data.mesh?.position || new THREE.Vector3());
+      avgDistance += data.distance || 0;
+    });
+    const size = Math.max(1, targetRanking.length);
+    center.multiplyScalar(1 / size);
+    avgDistance /= size;
+    center.y += (cfgRoot[phase]?.targetLift ?? 0.9);
+    return { phase, cfg: cfgRoot[phase] || cfgRoot.actionSpot, center, avgDistance, leaderDistance: leader.distance || 0, leaderProgress, size, primary, secondary, momentActive: Boolean(moment), momentKind: moment?.kind || null };
+  }
+
+  noteToyParkBroadcastMoment(event = {}) {
+    const cfg = BROADCAST_CAMERA.toyParkBroadcast;
+    if (!cfg?.enabled || !this.isToyParkViewerOverlayActive()) return;
+    if (!['obstacle', 'overtake', 'leader', 'battle'].includes(event.kind)) return;
+    this.toyParkBroadcastMoment = {
+      kind: event.kind,
+      title: event.title || null,
+      marbleId: event.marbleId ?? null,
+      rivalId: event.rivalId ?? null,
+      startedAt: this.elapsed || 0,
+      expiresAt: (this.elapsed || 0) + (cfg.momentZoomSeconds || 1.45),
+      distance: event.distance ?? null,
+      progress: event.progress ?? null,
+    };
+  }
+
   getDefaultCameraMode() {
     const leader = this.getAutoCameraRanking({ includeFinished: false })[0]
       || this.getAutoCameraRanking({ includeFinished: true })[0]
       || this.getRanking({ force: false })[0];
     if (this.finishSlowMotion?.active) return 'finish';
     if (this.state === 'finished') return BROADCAST_CAMERA.podium360.enabled ? 'podium360' : 'finish';
+    if (this.getToyParkBroadcastTarget()) return 'toyParkBroadcast';
     if (this.countdownActive || this.state === 'ready' || this.state === 'idle') return 'leadPack';
     if (this.finishers.length > 0) {
       const holdUntil = Number.isFinite(this.defaultCameraPhaseUntil) ? this.defaultCameraPhaseUntil : 0;
@@ -18055,6 +18165,7 @@ class MarbleRace {
     const selected = selectedCandidate && !this.isMarbleIgnoredByAutoCamera(selectedCandidate) ? selectedCandidate : leader;
     const unfinishedTarget = this.getNextUnfinishedTarget();
     const leadPack = this.getLeadPackTarget();
+    const toyParkBroadcast = activeCameraMode === 'toyParkBroadcast' ? this.getToyParkBroadcastTarget() : null;
     const leadBattle = activeCameraMode === 'leadBattle' ? this.getLeadBattleTarget() : null;
     let target = new THREE.Vector3(0, 0, -this.trackLength / 2);
     let desired = new THREE.Vector3(0, 52, 56);
@@ -18075,6 +18186,43 @@ class MarbleRace {
           .add(frame.right.clone().multiplyScalar((cfg.cameraSide ?? 3.6) + pan))
           .add(new THREE.Vector3(0, cfg.cameraHeight ?? 18, 0));
       }
+    } else if (activeCameraMode === 'toyParkBroadcast' && toyParkBroadcast) {
+      const cfg = toyParkBroadcast.cfg || BROADCAST_CAMERA.toyParkBroadcast.actionSpot;
+      const dt = Math.max(0.001, Math.min(delta, 0.05));
+      const targetEase = 1 - Math.exp(-dt * 5.0);
+      if (!this.leadPackInitialized) {
+        this.cameraTargetSmoothed.copy(toyParkBroadcast.center);
+        this.leadPackDistanceSmoothed = toyParkBroadcast.avgDistance;
+        this.leadPackInitialized = true;
+      } else {
+        this.cameraTargetSmoothed.lerp(toyParkBroadcast.center, targetEase);
+        this.leadPackDistanceSmoothed = lerp(this.leadPackDistanceSmoothed, toyParkBroadcast.avgDistance, targetEase);
+      }
+      const lookAhead = cfg.lookAhead ?? 5.5;
+      const frame = this.getCameraTrackFrameAt(this.leadPackDistanceSmoothed, lookAhead);
+      const targetLead = clamp(lookAhead * 0.34, 1.2, 5.6);
+      const guideTarget = this.getTrackPointAt(clamp(this.leadPackDistanceSmoothed + targetLead, 0, this.trackLength));
+      target.copy(this.cameraTargetSmoothed).lerp(guideTarget, toyParkBroadcast.phase === 'startClose' ? 0.16 : 0.34);
+      target.y = lerp(target.y, toyParkBroadcast.center.y, 0.72);
+      const sideWave = Math.sin((this.elapsed || 0) * 0.42) * (toyParkBroadcast.phase === 'momentZoom' ? 0.12 : 0.28);
+      desired.copy(this.cameraTargetSmoothed)
+        .add(frame.tangent.clone().multiplyScalar(cfg.back ?? -4.8))
+        .add(frame.right.clone().multiplyScalar((cfg.side ?? 1.1) + sideWave))
+        .add((frame.up || new THREE.Vector3(0, 1, 0)).clone().normalize().multiplyScalar(cfg.height ?? 12));
+      this.toyParkBroadcastCameraState = {
+        enabled: true,
+        phase: toyParkBroadcast.phase,
+        label: cfg.label || BROADCAST_CAMERA.toyParkBroadcast.label,
+        primary: toyParkBroadcast.primary?.name || null,
+        secondary: toyParkBroadcast.secondary?.name || null,
+        size: toyParkBroadcast.size,
+        leaderProgress: Number(toyParkBroadcast.leaderProgress.toFixed(3)),
+        avgDistance: Number(toyParkBroadcast.avgDistance.toFixed(2)),
+        momentActive: toyParkBroadcast.momentActive,
+        momentKind: toyParkBroadcast.momentKind,
+        fov: cfg.fov || 38,
+        offsets: { back: cfg.back, side: cfg.side, height: cfg.height, lookAhead },
+      };
     } else if (activeCameraMode === 'leadBattle' && leadBattle) {
       const cfg = BROADCAST_CAMERA.leadBattle;
       const dt = Math.max(0.001, Math.min(delta, 0.05));
@@ -18311,9 +18459,11 @@ class MarbleRace {
     }
     const desiredFov = activeCameraMode === 'cinematicLeader'
       ? (BROADCAST_CAMERA.leader.fov || 40)
-      : (activeCameraMode === 'leadPack'
-        ? (BROADCAST_CAMERA.leadPack.fov || 44)
-        : (activeCameraMode === 'replayHighlight' ? 38 : 58));
+      : (activeCameraMode === 'toyParkBroadcast'
+        ? (this.toyParkBroadcastCameraState?.fov || 38)
+        : (activeCameraMode === 'leadPack'
+          ? (BROADCAST_CAMERA.leadPack.fov || 44)
+          : (activeCameraMode === 'replayHighlight' ? 38 : 58)));
     const portraitPreviewFovBoost = toyParkNarrowPortraitPreview ? 1.12 : 1;
     const viewportDesiredFov = portraitPreviewFovBoost > 1
       ? clamp(THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(desiredFov) / 2) * portraitPreviewFovBoost)), desiredFov, 78)
@@ -18355,24 +18505,32 @@ class MarbleRace {
       this.camera.fov = lerp(this.camera.fov, compensatedDesiredFov, (activeCameraMode === 'cinematicLeader' || activeCameraMode === 'leadPack') ? 0.035 : 0.055);
       this.camera.updateProjectionMatrix();
     }
-    const isLeadCloseMode = activeCameraMode === 'leadPack' || activeCameraMode === 'leadBattle' || activeCameraMode === 'replayHighlight';
+    const isLeadCloseMode = activeCameraMode === 'leadPack' || activeCameraMode === 'leadBattle' || activeCameraMode === 'toyParkBroadcast' || activeCameraMode === 'replayHighlight';
     const isCinematicLeader = activeCameraMode === 'cinematicLeader';
     const isCinematicLeadPack = activeCameraMode === 'leadPack';
+    const isToyParkBroadcast = activeCameraMode === 'toyParkBroadcast';
+    const toyParkShotCfg = isToyParkBroadcast
+      ? (BROADCAST_CAMERA.toyParkBroadcast?.[this.toyParkBroadcastCameraState?.phase] || BROADCAST_CAMERA.toyParkBroadcast?.actionSpot || {})
+      : null;
     const positionSmooth = activeCameraMode === 'replayHighlight'
       ? 1
-      : (isCinematicLeader
-        ? (BROADCAST_CAMERA.leader.positionSmoothing || 0.035)
-        : (isCinematicLeadPack
-          ? (BROADCAST_CAMERA.leadPack.positionSmoothing || 0.035)
-          : (isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 3.2 : 2.1)) : 1 - Math.pow(0.001, delta))));
+      : (isToyParkBroadcast
+        ? (toyParkShotCfg.positionSmoothing || 0.12)
+        : (isCinematicLeader
+          ? (BROADCAST_CAMERA.leader.positionSmoothing || 0.035)
+          : (isCinematicLeadPack
+            ? (BROADCAST_CAMERA.leadPack.positionSmoothing || 0.035)
+            : (isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 3.2 : 2.1)) : 1 - Math.pow(0.001, delta)))));
     const targetSmooth = activeCameraMode === 'replayHighlight'
       ? 1
-      : (isCinematicLeader
-        ? (BROADCAST_CAMERA.leader.targetSmoothing || 0.075)
-        : (isCinematicLeadPack
-          ? (BROADCAST_CAMERA.leadPack.targetSmoothing || 0.08)
-          : (isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 4.2 : 2.8)) : 1 - Math.pow(0.001, delta))));
-    const cameraBlend = activeCameraMode === 'replayHighlight' ? 1 : (activeCameraMode === 'leadBattle' ? 0.78 : isCinematicLeadPack ? 0.84 : isCinematicLeader ? 0.82 : 0.72);
+      : (isToyParkBroadcast
+        ? (toyParkShotCfg.targetSmoothing || 0.16)
+        : (isCinematicLeader
+          ? (BROADCAST_CAMERA.leader.targetSmoothing || 0.075)
+          : (isCinematicLeadPack
+            ? (BROADCAST_CAMERA.leadPack.targetSmoothing || 0.08)
+            : (isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 4.2 : 2.8)) : 1 - Math.pow(0.001, delta)))));
+    const cameraBlend = activeCameraMode === 'replayHighlight' ? 1 : (activeCameraMode === 'leadBattle' ? 0.78 : isToyParkBroadcast ? 1 : isCinematicLeadPack ? 0.84 : isCinematicLeader ? 0.82 : 0.72);
     if (shouldSnapPostFirstFinishLeadPack) {
       this.camera.position.copy(desired);
       this.controls.target.copy(target);
