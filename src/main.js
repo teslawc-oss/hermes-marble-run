@@ -598,9 +598,9 @@ const BROADCAST_CAMERA = {
   outOfBoundsIgnoreAfterSeconds: 1.0,
   outOfBoundsIgnoreLabel: 'auto camera: if a marble is outside the track for more than 1 second, stop targeting it until it respawns/returns',
   cinematicLeaderFromProgress: 0.8,
-  toyParkDefaultAlternatingPhaseSize: 0.2,
-  toyParkDefaultAlternatingSequence: ['leadPack', 'cinematicLeader'],
-  toyParkDefaultAlternatingLabel: 'Toy Park Default Auto alternates by leader progress: 0-20% lead pack, 20-40% cinematic leader, repeating every 20% until finish; finish/slow-motion/podium rules stay unchanged',
+  toyParkDefaultAlternatingPhaseSize: 1,
+  toyParkDefaultAlternatingSequence: ['cinematicLeader'],
+  toyParkDefaultAlternatingLabel: 'Toy Park Default Auto uses cinematic leader from ready/countdown through the full pre-finish race; finish slow-motion, first-finish hold, and podium rules stay unchanged',
   finishSlowMotionCameraHoldSeconds: 3.4,
   finishSlowMotionCameraLabel: 'when finish slow motion triggers near/crossing the line, Default Auto holds the finish-line shot through the slow-mo window so the slow finish camera remains visible before returning to race/podium coverage',
   postFirstFinish: {
@@ -18135,7 +18135,7 @@ class MarbleRace {
       || this.getRanking({ force: false })[0];
     if (this.finishSlowMotion?.active) return 'finish';
     if (this.state === 'finished') return BROADCAST_CAMERA.podium360.enabled ? 'podium360' : 'finish';
-    if (this.countdownActive || this.state === 'ready' || this.state === 'idle') return 'leadPack';
+    if (this.countdownActive || this.state === 'ready' || this.state === 'idle') return this.isToyParkViewerOverlayActive() ? 'cinematicLeader' : 'leadPack';
     if (this.finishers.length > 0) {
       const holdUntil = Number.isFinite(this.defaultCameraPhaseUntil) ? this.defaultCameraPhaseUntil : 0;
       if ((this.elapsed || 0) < holdUntil) return 'finish';
