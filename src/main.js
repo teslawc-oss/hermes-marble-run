@@ -3006,6 +3006,7 @@ class MarbleRace {
     const pathKey = String(window.location.pathname || '').replace(/^\/+|\/+$/g, '').toLowerCase();
     const mechanic = String(params.get('physicsMechanic') || '').trim();
     const toyParkPreview = pathKey === 'toypark' || mechanic.toLowerCase() === 'toypark';
+    this.toyParkPreviewEndpoint = toyParkPreview;
     const requestedMechanic = toyParkPreview ? 'toyPark' : (PHYSICS_MECHANIC_PROFILES[mechanic] ? mechanic : DEFAULT_PHYSICS_MECHANIC_KEY);
     this.applyPhysicsMechanic(requestedMechanic, { source: toyParkPreview ? 'toypark-endpoint' : (mechanic ? 'query-param' : 'default-render-safe') });
     const requestedTheme = params.get('visualTheme') || (toyParkPreview ? 'toyPark' : '');
@@ -3051,6 +3052,18 @@ class MarbleRace {
   }
 
   buildRaceThemeOverlay() {
+    if (this.toyParkPreviewEndpoint && this.ui.raceThemeOverlay) {
+      this.ui.raceThemeOverlay.classList.add('hidden');
+      this.ui.raceThemeOverlay.setAttribute('aria-hidden', 'true');
+      this.ui.raceThemeOverlay.dataset.hiddenForToyPark = 'true';
+      window.__MARBLE_RACE_THEME_OVERLAY__ = {
+        visible: false,
+        hiddenForToyPark: true,
+        activeTheme: this.visualThemeKey,
+        reason: 'toypark-endpoint-keeps-theme-list-overlay-collapsed',
+      };
+      return;
+    }
     const container = this.ui.raceThemeOverlayOptions;
     if (!container) return;
     container.textContent = '';
@@ -3084,9 +3097,15 @@ class MarbleRace {
       button.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     if (this.ui.raceThemeOverlay) {
+      const hiddenForToyPark = this.ui.raceThemeOverlay.dataset.hiddenForToyPark === 'true';
       this.ui.raceThemeOverlay.dataset.activeTheme = activeTheme.key;
       this.ui.raceThemeOverlay.style.setProperty('--theme-accent', world.track?.accent || '#7cf7d4');
       this.ui.raceThemeOverlay.style.setProperty('--theme-secondary', world.track?.secondary || '#ff77b7');
+      window.__MARBLE_RACE_THEME_OVERLAY__ = {
+        visible: !hiddenForToyPark && !this.ui.raceThemeOverlay.classList.contains('hidden'),
+        hiddenForToyPark,
+        activeTheme: activeTheme.key,
+      };
     }
   }
 
