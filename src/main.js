@@ -2395,6 +2395,7 @@ class MarbleRace {
     ctx.scale(popScale, popScale);
     ctx.translate(-cx, -cy);
 
+    let toyParkStartLight = null;
     if (toyParkStyle) {
       const lightSpecs = [
         { key: 'red', fill: '#ff4057', dim: 'rgba(94, 29, 40, 0.92)' },
@@ -2403,8 +2404,9 @@ class MarbleRace {
       ];
       const activeLight = state.isGo
         ? 'green'
-        : (state.countdownRemaining > 2 ? 'red' : (state.countdownRemaining > 1 ? 'yellow' : 'green'));
-      const activeSpec = lightSpecs.find((light) => light.key === activeLight) || lightSpecs[1];
+        : (state.countdownRemaining > 2 ? null : (state.countdownRemaining > 1 ? 'red' : (state.countdownRemaining > 0 ? 'yellow' : 'green')));
+      const activeSpec = lightSpecs.find((light) => light.key === activeLight) || { key: 'idle', fill: '#ffffff', dim: 'rgba(42, 42, 48, 0.92)' };
+      toyParkStartLight = activeLight;
       const panelW = isVertical ? Math.min(360, w * 0.48) : Math.min(330, w * 0.30);
       const panelH = isVertical ? Math.min(240, h * 0.19) : Math.min(190, h * 0.26);
       const panelX = cx - panelW / 2;
@@ -2553,6 +2555,7 @@ class MarbleRace {
       countdownProgress: state.countdownProgress,
       style: toyParkStyle ? 'toy-park-arcade-standing-style-start-hook' : CANVAS_START_HOOK.style,
       toyParkStyle,
+      toyParkStartLight,
     };
     if (summaryTarget !== 'web') this.startHookLastSummary = summary;
     return summary;
