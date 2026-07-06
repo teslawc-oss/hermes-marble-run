@@ -2613,10 +2613,13 @@ class MarbleRace {
 
     // Shorts-friendly top-three standings card. Keep it compact so the middle race action stays visible.
     const compactToyParkStanding = toyParkOverlay;
-    const boardW = compactToyParkStanding ? Math.min(Math.round(w * 0.40), 178) : w - margin * 2;
-    const rowH = compactToyParkStanding ? 34 : 48;
-    const boardX = compactToyParkStanding ? 18 : margin;
-    const boardY = compactToyParkStanding ? 18 : Math.min(h - 595, 196);
+    const toyParkNarrowWebPreview = toyParkOverlay && w < 600;
+    const boardW = compactToyParkStanding
+      ? (toyParkNarrowWebPreview ? Math.min(Math.round(w * 0.37), 150) : Math.min(Math.round(w * 0.32), 240))
+      : w - margin * 2;
+    const rowH = compactToyParkStanding ? (toyParkNarrowWebPreview ? 32 : 40) : 48;
+    const boardX = compactToyParkStanding ? (toyParkNarrowWebPreview ? 14 : 58) : margin;
+    const boardY = compactToyParkStanding ? (toyParkNarrowWebPreview ? 22 : 42) : Math.min(h - 595, 196);
     const liveStandingSummary = this.drawViewerLiveStandingPanel({
       ctx,
       ranking,
@@ -2628,11 +2631,11 @@ class MarbleRace {
       toyPark: toyParkOverlay,
     });
 
-    // Bottom stacked CTA. Toy Park uses the same arcade styling as its leaderboard, placed bottom-right to keep the start area clear.
-    const ctaW = toyParkOverlay ? Math.min(Math.round(w * 0.52), 224) : w - margin * 2;
-    const ctaH = toyParkOverlay ? 56 : 64;
-    const ctaX = toyParkOverlay ? w - 18 - ctaW : margin;
-    const ctaY = toyParkOverlay ? h - ctaH - 108 : h - 216;
+    // Toy Park vertical keeps the CTA away from the lower track action on 720p Shorts/composite previews.
+    const ctaW = toyParkOverlay ? (toyParkNarrowWebPreview ? 160 : 180) : w - margin * 2;
+    const ctaH = toyParkOverlay ? (toyParkNarrowWebPreview ? 44 : 46) : 64;
+    const ctaX = toyParkOverlay ? (toyParkNarrowWebPreview ? Math.round((w - ctaW) / 2) : w - 48 - ctaW) : margin;
+    const ctaY = toyParkOverlay ? (toyParkNarrowWebPreview ? h - ctaH - 24 : 48) : h - 216;
     let ctaSummary = null;
     if (toyParkOverlay) {
       ctaSummary = this.drawToyParkArcadeCta({ ctx, x: ctaX, y: ctaY, width: ctaW, height: ctaH, vertical: true });
@@ -17918,34 +17921,62 @@ class MarbleRace {
     desired.copy(this.applyDefaultCameraPitch(desired, target, activeCameraMode));
     desired.copy(this.getMouseOrbitAdjustedCamera(desired, target));
     desired.copy(this.applyCameraLineOfSightBoost(desired, target, activeCameraMode));
+    const toyParkNarrowPortraitPreview = Boolean(
+      this.toyParkPreviewEndpoint
+      && this.isToyParkViewerOverlayActive()
+      && window.innerWidth < 600
+      && window.innerHeight > window.innerWidth * 1.35
+      && (activeCameraMode === 'leadPack' || activeCameraMode === 'cinematicLeader')
+    );
+    if (toyParkNarrowPortraitPreview) {
+      // Phone portrait needs a gently wider shot, but not the extreme high overhead view
+      // caused by treating the live web preview like a 16:9 composite crop.
+      const viewOffset = desired.clone().sub(target);
+      const horizontalOffset = new THREE.Vector3(viewOffset.x, 0, viewOffset.z).multiplyScalar(1.08);
+      desired.set(target.x + horizontalOffset.x, desired.y + 1.8, target.z + horizontalOffset.z);
+      target.y += 0.25;
+    }
     const desiredFov = activeCameraMode === 'cinematicLeader'
       ? (BROADCAST_CAMERA.leader.fov || 40)
       : (activeCameraMode === 'leadPack'
         ? (BROADCAST_CAMERA.leadPack.fov || 44)
         : (activeCameraMode === 'replayHighlight' ? 38 : 58));
+    const portraitPreviewFovBoost = toyParkNarrowPortraitPreview ? 1.12 : 1;
+    const viewportDesiredFov = portraitPreviewFovBoost > 1
+      ? clamp(THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(desiredFov) / 2) * portraitPreviewFovBoost)), desiredFov, 78)
+      : desiredFov;
     const layout = this.videoCanvasLayout || VIDEO_CANVAS_LAYOUTS.horizontal;
     const sourceWidth = this.renderer?.domElement?.width || this.renderer?.domElement?.clientWidth || window.innerWidth || 1;
     const sourceHeight = this.renderer?.domElement?.height || this.renderer?.domElement?.clientHeight || window.innerHeight || 1;
     const targetWidth = this.videoCompositeCanvas?.width || layout.width || sourceWidth;
     const targetHeight = this.videoCompositeCanvas?.height || layout.height || sourceHeight;
-    const cropFactor = this.getVideoCompositeCameraCropFactor(sourceWidth, sourceHeight, targetWidth, targetHeight, layout.fit || 'cover');
+    const rawCropFactor = this.getVideoCompositeCameraCropFactor(sourceWidth, sourceHeight, targetWidth, targetHeight, layout.fit || 'cover');
+    // The live /toypark phone preview is already portrait; do not widen the camera as if it
+    // were being cover-cropped into the default 16:9 composite target.
+    const cropFactor = toyParkNarrowPortraitPreview ? 1 : rawCropFactor;
     const verticalRenderZoomOutFactor = (layout.key || this.videoCanvasLayoutKey) === 'vertical' ? 1.08 : 1;
-    const compensatedDesiredFov = (cropFactor > 1.01 || verticalRenderZoomOutFactor > 1)
-      ? clamp(THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(desiredFov) / 2) * cropFactor * verticalRenderZoomOutFactor)), desiredFov, 92)
-      : desiredFov;
+    const compensatedDesiredFov = (cropFactor > 1.01 || verticalRenderZoomOutFactor > 1 || portraitPreviewFovBoost > 1)
+      ? clamp(THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(viewportDesiredFov) / 2) * cropFactor * verticalRenderZoomOutFactor)), viewportDesiredFov, 96)
+      : viewportDesiredFov;
     this.videoCompositeCameraCropState = {
       layout: layout.key || this.videoCanvasLayoutKey || 'horizontal',
       fit: layout.fit || 'cover',
       sourceSize: `${sourceWidth}x${sourceHeight}`,
       targetSize: `${targetWidth}x${targetHeight}`,
       verticalRenderZoomOutFactor: Number(verticalRenderZoomOutFactor.toFixed(2)),
+      rawCropFactor: Number(rawCropFactor.toFixed(3)),
       cropFactor: Number(cropFactor.toFixed(3)),
       baseFov: Number(desiredFov.toFixed(2)),
+      viewportFov: Number(viewportDesiredFov.toFixed(2)),
+      portraitPreviewFovBoost: Number(portraitPreviewFovBoost.toFixed(2)),
       compensatedFov: Number(compensatedDesiredFov.toFixed(2)),
-      active: cropFactor > 1.01 || verticalRenderZoomOutFactor > 1,
-      label: verticalRenderZoomOutFactor > 1
-        ? 'vertical Shorts render zoom-out: widens live render FOV slightly after cover-crop compensation so fast leaders stay in frame'
-        : (cropFactor > 1.01 ? 'compensates vertical Shorts cover-crop by widening the live render FOV before compositing' : 'no video-crop camera compensation needed'),
+      active: cropFactor > 1.01 || verticalRenderZoomOutFactor > 1 || portraitPreviewFovBoost > 1,
+      label: portraitPreviewFovBoost > 1
+        ? 'Toy Park phone portrait preview zoom-out: pulls/lifts camera and widens FOV so the road is not oversized/cropped'
+        : (verticalRenderZoomOutFactor > 1
+          ? 'vertical Shorts render zoom-out: widens live render FOV slightly after cover-crop compensation so fast leaders stay in frame'
+          : (cropFactor > 1.01 ? 'compensates vertical Shorts cover-crop by widening the live render FOV before compositing' : 'no video-crop camera compensation needed')),
+      toyParkNarrowPortraitPreview,
     };
     if (Math.abs(this.camera.fov - compensatedDesiredFov) > 0.01) {
       this.camera.fov = lerp(this.camera.fov, compensatedDesiredFov, (activeCameraMode === 'cinematicLeader' || activeCameraMode === 'leadPack') ? 0.035 : 0.055);
