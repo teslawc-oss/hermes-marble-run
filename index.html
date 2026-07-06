@@ -109,6 +109,7 @@
                 <option value="luxe">Luxury Glass</option>
                 <option value="candy">Candy Pop</option>
                 <option value="natural">Natural Stone</option>
+                <option value="toyPark">Toy Park</option>
               </select>
               <small>Theme controls racer palettes, material style, and procedural marble texture patterns without changing physics.</small>
             </label>
@@ -137,6 +138,15 @@
             <button id="start-btn">Open Gate</button>
             <button id="regen-btn">Generate New Track</button>
             <button id="pause-btn">Pause</button>
+          </div>
+          <div class="track-code-row visible-track-code-row" aria-label="Track debug code copy controls">
+            <label for="track-code-output">Track Debug Code</label>
+            <textarea id="track-code-output" rows="2" readonly spellcheck="false" aria-label="Copyable track debug code"></textarea>
+            <div class="track-code-actions">
+              <button id="copy-track-code-btn" type="button">Copy Track Code</button>
+              <span id="track-code-status" aria-live="polite">Ready</span>
+            </div>
+            <small>Copy 呢段 MR1 code 俾我，就可以還原同 debug 目前 Toy Park 賽道。</small>
           </div>
           <div class="record-group" aria-label="Record">
             <span class="record-group-title">Record</span>
@@ -229,15 +239,6 @@
             </div>
           </div>
           <div class="panel-body">
-            <div class="track-code-row debug-track-code-row">
-              <label for="track-code-output">Track Debug Code</label>
-              <textarea id="track-code-output" rows="3" readonly spellcheck="false" aria-label="Copyable track debug code"></textarea>
-              <div class="track-code-actions">
-                <button id="copy-track-code-btn" type="button">Copy Track Code</button>
-                <span id="track-code-status" aria-live="polite">Ready</span>
-              </div>
-              <small>Send this code when a generated track has a bug; it stores seed, presets, obstacle density, speed, and generated piece summary for debugging.</small>
-            </div>
             <div class="track-code-row track-code-import-row debug-track-code-row">
               <label for="track-code-import">Paste Track Debug Code</label>
               <textarea id="track-code-import" rows="5" spellcheck="false" aria-label="Paste MR1 track debug code" placeholder="Paste MR1: debug code here to regenerate that exact track"></textarea>
