@@ -2091,14 +2091,16 @@ class MarbleRace {
         this.drawViewerText(ctx, data.name || `Marble ${data.id + 1}`, rowX + avatar + (compactVertical ? 13 : (vertical ? 18 : 22)), rowY + rowH * 0.57, {
           font: compactVertical ? '900 12px Arial Black, Impact, sans-serif' : (vertical ? '900 23px Arial Black, Impact, sans-serif' : '900 28px Arial Black, Impact, sans-serif'),
           fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 1.75 : (vertical ? 6 : 7),
-          maxWidth: rowW - avatar - (compactVertical ? 86 : (vertical ? 130 : 154)),
+          maxWidth: rowW - avatar - (compactVertical ? 42 : (vertical ? 74 : 92)),
         });
-        const lapLabel = data.defeated ? 'DNF' : data.finished ? 'FIN' : `LAP ${lap}/${totalLaps}`;
-        this.drawViewerText(ctx, lapLabel, rowX + rowW - (compactVertical ? 10 : (vertical ? 14 : 18)), rowY + rowH * 0.57, {
-          font: compactVertical ? '900 11px Arial Black, Impact, sans-serif' : (vertical ? '900 15px Arial Black, Impact, sans-serif' : '900 18px Arial Black, Impact, sans-serif'),
-          fill: data.defeated ? '#ff5b6e' : '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 1.5 : (vertical ? 5 : 6), align: 'right',
-          maxWidth: compactVertical ? 70 : (vertical ? 82 : 98),
-        });
+        const statusLabel = data.defeated ? 'DNF' : data.finished ? 'FIN' : '';
+        if (statusLabel) {
+          this.drawViewerText(ctx, statusLabel, rowX + rowW - (compactVertical ? 10 : (vertical ? 14 : 18)), rowY + rowH * 0.57, {
+            font: compactVertical ? '900 11px Arial Black, Impact, sans-serif' : (vertical ? '900 15px Arial Black, Impact, sans-serif' : '900 18px Arial Black, Impact, sans-serif'),
+            fill: data.defeated ? '#ff5b6e' : '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 1.5 : (vertical ? 5 : 6), align: 'right',
+            maxWidth: compactVertical ? 44 : (vertical ? 54 : 64),
+          });
+        }
       });
       ctx.restore();
       return {
@@ -2112,7 +2114,8 @@ class MarbleRace {
         layout: vertical ? 'vertical' : 'horizontal',
         x: Number(x.toFixed(1)), y: Number(y.toFixed(1)), width: Number(width.toFixed(1)), height: Number(boardHeight.toFixed(1)),
         hasAvatars: true,
-        hasLapLabels: true,
+        hasLapLabels: false,
+        rowLapLabelsHidden: true,
         compact: compactVertical,
         dropShadow: !noDropShadow,
       };
