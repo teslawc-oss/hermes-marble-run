@@ -13033,6 +13033,10 @@ class MarbleRace {
     const winner = ranking[0];
     const comeback = ranking.reduce((best, data) => ((data.stuckResets || 0) + (data.fallPenaltyCount || 0) > ((best?.stuckResets || 0) + (best?.fallPenaltyCount || 0)) ? data : best), ranking[0]);
     const toyParkShowcase = this.isToyParkViewerOverlayActive();
+    if (toyParkShowcase && this.ui?.winner) {
+      this.ui.winner.textContent = '';
+      this.ui.winner.classList.add('hidden');
+    }
     const cupStage = this.cupMode?.active ? this.getCupStage() : null;
     const showcaseTitle = this.cupMode?.active
       ? (cupStage === 'final' ? '🏆 Cup Champion Ceremony' : '✅ Qualified')
@@ -16412,8 +16416,13 @@ class MarbleRace {
           this.firstFinishTime = this.elapsed;
           this.firstFinishRealTimeMs = performance.now();
           this.defaultCameraPhaseUntil = this.elapsed + (BROADCAST_CAMERA.postFirstFinish?.finishHoldSeconds ?? 4);
-          this.ui.winner.textContent = `🏆 ${data.name} wins! ${data.finishTime.toFixed(2)}s`;
-          this.ui.winner.classList.remove('hidden');
+          if (this.isToyParkViewerOverlayActive()) {
+            this.ui.winner.textContent = '';
+            this.ui.winner.classList.add('hidden');
+          } else {
+            this.ui.winner.textContent = `🏆 ${data.name} wins! ${data.finishTime.toFixed(2)}s`;
+            this.ui.winner.classList.remove('hidden');
+          }
           this.pushBroadcastEvent('Winner', `${data.name} wins`, { kind: 'winner', force: true, marbleId: data.id, lines: [`${data.name} wins`, `${data.name} takes flag`, `${data.name} first home`] });
           if (!this.finishSlowMotion?.active) this.triggerFinishSlowMotion(data, { reason: 'finish-line-crossed-fallback', crossed: true });
           this.playFinishSound(true);
