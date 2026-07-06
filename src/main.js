@@ -2060,8 +2060,34 @@ class MarbleRace {
       const rowX = x + rankW;
       const rowW = width - rankW;
       const boardHeight = headerH + rows * rowH + Math.max(0, rows - 1) * gap + 16;
-      const colors = ['#45c95d', '#38c9ff', '#8ca5c8', '#f9a72e', '#7bb9ff', '#eef4ff', '#b8c8ee', '#ff982f', '#ffe04b', '#e7f5ff'];
       const textStroke = '#17131f';
+      const normalizeHex = (value, fallback = '#ffffff') => {
+        if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) return value;
+        if (Number.isFinite(value)) return `#${Number(value).toString(16).padStart(6, '0')}`;
+        return fallback;
+      };
+      const getPalette = (data, index = 0) => {
+        const source = Array.isArray(data?.paletteHex) && data.paletteHex.length
+          ? data.paletteHex
+          : [data?.colorHex || data?.color, index % 2 ? '#72e8ff' : '#ff79a1', '#ffffff'];
+        return source.map((hex, i) => normalizeHex(hex, i === 0 ? '#ffffff' : textStroke));
+      };
+      const lightenHex = (hex, amount = 0.28) => {
+        const raw = normalizeHex(hex, '#ffffff').slice(1);
+        const value = Number.parseInt(raw, 16);
+        const r = Math.round(((value >> 16) & 255) + (255 - ((value >> 16) & 255)) * amount);
+        const g = Math.round(((value >> 8) & 255) + (255 - ((value >> 8) & 255)) * amount);
+        const b = Math.round((value & 255) + (255 - (value & 255)) * amount);
+        return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+      };
+      const darkenHex = (hex, amount = 0.36) => {
+        const raw = normalizeHex(hex, '#ffffff').slice(1);
+        const value = Number.parseInt(raw, 16);
+        const r = Math.round(((value >> 16) & 255) * (1 - amount));
+        const g = Math.round(((value >> 8) & 255) * (1 - amount));
+        const b = Math.round((value & 255) * (1 - amount));
+        return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+      };
       const drawChecker = (cx, cy, cw, ch) => {
         const cell = Math.max(7, ch / 4);
         ctx.save();
@@ -2077,47 +2103,88 @@ class MarbleRace {
         ctx.restore();
       };
       const drawAvatar = (data, ax, ay, size, index) => {
-        const color = `#${(data.color || 0xffffff).toString(16).padStart(6, '0')}`;
+        const palette = getPalette(data, index);
+        const color = palette[0];
+        const accent = palette[1] || '#ffffff';
+        const accent2 = palette[2] || textStroke;
+        const accent3 = palette[3] || '#ffd43d';
+        const patternKey = data?.patternKey || '';
+        const cx = ax + size * 0.5;
+        const cy = ay + size * 0.5;
+        const radius = size * 0.43;
         ctx.save();
-        this.drawViewerRoundedRect(ctx, ax, ay, size, size, 9);
+        ctx.beginPath();
+        ctx.arc(cx, cy, size * 0.49, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.lineWidth = compactVertical ? 2.5 : 4;
+        ctx.strokeStyle = textStroke;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.clip();
         const gradient = ctx.createLinearGradient(ax, ay, ax + size, ay + size);
-        gradient.addColorStop(0, '#ffd34f');
-        gradient.addColorStop(0.45, color);
-        gradient.addColorStop(1, index % 2 ? '#72e8ff' : '#ff79a1');
+        gradient.addColorStop(0, lightenHex(color, 0.18));
+        gradient.addColorStop(0.55, color);
+        gradient.addColorStop(1, accent);
         ctx.fillStyle = gradient;
-        ctx.fill();
-        ctx.strokeStyle = textStroke;
-        ctx.lineWidth = 4;
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(ax + size * 0.55, ay);
-        ctx.lineTo(ax + size, ay);
-        ctx.lineTo(ax + size, ay + size * 0.65);
-        ctx.lineTo(ax + size * 0.72, ay + size);
-        ctx.closePath();
-        ctx.fillStyle = 'rgba(255,255,255,0.34)';
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(ax + size * 0.5, ay + size * 0.48, size * 0.28, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.fill();
-        ctx.lineWidth = 2.5;
-        ctx.strokeStyle = textStroke;
-        ctx.stroke();
-        ctx.fillStyle = textStroke;
-        ctx.beginPath();
-        ctx.arc(ax + size * 0.41, ay + size * 0.43, size * 0.04, 0, Math.PI * 2);
-        ctx.arc(ax + size * 0.59, ay + size * 0.43, size * 0.04, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(ax + size * 0.5, ay + size * 0.54, size * 0.10, 0.15 * Math.PI, 0.85 * Math.PI);
-        ctx.stroke();
-        const initial = String(data.name || 'M').slice(0, 1).toUpperCase();
-        this.drawViewerText(ctx, initial, ax + size * 0.5, ay + size * 0.84, {
-          font: `900 ${Math.round(size * 0.22)}px Arial Black, Impact, sans-serif`,
-          fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 1.5 : 2.5, align: 'center',
-        });
+        ctx.fillRect(ax, ay, size, size);
+
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        if (patternKey === 'candy-captain') {
+          ctx.strokeStyle = accent; ctx.lineWidth = size * 0.13;
+          for (let i = -2; i < 5; i += 1) { ctx.beginPath(); ctx.moveTo(ax + i * size * 0.28, ay + size); ctx.lineTo(ax + (i + 1.2) * size * 0.28, ay); ctx.stroke(); }
+          ctx.fillStyle = accent2; ctx.fillRect(cx - size * 0.24, cy - size * 0.34, size * 0.48, size * 0.18);
+          ctx.fillStyle = textStroke; ctx.beginPath(); ctx.arc(cx - size * 0.12, cy, size * 0.055, 0, Math.PI * 2); ctx.arc(cx + size * 0.12, cy, size * 0.055, 0, Math.PI * 2); ctx.fill();
+        } else if (patternKey === 'bubble-goblin') {
+          ctx.strokeStyle = accent; ctx.lineWidth = size * 0.055;
+          for (let i = 0; i < 8; i += 1) { ctx.beginPath(); ctx.arc(ax + ((i * 17) % 43) / 43 * size, ay + ((i * 23) % 37) / 37 * size, size * (0.07 + (i % 3) * 0.02), 0, Math.PI * 2); ctx.stroke(); }
+          ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(cx - size * 0.12, cy, size * 0.16, size * 0.22, -0.15, 0, Math.PI * 2); ctx.ellipse(cx + size * 0.16, cy, size * 0.16, size * 0.22, 0.15, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = textStroke; ctx.beginPath(); ctx.arc(cx - size * 0.08, cy + size * 0.01, size * 0.07, 0, Math.PI * 2); ctx.arc(cx + size * 0.12, cy + size * 0.01, size * 0.07, 0, Math.PI * 2); ctx.fill();
+        } else if (patternKey === 'rocket-bunny') {
+          ctx.fillStyle = accent;
+          for (let i = 0; i < 6; i += 1) { ctx.beginPath(); ctx.arc(ax + (i * 0.18 + 0.08) * size, ay + ((i % 3) * 0.23 + 0.1) * size, size * 0.035, 0, Math.PI * 2); ctx.fill(); }
+          ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(cx - size * 0.11, cy - size * 0.19, size * 0.07, size * 0.23, -0.15, 0, Math.PI * 2); ctx.ellipse(cx + size * 0.11, cy - size * 0.19, size * 0.07, size * 0.23, 0.15, 0, Math.PI * 2); ctx.arc(cx, cy + size * 0.08, size * 0.23, 0, Math.PI * 2); ctx.fill();
+        } else if (patternKey === 'choco-bear') {
+          ctx.fillStyle = accent; ctx.fillRect(ax, ay, size, size * 0.28);
+          ctx.fillStyle = accent2; ctx.beginPath(); ctx.arc(cx - size * 0.22, cy - size * 0.13, size * 0.16, 0, Math.PI * 2); ctx.arc(cx + size * 0.22, cy - size * 0.13, size * 0.16, 0, Math.PI * 2); ctx.arc(cx, cy + size * 0.08, size * 0.31, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = textStroke; ctx.beginPath(); ctx.arc(cx - size * 0.11, cy + size * 0.02, size * 0.045, 0, Math.PI * 2); ctx.arc(cx + size * 0.11, cy + size * 0.02, size * 0.045, 0, Math.PI * 2); ctx.ellipse(cx, cy + size * 0.16, size * 0.08, size * 0.05, 0, 0, Math.PI * 2); ctx.fill();
+        } else if (patternKey === 'neon-penguin') {
+          ctx.strokeStyle = accent; ctx.lineWidth = size * 0.08;
+          for (let i = 0; i < 4; i += 1) { ctx.beginPath(); ctx.moveTo(ax, ay + size * (0.2 + i * 0.18)); ctx.lineTo(ax + size, ay + size * (0.1 + i * 0.18)); ctx.stroke(); }
+          ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(cx, cy + size * 0.08, size * 0.28, size * 0.34, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = accent2; ctx.fillRect(cx - size * 0.25, cy - size * 0.09, size * 0.5, size * 0.14);
+        } else if (patternKey === 'rainbow-unicorn') {
+          [accent, accent2, accent3].forEach((hex, i) => { ctx.strokeStyle = hex; ctx.lineWidth = size * 0.055; ctx.beginPath(); ctx.arc(cx, cy, size * (0.24 + i * 0.1), Math.PI * 1.05, Math.PI * 1.85); ctx.stroke(); });
+          ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(cx, cy + size * 0.06, size * 0.27, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#ffe66d'; ctx.beginPath(); ctx.moveTo(cx, cy - size * 0.43); ctx.lineTo(cx + size * 0.13, cy - size * 0.08); ctx.lineTo(cx - size * 0.13, cy - size * 0.08); ctx.closePath(); ctx.fill();
+        } else if (patternKey === 'mecha-duck') {
+          ctx.fillStyle = accent; ctx.fillRect(ax, ay, size * 0.47, size);
+          ctx.fillStyle = accent3; ctx.beginPath(); ctx.arc(cx, cy + size * 0.02, size * 0.31, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = accent2; ctx.fillRect(cx + size * 0.05, cy - size * 0.23, size * 0.28, size * 0.25);
+          ctx.fillStyle = '#ff8a00'; ctx.beginPath(); ctx.ellipse(cx, cy + size * 0.19, size * 0.28, size * 0.08, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = textStroke; ctx.beginPath(); ctx.arc(cx - size * 0.13, cy - size * 0.06, size * 0.045, 0, Math.PI * 2); ctx.arc(cx + size * 0.2, cy - size * 0.11, size * 0.06, 0, Math.PI * 2); ctx.fill();
+        } else if (patternKey === 'lava-dragon') {
+          ctx.strokeStyle = accent2; ctx.lineWidth = size * 0.12;
+          for (let i = -1; i < 4; i += 1) { ctx.beginPath(); ctx.moveTo(ax + size * (i * 0.26), ay); ctx.lineTo(ax + size * (0.26 + i * 0.26), ay + size); ctx.stroke(); }
+          ctx.strokeStyle = accent3; ctx.lineWidth = size * 0.055; ctx.stroke();
+          ctx.fillStyle = accent2; ctx.beginPath(); ctx.arc(cx, cy, size * 0.31, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = color; ctx.beginPath(); ctx.ellipse(cx, cy, size * 0.25, size * 0.13, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#101010'; ctx.beginPath(); ctx.ellipse(cx, cy, size * 0.045, size * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+        } else {
+          ctx.strokeStyle = accent; ctx.lineWidth = size * 0.11;
+          ctx.beginPath(); ctx.arc(cx, cy, size * 0.28, 0, Math.PI * 1.5); ctx.stroke();
+        }
+        ctx.restore();
+
+        ctx.save();
+        ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.strokeStyle = textStroke; ctx.lineWidth = compactVertical ? 2 : 3.5; ctx.stroke();
+        const highlight = ctx.createRadialGradient(ax + size * 0.32, ay + size * 0.25, size * 0.03, ax + size * 0.35, ay + size * 0.28, size * 0.31);
+        highlight.addColorStop(0, 'rgba(255,255,255,0.82)');
+        highlight.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = highlight;
+        ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.fill();
         ctx.restore();
       };
 
@@ -2182,10 +2249,15 @@ class MarbleRace {
         ctx.lineTo(rowX + rowW - skew, rowY + rowH);
         ctx.lineTo(rowX, rowY + rowH);
         ctx.closePath();
+        const palette = getPalette(data, index);
+        const rowBase = palette[0];
+        const rowAccent = palette[1] || lightenHex(rowBase, 0.42);
+        const rowGlow = index === 0 ? '#ffe34d' : (palette[2] || lightenHex(rowAccent, 0.3));
         const gradient = ctx.createLinearGradient(rowX, rowY, rowX + rowW, rowY + rowH);
-        gradient.addColorStop(0, colors[index % colors.length]);
-        gradient.addColorStop(0.68, colors[index % colors.length]);
-        gradient.addColorStop(1, index === 0 ? '#ffe34d' : 'rgba(255,255,255,0.55)');
+        gradient.addColorStop(0, darkenHex(rowBase, compactVertical ? 0.08 : 0.16));
+        gradient.addColorStop(0.46, rowBase);
+        gradient.addColorStop(0.76, rowAccent);
+        gradient.addColorStop(1, rowGlow);
         ctx.fillStyle = gradient;
         ctx.fill();
         ctx.shadowBlur = 0;
@@ -2198,7 +2270,7 @@ class MarbleRace {
         ctx.lineTo(rowX + rowW - skew - 2, rowY + rowH - 2);
         ctx.lineTo(rowX + rowW - (compactVertical ? 44 : (vertical ? 72 : 84)), rowY + rowH - 2);
         ctx.closePath();
-        ctx.fillStyle = index % 2 ? 'rgba(36,43,94,0.30)' : 'rgba(255,116,86,0.28)';
+        ctx.fillStyle = index % 2 ? 'rgba(23,19,31,0.22)' : 'rgba(255,255,255,0.24)';
         ctx.fill();
         if (index === 0) drawChecker(rowX + rowW - (compactVertical ? 30 : (vertical ? 52 : 60)), rowY + (compactVertical ? 6 : 8), compactVertical ? 22 : (vertical ? 38 : 45), rowH - (compactVertical ? 12 : 16));
         ctx.restore();
