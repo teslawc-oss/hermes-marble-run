@@ -1240,6 +1240,199 @@ body.recording-cursor-hidden #canvas-container canvas {
 }
 .final-showcase p { color: var(--muted); font-size: 13px; margin-top: 5px; }
 
+.final-showcase.toypark-final-result {
+  right: 28px;
+  bottom: 28px;
+  width: min(430px, calc(100vw - 56px));
+  padding: 18px 18px 16px;
+  border: 4px solid #17131f;
+  border-radius: 26px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 212, 61, 0.20), transparent 32%),
+    linear-gradient(155deg, rgba(39, 198, 255, 0.96), rgba(43, 70, 190, 0.94) 48%, rgba(255, 164, 54, 0.96));
+  box-shadow: 0 14px 0 #17131f, 0 22px 36px rgba(0, 0, 0, 0.28);
+  backdrop-filter: none;
+  overflow: visible;
+  animation: toypark-result-pop 0.48s cubic-bezier(.2,1.35,.35,1);
+}
+
+.final-showcase.toypark-final-result::before {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.38);
+  border-radius: 20px;
+  pointer-events: none;
+}
+
+.final-showcase.toypark-final-result h2 {
+  margin: 6px 0 0;
+  text-align: center;
+  color: #ffd43d;
+  font-family: 'Arial Black', Impact, system-ui, sans-serif;
+  font-size: clamp(30px, 6.4vw, 46px);
+  letter-spacing: 0.04em;
+  line-height: 0.95;
+  text-transform: uppercase;
+  text-shadow: 3px 3px 0 #17131f, -2px 2px 0 #17131f, 0 5px 0 rgba(23, 19, 31, 0.45);
+}
+
+.final-showcase.toypark-final-result .copy-hint {
+  width: max-content;
+  max-width: calc(100% - 34px);
+  margin: 8px auto 14px;
+  padding: 5px 18px;
+  border: 3px solid #17131f;
+  border-radius: 999px;
+  color: #ffffff;
+  background: rgba(23, 19, 31, 0.88);
+  font-family: 'Arial Black', Impact, system-ui, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.toypark-result-flags {
+  position: absolute;
+  top: -22px;
+  left: 28px;
+  right: 28px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.toypark-result-flags span {
+  width: 72px;
+  height: 42px;
+  border: 3px solid #17131f;
+  border-radius: 6px;
+  background:
+    linear-gradient(45deg, #fff 25%, #111 25% 50%, #fff 50% 75%, #111 75%) 0 0 / 24px 24px;
+  box-shadow: 0 5px 0 rgba(23, 19, 31, 0.55);
+  transform: rotate(-9deg);
+}
+
+.toypark-result-flags span:last-child { transform: rotate(9deg); }
+
+.toypark-result-winner {
+  position: relative;
+  margin: 0 4px 12px;
+  padding: 14px 14px 13px;
+  border: 4px solid #17131f;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 18% 22%, color-mix(in srgb, var(--winner-color, #ffd43d) 34%, transparent), transparent 36%),
+    linear-gradient(135deg, rgba(255, 244, 151, 0.97), rgba(255, 191, 61, 0.96));
+  box-shadow: inset 0 0 0 3px rgba(255,255,255,0.36), 0 8px 0 rgba(23, 19, 31, 0.75);
+}
+
+.toypark-result-winner-kicker {
+  color: #17131f;
+  font-family: 'Arial Black', Impact, system-ui, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.toypark-result-winner-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.toypark-result-orb {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border: 4px solid #17131f;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 25%, #fff, var(--winner-color, #ffd43d) 35%, #17131f 110%);
+  box-shadow: inset -5px -6px 0 rgba(0,0,0,0.16);
+}
+
+.final-showcase.toypark-final-result .showcase-racer-name {
+  border: 3px solid #17131f;
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--medal-color, #ffd43d), rgba(23, 19, 31, 0.92));
+  font-family: 'Arial Black', Impact, system-ui, sans-serif;
+  text-shadow: 2px 2px 0 #17131f;
+}
+
+.final-showcase.toypark-final-result .toypark-result-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 6px 12px;
+  font-size: clamp(22px, 5vw, 34px);
+  line-height: 1;
+  text-align: center;
+}
+
+.toypark-result-time {
+  margin-top: 8px;
+  color: #17131f;
+  font-family: 'Arial Black', Impact, system-ui, sans-serif;
+  font-size: clamp(22px, 4.8vw, 32px);
+  text-align: right;
+  text-shadow: 1px 1px 0 rgba(255,255,255,0.45);
+}
+
+.final-showcase.toypark-final-result .podium-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.final-showcase.toypark-final-result .podium-medalist {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 7px 4px 0;
+  padding: 8px 10px;
+  border: 3px solid #17131f;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 5px 0 rgba(23, 19, 31, 0.68);
+}
+
+.final-showcase.toypark-final-result .podium-medalist strong {
+  color: #17131f;
+  font-family: 'Arial Black', Impact, system-ui, sans-serif;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.final-showcase.toypark-final-result .podium-medalist .showcase-racer-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toypark-result-row-time {
+  color: #17131f;
+  font-family: 'Arial Black', Impact, system-ui, sans-serif;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+@keyframes toypark-result-pop {
+  from { opacity: 0; transform: translateY(24px) scale(0.88) rotate(-1.5deg); }
+  70% { opacity: 1; transform: translateY(-4px) scale(1.03) rotate(0.8deg); }
+  to { opacity: 1; transform: translateY(0) scale(1) rotate(0); }
+}
+
+@media (max-width: 760px) {
+  .final-showcase.toypark-final-result {
+    left: auto;
+    right: 22px;
+    bottom: 24px;
+    width: min(390px, calc(100vw - 44px));
+  }
+}
+
 @keyframes podium-rise {
   from { opacity: 0; transform: translateY(18px) scale(0.96); }
   to { opacity: 1; transform: translateY(0) scale(1); }

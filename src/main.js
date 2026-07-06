@@ -12996,13 +12996,14 @@ class MarbleRace {
     const ranking = this.getRanking({ force: true });
     const winner = ranking[0];
     const comeback = ranking.reduce((best, data) => ((data.stuckResets || 0) + (data.fallPenaltyCount || 0) > ((best?.stuckResets || 0) + (best?.fallPenaltyCount || 0)) ? data : best), ranking[0]);
+    const toyParkShowcase = this.isToyParkViewerOverlayActive();
     const cupStage = this.cupMode?.active ? this.getCupStage() : null;
     const showcaseTitle = this.cupMode?.active
       ? (cupStage === 'final' ? '🏆 Cup Champion Ceremony' : '✅ Qualified')
-      : '🏁 Group Winner';
+      : (toyParkShowcase ? 'FINAL RESULT' : '🏁 Group Winner');
     const showcaseHint = this.cupMode?.active
       ? (cupStage === 'final' ? 'Cup Champion' : `${this.getCupStageTitle(cupStage)} qualifiers locked in`)
-      : 'Group winner locked in';
+      : (toyParkShowcase ? 'WINNER LOCKED' : 'Group winner locked in');
     this.showcaseStats = {
       winner: winner ? winner.name : null,
       ceremony: this.podiumCeremony,
@@ -13014,8 +13015,27 @@ class MarbleRace {
     };
     if (this.ui.finalShowcase) {
       const medals = ['🥇', '🥈', '🥉'];
-      const top3 = ranking.slice(0, 3).map((data, index) => `<li class="podium-medalist rank-${index + 1}"><strong>${medals[index]} #${index + 1}</strong> <span class="showcase-racer-name" data-marble-id="${data.id}" title="Double-click to copy reusable marble identity" style="--medal-color:${data.colorHex}">${data.name}</span> <span>${data.finishTime?.toFixed(2) ?? '--'}s</span></li>`).join('');
-      this.ui.finalShowcase.innerHTML = `<h2>${showcaseTitle}</h2><p class="copy-hint">${showcaseHint}</p><ol class="podium-list">${top3}</ol><p>Best comeback: <strong>${this.showcaseStats.comeback || '—'}</strong></p><p>Pinball hits: <strong>${this.showcaseStats.totalPinballHits}</strong></p>`;
+      const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+      const finishText = (data) => `${Number.isFinite(data?.finishTime) ? data.finishTime.toFixed(2) : '--'}s`;
+      if (toyParkShowcase && !this.cupMode?.active) {
+        const safeWinnerId = escapeHtml(winner?.id ?? '');
+        const winnerHtml = winner ? `
+          <section class="toypark-result-winner" style="--winner-color:${escapeHtml(winner.colorHex || '#ffd43d')}">
+            <div class="toypark-result-winner-kicker">🏆 WINNER</div>
+            <div class="toypark-result-winner-main">
+              <span class="toypark-result-orb" aria-hidden="true"></span>
+              <span class="showcase-racer-name toypark-result-name" data-marble-id="${safeWinnerId}" title="Double-click to copy reusable marble identity" style="--medal-color:${escapeHtml(winner.colorHex || '#ffd43d')}">${escapeHtml(winner.name)}</span>
+            </div>
+            <div class="toypark-result-time">${finishText(winner)}</div>
+          </section>` : '';
+        const podiumRows = ranking.slice(1, 3).map((data, index) => `<li class="podium-medalist rank-${index + 2}" style="--medal-color:${escapeHtml(data.colorHex || '#ffffff')}"><strong>${medals[index + 1]} #${index + 2}</strong><span class="showcase-racer-name" data-marble-id="${escapeHtml(data.id)}" title="Double-click to copy reusable marble identity" style="--medal-color:${escapeHtml(data.colorHex || '#ffffff')}">${escapeHtml(data.name)}</span><span class="toypark-result-row-time">${finishText(data)}</span></li>`).join('');
+        this.ui.finalShowcase.classList.add('toypark-final-result');
+        this.ui.finalShowcase.innerHTML = `<div class="toypark-result-flags" aria-hidden="true"><span></span><span></span></div><h2>${escapeHtml(showcaseTitle)}</h2><p class="copy-hint">${escapeHtml(showcaseHint)}</p>${winnerHtml}<ol class="podium-list toypark-result-podium">${podiumRows}</ol>`;
+      } else {
+        this.ui.finalShowcase.classList.remove('toypark-final-result');
+        const top3 = ranking.slice(0, 3).map((data, index) => `<li class="podium-medalist rank-${index + 1}"><strong>${medals[index]} #${index + 1}</strong> <span class="showcase-racer-name" data-marble-id="${data.id}" title="Double-click to copy reusable marble identity" style="--medal-color:${data.colorHex}">${data.name}</span> <span>${data.finishTime?.toFixed(2) ?? '--'}s</span></li>`).join('');
+        this.ui.finalShowcase.innerHTML = `<h2>${showcaseTitle}</h2><p class="copy-hint">${showcaseHint}</p><ol class="podium-list">${top3}</ol><p>Best comeback: <strong>${this.showcaseStats.comeback || '—'}</strong></p><p>Pinball hits: <strong>${this.showcaseStats.totalPinballHits}</strong></p>`;
+      }
       this.ui.finalShowcase.querySelectorAll('.showcase-racer-name').forEach((nameEl) => {
         nameEl.addEventListener('dblclick', (event) => {
           event.stopPropagation();
