@@ -2396,87 +2396,121 @@ class MarbleRace {
     ctx.translate(-cx, -cy);
 
     if (toyParkStyle) {
-      const accent = state.isGo ? '#42d96b' : '#ffd43d';
-      const accent2 = state.isGo ? '#9dff89' : '#5ddcff';
-      const panelStroke = Math.max(5, minDim * 0.008);
-      const discSize = isVertical ? Math.min(210, minDim * 0.29) : Math.min(170, minDim * 0.24);
-      const discCy = cy + (isVertical ? minDim * 0.02 : 0);
-      const labelW = Math.min(cardW * 0.68, discSize * 2.2);
-      const labelH = Math.max(46, minDim * 0.062);
-      const labelX = cx - labelW / 2;
-      const labelY = discCy - discSize / 2 - labelH * 0.82;
-      const footerW = Math.min(cardW * 0.62, discSize * 2.0);
-      const footerH = Math.max(38, minDim * 0.052);
-      const footerX = cx - footerW / 2;
-      const footerY = discCy + discSize / 2 + footerH * 0.26;
+      const lightSpecs = [
+        { key: 'red', fill: '#ff4057', dim: 'rgba(94, 29, 40, 0.92)' },
+        { key: 'yellow', fill: '#ffd43d', dim: 'rgba(105, 82, 26, 0.92)' },
+        { key: 'green', fill: '#42d96b', dim: 'rgba(26, 86, 47, 0.92)' },
+      ];
+      const activeLight = state.isGo
+        ? 'green'
+        : (state.countdownRemaining > 2 ? 'red' : (state.countdownRemaining > 1 ? 'yellow' : 'green'));
+      const activeSpec = lightSpecs.find((light) => light.key === activeLight) || lightSpecs[1];
+      const panelW = isVertical ? Math.min(360, w * 0.48) : Math.min(330, w * 0.30);
+      const panelH = isVertical ? Math.min(240, h * 0.19) : Math.min(190, h * 0.26);
+      const panelX = cx - panelW / 2;
+      const panelY = cy - panelH / 2;
+      const panelRadius = Math.max(26, minDim * 0.04);
+      const flagW = Math.max(58, panelW * 0.20);
+      const flagH = Math.max(46, panelH * 0.28);
+      const poleH = flagH * 1.75;
+      const drawFlag = (poleX, poleY, dir = 1) => {
+        ctx.save();
+        ctx.strokeStyle = textStroke;
+        ctx.lineWidth = Math.max(4, minDim * 0.006);
+        ctx.beginPath();
+        ctx.moveTo(poleX, poleY);
+        ctx.lineTo(poleX, poleY + poleH);
+        ctx.stroke();
+        const flagX = dir > 0 ? poleX : poleX - flagW;
+        const flagY = poleY + flagH * 0.08;
+        drawChecker(flagX, flagY, flagW, flagH);
+        ctx.strokeStyle = textStroke;
+        ctx.lineWidth = Math.max(3, minDim * 0.004);
+        ctx.strokeRect(flagX, flagY, flagW, flagH);
+        ctx.restore();
+      };
 
-      const glow = ctx.createRadialGradient(cx, discCy, discSize * 0.22, cx, discCy, discSize * 1.35);
-      glow.addColorStop(0, state.isGo ? 'rgba(83, 255, 126, 0.35)' : 'rgba(255, 212, 61, 0.34)');
-      glow.addColorStop(0.48, state.isGo ? 'rgba(66, 217, 107, 0.15)' : 'rgba(93, 220, 255, 0.12)');
+      const glow = ctx.createRadialGradient(cx, cy, panelW * 0.20, cx, cy, panelW * 0.72);
+      glow.addColorStop(0, `${activeSpec.fill}45`);
+      glow.addColorStop(0.55, `${activeSpec.fill}18`);
       glow.addColorStop(1, 'rgba(255, 255, 255, 0)');
       ctx.fillStyle = glow;
-      ctx.fillRect(cx - discSize * 1.55, discCy - discSize * 1.55, discSize * 3.1, discSize * 3.1);
+      ctx.fillRect(panelX - panelW * 0.48, panelY - panelH * 0.55, panelW * 1.96, panelH * 2.05);
 
-      this.drawViewerRoundedRect(ctx, labelX, labelY, labelW, labelH, labelH / 2);
-      ctx.fillStyle = 'rgba(23, 19, 31, 0.88)';
+      drawFlag(panelX - flagW * 0.38, panelY + panelH * 0.08, 1);
+      drawFlag(panelX + panelW + flagW * 0.38, panelY + panelH * 0.08, -1);
+
+      this.drawViewerRoundedRect(ctx, panelX, panelY, panelW, panelH, panelRadius);
+      const housingGradient = ctx.createLinearGradient(panelX, panelY, panelX, panelY + panelH);
+      housingGradient.addColorStop(0, 'rgba(36, 38, 48, 0.96)');
+      housingGradient.addColorStop(0.48, 'rgba(18, 20, 30, 0.96)');
+      housingGradient.addColorStop(1, 'rgba(8, 10, 18, 0.96)');
+      ctx.fillStyle = housingGradient;
       ctx.fill();
-      ctx.strokeStyle = accent;
+      ctx.strokeStyle = textStroke;
+      ctx.lineWidth = Math.max(6, minDim * 0.010);
+      ctx.stroke();
+
+      const labelH = Math.max(34, panelH * 0.18);
+      const labelW = panelW * 0.72;
+      const labelX = cx - labelW / 2;
+      const labelY = panelY - labelH * 0.52;
+      this.drawViewerRoundedRect(ctx, labelX, labelY, labelW, labelH, labelH / 2);
+      ctx.fillStyle = 'rgba(23, 19, 31, 0.92)';
+      ctx.fill();
+      ctx.strokeStyle = activeSpec.fill;
       ctx.lineWidth = Math.max(3, minDim * 0.0045);
       ctx.stroke();
-
-      const flagW = Math.max(48, labelH * 1.25);
-      drawChecker(labelX + labelW - flagW - 12, labelY + labelH * 0.24, flagW, labelH * 0.46);
-
-      ctx.beginPath();
-      ctx.arc(cx, discCy, discSize / 2, 0, Math.PI * 2);
-      const discGradient = ctx.createRadialGradient(cx - discSize * 0.18, discCy - discSize * 0.20, discSize * 0.08, cx, discCy, discSize * 0.62);
-      discGradient.addColorStop(0, '#ffffff');
-      discGradient.addColorStop(0.20, state.isGo ? '#9dff89' : '#fff28a');
-      discGradient.addColorStop(1, state.isGo ? '#31bf5e' : '#ffd43d');
-      ctx.fillStyle = discGradient;
-      ctx.fill();
-      ctx.lineWidth = panelStroke;
-      ctx.strokeStyle = textStroke;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(cx, discCy, discSize * 0.39, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(23,19,31,0.22)';
-      ctx.lineWidth = Math.max(4, minDim * 0.006);
-      ctx.stroke();
-
-      const topLabel = state.isGo ? 'RUSH!' : 'RACE STARTS IN';
-      this.drawViewerText(ctx, topLabel, cx - flagW * 0.28, labelY + labelH * 0.52, {
-        font: `900 ${Math.round(minDim * (isVertical ? 0.031 : 0.026))}px Arial Black, Impact, sans-serif`,
-        fill: '#ffffff', stroke: textStroke, strokeWidth: Math.max(3, minDim * 0.005), align: 'center', maxWidth: labelW - flagW - 34,
-      });
-      this.drawViewerText(ctx, state.value, cx, discCy + discSize * 0.05, {
-        font: `900 ${Math.round(discSize * (state.isGo ? 0.32 : 0.64))}px Arial Black, Impact, sans-serif`,
-        fill: '#ffffff', stroke: textStroke, strokeWidth: Math.max(8, minDim * 0.015), align: 'center', maxWidth: discSize * 1.10,
+      this.drawViewerText(ctx, state.isGo ? 'RUSH!' : 'START LIGHTS', cx, labelY + labelH * 0.52, {
+        font: `900 ${Math.round(minDim * (isVertical ? 0.029 : 0.023))}px Arial Black, Impact, sans-serif`,
+        fill: '#ffffff', stroke: textStroke, strokeWidth: Math.max(3, minDim * 0.005), align: 'center', maxWidth: labelW - 28,
       });
 
+      const bulbRadius = Math.min(panelH * 0.22, panelW * 0.16);
+      const bulbGap = panelW * 0.04;
+      const totalBulbW = bulbRadius * 6 + bulbGap * 2;
+      const startX = cx - totalBulbW / 2 + bulbRadius;
+      const bulbY = panelY + panelH * 0.52;
+      lightSpecs.forEach((light, index) => {
+        const x = startX + index * (bulbRadius * 2 + bulbGap);
+        const active = light.key === activeLight;
+        ctx.beginPath();
+        ctx.arc(x, bulbY, bulbRadius * 1.18, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0,0,0,0.48)';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(x, bulbY, bulbRadius, 0, Math.PI * 2);
+        const bulbGradient = ctx.createRadialGradient(x - bulbRadius * 0.28, bulbY - bulbRadius * 0.34, bulbRadius * 0.08, x, bulbY, bulbRadius);
+        bulbGradient.addColorStop(0, active ? '#ffffff' : 'rgba(255,255,255,0.16)');
+        bulbGradient.addColorStop(0.28, active ? light.fill : light.dim);
+        bulbGradient.addColorStop(1, active ? light.fill : 'rgba(20,20,24,0.92)');
+        ctx.fillStyle = bulbGradient;
+        ctx.fill();
+        ctx.lineWidth = Math.max(3, minDim * 0.0045);
+        ctx.strokeStyle = active ? 'rgba(255,255,255,0.72)' : 'rgba(0,0,0,0.68)';
+        ctx.stroke();
+        if (active) {
+          const shine = ctx.createRadialGradient(x, bulbY, bulbRadius * 0.35, x, bulbY, bulbRadius * 1.75);
+          shine.addColorStop(0, `${light.fill}76`);
+          shine.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = shine;
+          ctx.beginPath();
+          ctx.arc(x, bulbY, bulbRadius * 1.75, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+
+      const footerW = panelW * 0.78;
+      const footerH = Math.max(34, panelH * 0.17);
+      const footerX = cx - footerW / 2;
+      const footerY = panelY + panelH - footerH * 0.74;
       this.drawViewerRoundedRect(ctx, footerX, footerY, footerW, footerH, footerH / 2);
-      ctx.fillStyle = 'rgba(23, 19, 31, 0.84)';
+      ctx.fillStyle = 'rgba(23, 19, 31, 0.74)';
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.38)';
-      ctx.lineWidth = Math.max(2, minDim * 0.0035);
-      ctx.stroke();
       this.drawViewerText(ctx, state.isGo ? 'GO GO GO!' : `${Math.max(1, this.marbleData?.length || 8)} MARBLES READY`, cx, footerY + footerH * 0.52, {
-        font: `900 ${Math.round(minDim * (isVertical ? 0.024 : 0.020))}px Arial Black, Impact, sans-serif`,
-        fill: accent2, stroke: textStroke, strokeWidth: Math.max(3, minDim * 0.005), align: 'center', maxWidth: footerW - 28,
+        font: `900 ${Math.round(minDim * (isVertical ? 0.022 : 0.018))}px Arial Black, Impact, sans-serif`,
+        fill: activeSpec.fill, stroke: textStroke, strokeWidth: Math.max(3, minDim * 0.0045), align: 'center', maxWidth: footerW - 24,
       });
-
-      if (!state.isGo) {
-        const barW = footerW * 0.74;
-        const barH = Math.max(8, minDim * 0.010);
-        const barX = cx - barW / 2;
-        const barY = footerY + footerH + barH * 0.65;
-        this.drawViewerRoundedRect(ctx, barX, barY, barW, barH, barH / 2);
-        ctx.fillStyle = 'rgba(23,19,31,0.42)';
-        ctx.fill();
-        this.drawViewerRoundedRect(ctx, barX, barY, Math.max(barH, barW * state.countdownProgress), barH, barH / 2);
-        ctx.fillStyle = accent;
-        ctx.fill();
-      }
     } else {
       this.drawViewerRoundedRect(ctx, cardX, cardY, cardW, cardH, radius);
       const cardGradient = ctx.createLinearGradient(cardX, cardY, cardX + cardW, cardY + cardH);
