@@ -1840,6 +1840,387 @@ class MarbleRace {
     ctx.restore();
   }
 
+  isToyParkViewerOverlayActive() {
+    return this.physicsMechanicKey === 'toyPark'
+      || this.visualThemeKey === 'toyPark'
+      || this.trackStats?.theme === 'toy-park'
+      || this.trackStats?.toyParkStartBoard?.enabled === true;
+  }
+
+  drawToyParkArcadeCta({ ctx, x = 0, y = 0, width = 420, height = 64, vertical = false } = {}) {
+    const textStroke = '#17131f';
+    const skew = Math.max(10, height * 0.18);
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.34)';
+    ctx.shadowBlur = vertical ? 7 : 10;
+    ctx.shadowOffsetX = 3;
+    ctx.shadowOffsetY = 5;
+    ctx.beginPath();
+    ctx.moveTo(x + skew, y);
+    ctx.lineTo(x + width, y);
+    ctx.lineTo(x + width - skew, y + height);
+    ctx.lineTo(x, y + height);
+    ctx.closePath();
+    const gradient = ctx.createLinearGradient(x, y, x + width, y + height);
+    gradient.addColorStop(0, '#ff365f');
+    gradient.addColorStop(0.62, '#ff7a2f');
+    gradient.addColorStop(1, '#ffd43d');
+    ctx.fillStyle = gradient;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = textStroke;
+    ctx.lineWidth = vertical ? 4 : 5;
+    ctx.stroke();
+
+    const checkerW = vertical ? 36 : 48;
+    const checkerH = vertical ? 22 : 28;
+    const checkerX = x + width - checkerW - (vertical ? 10 : 14);
+    const checkerY = y + (height - checkerH) / 2;
+    ctx.save();
+    this.drawViewerRoundedRect(ctx, checkerX, checkerY, checkerW, checkerH, 6);
+    ctx.clip();
+    const cell = Math.max(6, checkerH / 3);
+    for (let yy = checkerY - cell; yy < checkerY + checkerH + cell; yy += cell) {
+      for (let xx = checkerX - cell; xx < checkerX + checkerW + cell; xx += cell) {
+        const odd = (Math.floor((xx - checkerX) / cell) + Math.floor((yy - checkerY) / cell)) % 2;
+        ctx.fillStyle = odd ? textStroke : '#ffffff';
+        ctx.fillRect(xx, yy, cell, cell);
+      }
+    }
+    ctx.restore();
+
+    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.ctaPrimary, x + (vertical ? 18 : 24), y + height * 0.43, {
+      font: vertical ? '900 19px Arial Black, Impact, sans-serif' : '900 28px Arial Black, Impact, sans-serif',
+      fill: '#ffffff',
+      stroke: textStroke,
+      strokeWidth: vertical ? 4 : 6,
+      maxWidth: width - checkerW - (vertical ? 38 : 56),
+    });
+    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.channelHandle, x + (vertical ? 20 : 26), y + height * 0.76, {
+      font: vertical ? '800 12px Arial Black, Impact, sans-serif' : '800 18px Arial Black, Impact, sans-serif',
+      fill: '#fff6b0',
+      stroke: textStroke,
+      strokeWidth: vertical ? 3 : 4,
+      maxWidth: width - checkerW - (vertical ? 42 : 62),
+    });
+    ctx.restore();
+    return {
+      style: 'toy-park-arcade-cta',
+      x: Number(x.toFixed(1)), y: Number(y.toFixed(1)), width: Number(width.toFixed(1)), height: Number(height.toFixed(1)),
+      layout: vertical ? 'vertical' : 'horizontal',
+    };
+  }
+
+  drawViewerLiveStandingPanel({ ctx, ranking = [], x = 0, y = 0, width = 390, rowHeight = 62, vertical = false, toyPark = false } = {}) {
+    const rows = ranking.length;
+    if (toyPark) {
+      const totalLaps = 3;
+      const leader = ranking[0] || this.getRanking({ force: false })[0] || null;
+      const leaderProgress = clamp(leader?.progress || 0, 0, 1);
+      const currentLap = Math.max(1, Math.min(totalLaps, Math.floor(leaderProgress * totalLaps) + 1));
+      const raceNumber = this.cupMode?.active ? (this.cupMode.stageIndex || 0) + 1 : 1;
+      const compactVertical = vertical && width <= 260;
+      const headerH = compactVertical ? 52 : (vertical ? 108 : 114);
+      const rankW = compactVertical ? 24 : (vertical ? 48 : 56);
+      const rowH = compactVertical ? 30 : (vertical ? 46 : 54);
+      const gap = compactVertical ? 4 : (vertical ? 8 : 9);
+      const avatar = compactVertical ? 23 : (vertical ? 40 : 48);
+      const rowX = x + rankW;
+      const rowW = width - rankW;
+      const boardHeight = headerH + rows * rowH + Math.max(0, rows - 1) * gap + 16;
+      const colors = ['#45c95d', '#38c9ff', '#8ca5c8', '#f9a72e', '#7bb9ff', '#eef4ff', '#b8c8ee', '#ff982f', '#ffe04b', '#e7f5ff'];
+      const textStroke = '#17131f';
+      const drawChecker = (cx, cy, cw, ch) => {
+        const cell = Math.max(7, ch / 4);
+        ctx.save();
+        this.drawViewerRoundedRect(ctx, cx, cy, cw, ch, 7);
+        ctx.clip();
+        for (let yy = cy - cell; yy < cy + ch + cell; yy += cell) {
+          for (let xx = cx - cell; xx < cx + cw + cell; xx += cell) {
+            const odd = (Math.floor((xx - cx) / cell) + Math.floor((yy - cy) / cell)) % 2;
+            ctx.fillStyle = odd ? '#17131f' : '#ffffff';
+            ctx.fillRect(xx, yy, cell, cell);
+          }
+        }
+        ctx.restore();
+      };
+      const drawAvatar = (data, ax, ay, size, index) => {
+        const color = `#${(data.color || 0xffffff).toString(16).padStart(6, '0')}`;
+        ctx.save();
+        this.drawViewerRoundedRect(ctx, ax, ay, size, size, 9);
+        const gradient = ctx.createLinearGradient(ax, ay, ax + size, ay + size);
+        gradient.addColorStop(0, '#ffd34f');
+        gradient.addColorStop(0.45, color);
+        gradient.addColorStop(1, index % 2 ? '#72e8ff' : '#ff79a1');
+        ctx.fillStyle = gradient;
+        ctx.fill();
+        ctx.strokeStyle = textStroke;
+        ctx.lineWidth = 4;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(ax + size * 0.55, ay);
+        ctx.lineTo(ax + size, ay);
+        ctx.lineTo(ax + size, ay + size * 0.65);
+        ctx.lineTo(ax + size * 0.72, ay + size);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255,255,255,0.34)';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(ax + size * 0.5, ay + size * 0.48, size * 0.28, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = textStroke;
+        ctx.stroke();
+        ctx.fillStyle = textStroke;
+        ctx.beginPath();
+        ctx.arc(ax + size * 0.41, ay + size * 0.43, size * 0.04, 0, Math.PI * 2);
+        ctx.arc(ax + size * 0.59, ay + size * 0.43, size * 0.04, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(ax + size * 0.5, ay + size * 0.54, size * 0.10, 0.15 * Math.PI, 0.85 * Math.PI);
+        ctx.stroke();
+        const initial = String(data.name || 'M').slice(0, 1).toUpperCase();
+        this.drawViewerText(ctx, initial, ax + size * 0.5, ay + size * 0.84, {
+          font: `900 ${Math.round(size * 0.22)}px Arial Black, Impact, sans-serif`,
+          fill: '#ffffff', stroke: textStroke, strokeWidth: 2.5, align: 'center',
+        });
+        ctx.restore();
+      };
+
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.38)';
+      ctx.shadowBlur = 12;
+      ctx.shadowOffsetY = 6;
+      const iconR = compactVertical ? 13 : (vertical ? 27 : 31);
+      const iconX = x + rankW + 4;
+      const iconY = y + 10;
+      ctx.beginPath();
+      ctx.arc(iconX + iconR, iconY + iconR, iconR, 0, Math.PI * 2);
+      ctx.fillStyle = textStroke;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.arc(iconX + iconR, iconY + iconR, iconR * 0.68, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffd43d';
+      ctx.fill();
+      ctx.fillStyle = textStroke;
+      ctx.beginPath();
+      ctx.arc(iconX + iconR * 0.78, iconY + iconR * 0.87, iconR * 0.11, 0, Math.PI * 2);
+      ctx.arc(iconX + iconR * 1.22, iconY + iconR * 0.87, iconR * 0.11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = textStroke;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(iconX + iconR, iconY + iconR * 1.08, iconR * 0.22, 0.12 * Math.PI, 0.88 * Math.PI);
+      ctx.stroke();
+      this.drawViewerText(ctx, `RACE ${raceNumber}`, iconX + iconR * 2 + (compactVertical ? 8 : 15), y + (compactVertical ? 21 : (vertical ? 36 : 39)), {
+        font: compactVertical ? '900 13px Arial Black, Impact, sans-serif' : (vertical ? '900 27px Arial Black, Impact, sans-serif' : '900 32px Arial Black, Impact, sans-serif'),
+        fill: '#ffd43d', stroke: textStroke, strokeWidth: compactVertical ? 4 : 7, maxWidth: width - rankW - (compactVertical ? 48 : 90),
+      });
+      this.drawViewerText(ctx, `LAP ${currentLap}/${totalLaps}`, iconX + iconR * 2 + (compactVertical ? 8 : 15), y + (compactVertical ? 43 : (vertical ? 74 : 84)), {
+        font: compactVertical ? '900 20px Arial Black, Impact, sans-serif' : (vertical ? '900 38px Arial Black, Impact, sans-serif' : '900 47px Arial Black, Impact, sans-serif'),
+        fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 5 : 9, maxWidth: width - rankW - (compactVertical ? 48 : 90),
+      });
+      drawChecker(x + width - (compactVertical ? 34 : (vertical ? 62 : 72)), y + (compactVertical ? 27 : (vertical ? 40 : 44)), compactVertical ? 28 : (vertical ? 50 : 58), compactVertical ? 19 : (vertical ? 34 : 40));
+
+      const summaryRows = [];
+      ranking.forEach((data, index) => {
+        const rowY = y + headerH + index * (rowH + gap);
+        const progress = clamp(data.progress || 0, 0, 1);
+        const lap = data.finished ? totalLaps : Math.max(1, Math.min(totalLaps, Math.floor(progress * totalLaps) + 1));
+        summaryRows.push({ rank: index + 1, name: data.name || `Marble ${data.id + 1}`, lap, totalLaps, progress: Math.round(progress * 100) });
+        const skew = compactVertical ? 6 : (vertical ? 9 : 13);
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.36)';
+        ctx.shadowBlur = 8;
+        ctx.shadowOffsetX = 4;
+        ctx.shadowOffsetY = 5;
+        ctx.beginPath();
+        ctx.moveTo(rowX + skew, rowY);
+        ctx.lineTo(rowX + rowW, rowY);
+        ctx.lineTo(rowX + rowW - skew, rowY + rowH);
+        ctx.lineTo(rowX, rowY + rowH);
+        ctx.closePath();
+        const gradient = ctx.createLinearGradient(rowX, rowY, rowX + rowW, rowY + rowH);
+        gradient.addColorStop(0, colors[index % colors.length]);
+        gradient.addColorStop(0.68, colors[index % colors.length]);
+        gradient.addColorStop(1, index === 0 ? '#ffe34d' : 'rgba(255,255,255,0.55)');
+        ctx.fillStyle = gradient;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = textStroke;
+        ctx.lineWidth = vertical ? 4 : 5;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(rowX + rowW - (compactVertical ? 36 : (vertical ? 58 : 68)), rowY + 2);
+        ctx.lineTo(rowX + rowW - 2, rowY + 2);
+        ctx.lineTo(rowX + rowW - skew - 2, rowY + rowH - 2);
+        ctx.lineTo(rowX + rowW - (compactVertical ? 44 : (vertical ? 72 : 84)), rowY + rowH - 2);
+        ctx.closePath();
+        ctx.fillStyle = index % 2 ? 'rgba(36,43,94,0.30)' : 'rgba(255,116,86,0.28)';
+        ctx.fill();
+        if (index === 0) drawChecker(rowX + rowW - (compactVertical ? 30 : (vertical ? 52 : 60)), rowY + (compactVertical ? 6 : 8), compactVertical ? 22 : (vertical ? 38 : 45), rowH - (compactVertical ? 12 : 16));
+        ctx.restore();
+        this.drawViewerText(ctx, `${index + 1}`, x + rankW * 0.48, rowY + rowH * 0.62, {
+          font: compactVertical ? '900 18px Arial Black, Impact, sans-serif' : (vertical ? '900 32px Arial Black, Impact, sans-serif' : '900 40px Arial Black, Impact, sans-serif'),
+          fill: '#ffd43d', stroke: textStroke, strokeWidth: compactVertical ? 5 : (vertical ? 7 : 8), align: 'center',
+        });
+        drawAvatar(data, rowX + (compactVertical ? 5 : (vertical ? 8 : 10)), rowY + (rowH - avatar) / 2, avatar, index);
+        this.drawViewerText(ctx, data.name || `Marble ${data.id + 1}`, rowX + avatar + (compactVertical ? 12 : (vertical ? 18 : 22)), rowY + rowH * 0.57, {
+          font: compactVertical ? '900 12px Arial Black, Impact, sans-serif' : (vertical ? '900 23px Arial Black, Impact, sans-serif' : '900 28px Arial Black, Impact, sans-serif'),
+          fill: '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 3.5 : (vertical ? 6 : 7),
+          maxWidth: rowW - avatar - (compactVertical ? 78 : (vertical ? 130 : 154)),
+        });
+        const lapLabel = data.defeated ? 'DNF' : data.finished ? 'FIN' : `LAP ${lap}/${totalLaps}`;
+        this.drawViewerText(ctx, lapLabel, rowX + rowW - (compactVertical ? 8 : (vertical ? 14 : 18)), rowY + rowH * 0.57, {
+          font: compactVertical ? '900 10px Arial Black, Impact, sans-serif' : (vertical ? '900 15px Arial Black, Impact, sans-serif' : '900 18px Arial Black, Impact, sans-serif'),
+          fill: data.defeated ? '#ff5b6e' : '#ffffff', stroke: textStroke, strokeWidth: compactVertical ? 3 : (vertical ? 5 : 6), align: 'right',
+          maxWidth: compactVertical ? 55 : (vertical ? 82 : 98),
+        });
+      });
+      ctx.restore();
+      return {
+        style: 'toy-park-arcade-avatar-lap-standing',
+        title: 'TOY PARK RACE STANDING',
+        rowCount: rows,
+        rows: summaryRows,
+        raceNumber,
+        currentLap,
+        totalLaps,
+        layout: vertical ? 'vertical' : 'horizontal',
+        x: Number(x.toFixed(1)), y: Number(y.toFixed(1)), width: Number(width.toFixed(1)), height: Number(boardHeight.toFixed(1)),
+        hasAvatars: true,
+        hasLapLabels: true,
+        compact: compactVertical,
+      };
+    }
+    const headerHeight = toyPark ? (vertical ? 94 : 126) : (vertical ? 66 : 94);
+    const rowStartOffset = toyPark ? (vertical ? 82 : 112) : (vertical ? 54 : 74);
+    const boardHeight = headerHeight + rowHeight * Math.max(1, rows || (vertical ? 3 : CANVAS_VIEWER_OVERLAY.maxStandingRows));
+    const radius = toyPark ? (vertical ? 28 : 30) : (vertical ? 24 : 28);
+    this.drawViewerRoundedRect(ctx, x, y, width, boardHeight, radius);
+    if (toyPark) {
+      const bg = ctx.createLinearGradient(x, y, x + width, y + boardHeight);
+      bg.addColorStop(0, 'rgba(255, 246, 214, 0.90)');
+      bg.addColorStop(0.52, 'rgba(255, 221, 166, 0.80)');
+      bg.addColorStop(1, 'rgba(255, 183, 208, 0.78)');
+      ctx.fillStyle = bg;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 126, 68, 0.86)';
+      ctx.lineWidth = vertical ? 5 : 4;
+      ctx.stroke();
+      const tabW = vertical ? 176 : 208;
+      const tabH = vertical ? 34 : 42;
+      this.drawViewerRoundedRect(ctx, x + 18, y + 14, tabW, tabH, tabH / 2);
+      ctx.fillStyle = 'rgba(255, 126, 68, 0.96)';
+      ctx.fill();
+      this.drawViewerText(ctx, 'TOY PARK', x + 18 + tabW / 2, y + 14 + tabH / 2 + 1, {
+        font: vertical ? '900 19px Arial Black, Impact, sans-serif' : '900 24px Arial Black, Impact, sans-serif',
+        fill: '#fff8dc',
+        stroke: 'rgba(128,54,18,0.74)',
+        strokeWidth: vertical ? 3 : 4,
+        align: 'center',
+      });
+      this.drawViewerText(ctx, 'LIVE STANDING', x + 24, y + (vertical ? 76 : 96), {
+        font: vertical ? '900 25px Arial Black, Impact, sans-serif' : '900 31px Arial Black, Impact, sans-serif',
+        fill: '#5c3a1a',
+        stroke: 'rgba(255,255,255,0.78)',
+        strokeWidth: vertical ? 4 : 5,
+        maxWidth: width - 48,
+      });
+    } else {
+      ctx.fillStyle = vertical ? 'rgba(3, 8, 18, 0.70)' : 'rgba(3, 8, 18, 0.74)';
+      ctx.fill();
+      ctx.strokeStyle = vertical ? 'rgba(255,255,255,0.30)' : 'rgba(255,255,255,0.32)';
+      ctx.lineWidth = vertical ? 4 : 3;
+      ctx.stroke();
+      this.drawViewerText(ctx, 'LIVE STANDING', x + (vertical ? 22 : 24), y + (vertical ? 31 : 36), {
+        font: vertical ? '900 26px Arial Black, Impact, sans-serif' : '900 31px Arial Black, Impact, sans-serif',
+        fill: '#8df7ff',
+        strokeWidth: 5,
+      });
+    }
+
+    ranking.forEach((data, index) => {
+      const rowY = y + rowStartOffset + index * rowHeight;
+      const rowX = x + (vertical ? 20 : 18);
+      const rowW = width - (vertical ? 40 : 36);
+      const rowH = vertical ? 38 : 50;
+      const color = `#${(data.color || 0xffffff).toString(16).padStart(6, '0')}`;
+      this.drawViewerRoundedRect(ctx, rowX, rowY, rowW, rowH, toyPark ? (vertical ? 18 : 20) : (vertical ? 14 : 16));
+      if (toyPark) {
+        const rowGradient = ctx.createLinearGradient(rowX, rowY, rowX + rowW, rowY + rowH);
+        rowGradient.addColorStop(0, index === 0 ? 'rgba(255, 217, 88, 0.74)' : 'rgba(255,255,255,0.54)');
+        rowGradient.addColorStop(1, index === 0 ? 'rgba(255, 145, 78, 0.50)' : 'rgba(142, 232, 255, 0.36)');
+        ctx.fillStyle = rowGradient;
+        ctx.fill();
+        ctx.strokeStyle = index === 0 ? 'rgba(255,126,68,0.90)' : 'rgba(255,255,255,0.70)';
+        ctx.lineWidth = vertical ? 2.5 : 3;
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = index === 0 ? (vertical ? 'rgba(255, 214, 64, 0.30)' : 'rgba(255, 214, 64, 0.28)') : (vertical ? 'rgba(255,255,255,0.11)' : 'rgba(255,255,255,0.10)');
+        ctx.fill();
+      }
+      const rankX = rowX + (vertical ? 17 : 16);
+      const midY = rowY + rowH / 2;
+      if (toyPark) {
+        this.drawViewerRoundedRect(ctx, rankX - 2, midY - (vertical ? 14 : 17), vertical ? 44 : 50, vertical ? 28 : 34, vertical ? 12 : 14);
+        ctx.fillStyle = index === 0 ? '#ff7e44' : '#42b9e8';
+        ctx.fill();
+        this.drawViewerText(ctx, `#${index + 1}`, rankX + (vertical ? 20 : 23), midY + 1, {
+          font: vertical ? '900 18px Arial Black, Impact, sans-serif' : '900 22px Arial Black, Impact, sans-serif',
+          fill: '#ffffff',
+          stroke: 'rgba(67,39,18,0.72)',
+          strokeWidth: vertical ? 3 : 4,
+          align: 'center',
+        });
+      } else {
+        this.drawViewerText(ctx, `#${index + 1}`, x + (vertical ? 37 : 34), midY + (vertical ? 0 : 1), {
+          font: vertical ? '900 19px Arial Black, Impact, sans-serif' : '900 23px Arial Black, Impact, sans-serif',
+          fill: index === 0 ? '#ffdf3f' : '#ffffff',
+          strokeWidth: 4,
+        });
+      }
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x + (vertical ? 92 : 88), midY, vertical ? 9 : 12, 0, Math.PI * 2);
+      ctx.fill();
+      if (toyPark) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+        ctx.lineWidth = vertical ? 3 : 4;
+        ctx.stroke();
+      }
+      this.drawViewerText(ctx, data.name || `Marble ${data.id + 1}`, x + (vertical ? 112 : 116), midY, {
+        font: vertical ? '800 18px Arial, system-ui, sans-serif' : '800 22px Arial, system-ui, sans-serif',
+        fill: toyPark ? '#3d2a14' : '#ffffff',
+        stroke: toyPark ? 'rgba(255,255,255,0.88)' : 'rgba(0,0,0,0.8)',
+        strokeWidth: toyPark ? (vertical ? 3 : 4) : 4,
+        maxWidth: vertical ? width - 235 : 168,
+      });
+      const label = data.defeated ? 'DNF' : data.finished ? `${(data.finishTime || this.elapsed || 0).toFixed(1)}s` : `${Math.round((data.progress || 0) * 100)}%`;
+      this.drawViewerText(ctx, label, x + width - (vertical ? 34 : 36), midY, {
+        font: vertical ? '900 18px Arial Black, Impact, sans-serif' : '900 22px Arial Black, Impact, sans-serif',
+        fill: toyPark ? '#0d7fa3' : '#aefcff',
+        stroke: toyPark ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.8)',
+        strokeWidth: toyPark ? (vertical ? 3 : 4) : 4,
+        align: 'right',
+      });
+    });
+    return {
+      style: toyPark ? 'toy-park-pastel-playset-live-standing' : 'classic-live-standing',
+      title: toyPark ? 'TOY PARK LIVE STANDING' : 'LIVE STANDING',
+      rowCount: rows,
+      rows: ranking.map((data, index) => ({ rank: index + 1, name: data.name || `Marble ${data.id + 1}`, progress: Math.round((data.progress || 0) * 100) })),
+      layout: vertical ? 'vertical' : 'horizontal',
+      x: Number(x.toFixed(1)),
+      y: Number(y.toFixed(1)),
+      width: Number(width.toFixed(1)),
+      height: Number(boardHeight.toFixed(1)),
+    };
+  }
+
   getViewerOverlayCaption() {
     const active = this.activeCaption && this.elapsed <= this.activeCaption.expiresAt ? this.activeCaption : null;
     if (active) return { title: active.title || 'LIVE EVENT', detail: active.detail || '' };
@@ -2061,14 +2442,15 @@ class MarbleRace {
 
     const layoutKey = this.videoCanvasLayoutKey || (w < h ? 'vertical' : 'horizontal');
     const isVertical = layoutKey === 'vertical' || h > w * 1.2;
-    const maxRows = isVertical ? 3 : CANVAS_VIEWER_OVERLAY.maxStandingRows;
+    const toyParkOverlay = this.isToyParkViewerOverlayActive();
+    const maxRows = isVertical && !toyParkOverlay ? 3 : CANVAS_VIEWER_OVERLAY.maxStandingRows;
     const ranking = this.getRanking({ force: false }).slice(0, maxRows);
     const leader = ranking[0] || null;
     const leaderProgress = clamp(leader?.progress || 0, 0, 1);
     const leaderDistance = Math.max(0, Math.min(this.trackLength || 0, leader?.distance || 0));
     const caption = this.getViewerOverlayCaption();
     if (isVertical) {
-      this.drawVerticalViewerCanvasOverlay({ ctx, canvas, ranking, leaderProgress, leaderDistance, caption, summaryTarget });
+      this.drawVerticalViewerCanvasOverlay({ ctx, canvas, ranking, leaderProgress, leaderDistance, caption, summaryTarget, toyParkOverlay });
       return;
     }
 
@@ -2081,90 +2463,86 @@ class MarbleRace {
     ctx.save();
     ctx.scale(horizontalContentScale, horizontalContentScale);
 
-    // Live Event caption, top-left.
+    // Live Event caption, top-left. Toy Park intentionally omits this component so the track has more breathing room.
     const capX = 46;
     const capY = 38;
     const capW = 760;
     const capH = 132;
-    ctx.save();
-    const capGradient = ctx.createLinearGradient(capX, capY, capX + capW, capY + capH);
-    capGradient.addColorStop(0, 'rgba(255, 128, 0, 0.92)');
-    capGradient.addColorStop(1, 'rgba(255, 214, 64, 0.78)');
-    this.drawViewerRoundedRect(ctx, capX, capY, capW, capH, 30);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.56)';
-    ctx.fill();
-    this.drawViewerRoundedRect(ctx, capX + 8, capY + 8, 160, 40, 18);
-    ctx.fillStyle = capGradient;
-    ctx.fill();
-    this.drawViewerText(ctx, 'LIVE EVENT', capX + 88, capY + 30, { font: '900 23px Arial Black, Impact, sans-serif', fill: '#131313', strokeWidth: 0, align: 'center' });
-    this.drawViewerText(ctx, caption.title, capX + 30, capY + 78, { font: '900 44px Arial Black, Impact, sans-serif', fill: '#fff7b1', maxWidth: capW - 60 });
-    this.drawViewerText(ctx, caption.detail, capX + 30, capY + 116, { font: '800 27px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: capW - 60 });
-    ctx.restore();
+    if (!toyParkOverlay) {
+      ctx.save();
+      const capGradient = ctx.createLinearGradient(capX, capY, capX + capW, capY + capH);
+      capGradient.addColorStop(0, 'rgba(255, 128, 0, 0.92)');
+      capGradient.addColorStop(1, 'rgba(255, 214, 64, 0.78)');
+      this.drawViewerRoundedRect(ctx, capX, capY, capW, capH, 30);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.56)';
+      ctx.fill();
+      this.drawViewerRoundedRect(ctx, capX + 8, capY + 8, 160, 40, 18);
+      ctx.fillStyle = capGradient;
+      ctx.fill();
+      this.drawViewerText(ctx, 'LIVE EVENT', capX + 88, capY + 30, { font: '900 23px Arial Black, Impact, sans-serif', fill: '#131313', strokeWidth: 0, align: 'center' });
+      this.drawViewerText(ctx, caption.title, capX + 30, capY + 78, { font: '900 44px Arial Black, Impact, sans-serif', fill: '#fff7b1', maxWidth: capW - 60 });
+      this.drawViewerText(ctx, caption.detail, capX + 30, capY + 116, { font: '800 27px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: capW - 60 });
+      ctx.restore();
+    }
 
-    // Live Standing, right side.
-    const boardX = logicalW - 438;
-    const boardY = 44;
-    const boardW = 390;
+    // Live Standing, top-left for Toy Park; classic stays on the right.
+    const boardX = toyParkOverlay ? 54 : logicalW - 438;
+    const boardY = 34;
+    const boardW = toyParkOverlay ? 600 : 390;
     const rowH = 62;
-    const boardH = 94 + rowH * CANVAS_VIEWER_OVERLAY.maxStandingRows;
-    this.drawViewerRoundedRect(ctx, boardX, boardY, boardW, boardH, 28);
-    ctx.fillStyle = 'rgba(3, 8, 18, 0.74)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.32)';
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    this.drawViewerText(ctx, 'LIVE STANDING', boardX + 24, boardY + 36, { font: '900 31px Arial Black, Impact, sans-serif', fill: '#8df7ff', strokeWidth: 5 });
-    ranking.forEach((data, index) => {
-      const y = boardY + 74 + index * rowH;
-      const color = `#${(data.color || 0xffffff).toString(16).padStart(6, '0')}`;
-      this.drawViewerRoundedRect(ctx, boardX + 18, y, boardW - 36, 50, 16);
-      ctx.fillStyle = index === 0 ? 'rgba(255, 214, 64, 0.28)' : 'rgba(255,255,255,0.10)';
-      ctx.fill();
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(boardX + 88, y + 25, 12, 0, Math.PI * 2);
-      ctx.fill();
-      this.drawViewerText(ctx, `#${index + 1}`, boardX + 34, y + 26, { font: '900 23px Arial Black, Impact, sans-serif', fill: index === 0 ? '#ffdf3f' : '#ffffff', strokeWidth: 4 });
-      this.drawViewerText(ctx, data.name || `Marble ${data.id + 1}`, boardX + 116, y + 25, { font: '800 22px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: 168 });
-      const label = data.defeated ? 'DNF' : data.finished ? `${(data.finishTime || this.elapsed || 0).toFixed(1)}s` : `${Math.round((data.progress || 0) * 100)}%`;
-      this.drawViewerText(ctx, label, boardX + boardW - 36, y + 25, { font: '900 22px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, align: 'right' });
+    const liveStandingSummary = this.drawViewerLiveStandingPanel({
+      ctx,
+      ranking,
+      x: boardX,
+      y: boardY,
+      width: boardW,
+      rowHeight: rowH,
+      vertical: false,
+      toyPark: toyParkOverlay,
     });
 
     // Bottom CTA and channel handle.
-    const ctaX = 54;
-    const ctaY = logicalH - 132;
-    const ctaW = 610;
-    const ctaH = 86;
-    this.drawViewerRoundedRect(ctx, ctaX, ctaY, ctaW, ctaH, 28);
-    ctx.fillStyle = 'rgba(255, 36, 66, 0.92)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-    ctx.lineWidth = 4;
-    ctx.stroke();
-    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.ctaPrimary, ctaX + 32, ctaY + 33, { font: '900 37px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 5 });
-    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.channelHandle, ctaX + 34, ctaY + 66, { font: '800 25px Arial, system-ui, sans-serif', fill: '#fff3a0', strokeWidth: 4 });
+    const ctaW = toyParkOverlay ? 430 : 610;
+    const ctaH = toyParkOverlay ? 66 : 86;
+    const ctaX = toyParkOverlay ? logicalW - ctaW - 72 : 54;
+    const ctaY = toyParkOverlay ? logicalH - ctaH - 54 : logicalH - 132;
+    let ctaSummary = null;
+    if (toyParkOverlay) {
+      ctaSummary = this.drawToyParkArcadeCta({ ctx, x: ctaX, y: ctaY, width: ctaW, height: ctaH, vertical: false });
+    } else {
+      this.drawViewerRoundedRect(ctx, ctaX, ctaY, ctaW, ctaH, 28);
+      ctx.fillStyle = 'rgba(255, 36, 66, 0.92)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.ctaPrimary, ctaX + 32, ctaY + 33, { font: '900 37px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 5 });
+      this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.channelHandle, ctaX + 34, ctaY + 66, { font: '800 25px Arial, system-ui, sans-serif', fill: '#fff3a0', strokeWidth: 4 });
+    }
 
-    // Time / progress / distance lower-third.
+    // Time / progress / distance lower-third. Toy Park omits this bottom time component.
     const infoX = 690;
     const infoY = logicalH - 116;
     const infoW = 700;
     const infoH = 66;
-    this.drawViewerRoundedRect(ctx, infoX, infoY, infoW, infoH, 22);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
-    ctx.fill();
-    const progressX = infoX + 238;
-    const progressY = infoY + 38;
-    const progressW = 250;
-    const progressH = 12;
-    this.drawViewerText(ctx, `TIME ${this.elapsed.toFixed(1)}s`, infoX + 28, infoY + 34, { font: '900 26px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 4 });
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, progressW, progressH, 7);
-    ctx.fill();
-    ctx.fillStyle = '#35f2ff';
-    this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, Math.max(6, progressW * leaderProgress), progressH, 7);
-    ctx.fill();
-    this.drawViewerText(ctx, `PROGRESS ${Math.round(leaderProgress * 100)}%`, progressX + progressW + 18, infoY + 25, { font: '900 20px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, maxWidth: 168 });
-    this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, progressX + progressW + 18, infoY + 50, { font: '800 17px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, maxWidth: 168 });
+    if (!toyParkOverlay) {
+      this.drawViewerRoundedRect(ctx, infoX, infoY, infoW, infoH, 22);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
+      ctx.fill();
+      const progressX = infoX + 238;
+      const progressY = infoY + 38;
+      const progressW = 250;
+      const progressH = 12;
+      this.drawViewerText(ctx, `TIME ${this.elapsed.toFixed(1)}s`, infoX + 28, infoY + 34, { font: '900 26px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 4 });
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, progressW, progressH, 7);
+      ctx.fill();
+      ctx.fillStyle = '#35f2ff';
+      this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, Math.max(6, progressW * leaderProgress), progressH, 7);
+      ctx.fill();
+      this.drawViewerText(ctx, `PROGRESS ${Math.round(leaderProgress * 100)}%`, progressX + progressW + 18, infoY + 25, { font: '900 20px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, maxWidth: 168 });
+      this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, progressX + progressW + 18, infoY + 50, { font: '800 17px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, maxWidth: 168 });
+    }
     ctx.restore();
 
     this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
@@ -2177,7 +2555,13 @@ class MarbleRace {
       canvasSize: `${w}x${h}`,
       liveEventTitle: caption.title,
       liveEventDetail: caption.detail,
+      liveEventVisible: !toyParkOverlay,
+      timeComponentVisible: !toyParkOverlay,
       liveStandingCount: ranking.length,
+      liveStandingStyle: liveStandingSummary.style,
+      liveStandingTitle: liveStandingSummary.title,
+      liveStandingRows: liveStandingSummary.rows,
+      toyParkOverlay,
       layout: 'horizontal',
       maxStandingRows: CANVAS_VIEWER_OVERLAY.maxStandingRows,
       horizontalContentScale: Number(horizontalContentScale.toFixed(3)),
@@ -2185,6 +2569,8 @@ class MarbleRace {
       logicalCanvasSize: `${Math.round(logicalW)}x${Math.round(logicalH)}`,
       channelHandle: CANVAS_VIEWER_OVERLAY.channelHandle,
       ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
+      ctaStyle: ctaSummary?.style || 'classic-red-cta',
+      ctaPosition: ctaSummary || { x: ctaX, y: ctaY, width: ctaW, height: ctaH, layout: 'horizontal' },
       elapsed: Number(this.elapsed.toFixed(2)),
       leaderProgress: Number(leaderProgress.toFixed(3)),
       leaderDistance: Number(leaderDistance.toFixed(1)),
@@ -2193,95 +2579,92 @@ class MarbleRace {
     else this.lastViewerOverlaySummary = overlaySummary;
   }
 
-  drawVerticalViewerCanvasOverlay({ ctx, canvas, ranking = [], leaderProgress = 0, leaderDistance = 0, caption = {}, summaryTarget = 'recording' } = {}) {
+  drawVerticalViewerCanvasOverlay({ ctx, canvas, ranking = [], leaderProgress = 0, leaderDistance = 0, caption = {}, summaryTarget = 'recording', toyParkOverlay = false } = {}) {
     const w = canvas.width;
     const h = canvas.height;
     const verticalContentScale = 0.74;
     const margin = 58;
 
-    // Compact Shorts event card at the top.
+    // Compact Shorts event card at the top. Toy Park intentionally omits this component in both web and recording overlays.
     const capX = margin;
     const capY = 42;
     const capW = w - margin * 2;
     const capH = 124;
-    ctx.save();
-    const capGradient = ctx.createLinearGradient(capX, capY, capX + capW, capY + capH);
-    capGradient.addColorStop(0, 'rgba(255, 128, 0, 0.94)');
-    capGradient.addColorStop(1, 'rgba(255, 224, 80, 0.80)');
-    this.drawViewerRoundedRect(ctx, capX, capY, capW, capH, 24);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.54)';
-    ctx.fill();
-    this.drawViewerRoundedRect(ctx, capX + 14, capY + 13, 134, 32, 16);
-    ctx.fillStyle = capGradient;
-    ctx.fill();
-    this.drawViewerText(ctx, 'LIVE EVENT', capX + 81, capY + 30, { font: '900 18px Arial Black, Impact, sans-serif', fill: '#141414', strokeWidth: 0, align: 'center' });
-    this.drawViewerText(ctx, caption.title || 'MARBLE RUSH', capX + 26, capY + 74, { font: '900 37px Arial Black, Impact, sans-serif', fill: '#fff7b1', maxWidth: capW - 52 });
-    this.drawViewerText(ctx, caption.detail || 'Pick your winner', capX + 26, capY + 106, { font: '800 21px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: capW - 52 });
-    ctx.restore();
+    if (!toyParkOverlay) {
+      ctx.save();
+      const capGradient = ctx.createLinearGradient(capX, capY, capX + capW, capY + capH);
+      capGradient.addColorStop(0, 'rgba(255, 128, 0, 0.94)');
+      capGradient.addColorStop(1, 'rgba(255, 224, 80, 0.80)');
+      this.drawViewerRoundedRect(ctx, capX, capY, capW, capH, 24);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.54)';
+      ctx.fill();
+      this.drawViewerRoundedRect(ctx, capX + 14, capY + 13, 134, 32, 16);
+      ctx.fillStyle = capGradient;
+      ctx.fill();
+      this.drawViewerText(ctx, 'LIVE EVENT', capX + 81, capY + 30, { font: '900 18px Arial Black, Impact, sans-serif', fill: '#141414', strokeWidth: 0, align: 'center' });
+      this.drawViewerText(ctx, caption.title || 'MARBLE RUSH', capX + 26, capY + 74, { font: '900 37px Arial Black, Impact, sans-serif', fill: '#fff7b1', maxWidth: capW - 52 });
+      this.drawViewerText(ctx, caption.detail || 'Pick your winner', capX + 26, capY + 106, { font: '800 21px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: capW - 52 });
+      ctx.restore();
+    }
 
     // Shorts-friendly top-three standings card. Keep it compact so the middle race action stays visible.
-    const boardW = w - margin * 2;
-    const rowH = 48;
-    const boardH = 66 + rowH * Math.max(1, ranking.length || 3);
-    const boardX = margin;
-    const boardY = Math.min(h - 595, 196);
-    this.drawViewerRoundedRect(ctx, boardX, boardY, boardW, boardH, 24);
-    ctx.fillStyle = 'rgba(3, 8, 18, 0.70)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.30)';
-    ctx.lineWidth = 4;
-    ctx.stroke();
-    this.drawViewerText(ctx, 'LIVE STANDING', boardX + 22, boardY + 31, { font: '900 26px Arial Black, Impact, sans-serif', fill: '#8df7ff', strokeWidth: 5 });
-    ranking.forEach((data, index) => {
-      const y = boardY + 54 + index * rowH;
-      const color = `#${(data.color || 0xffffff).toString(16).padStart(6, '0')}`;
-      this.drawViewerRoundedRect(ctx, boardX + 20, y, boardW - 40, 38, 14);
-      ctx.fillStyle = index === 0 ? 'rgba(255, 214, 64, 0.30)' : 'rgba(255,255,255,0.11)';
-      ctx.fill();
-      this.drawViewerText(ctx, `#${index + 1}`, boardX + 37, y + 19, { font: '900 19px Arial Black, Impact, sans-serif', fill: index === 0 ? '#ffdf3f' : '#ffffff', strokeWidth: 4 });
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(boardX + 92, y + 19, 9, 0, Math.PI * 2);
-      ctx.fill();
-      this.drawViewerText(ctx, data.name || `Marble ${data.id + 1}`, boardX + 112, y + 19, { font: '800 18px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 4, maxWidth: boardW - 235 });
-      const label = data.defeated ? 'DNF' : data.finished ? `${(data.finishTime || this.elapsed || 0).toFixed(1)}s` : `${Math.round((data.progress || 0) * 100)}%`;
-      this.drawViewerText(ctx, label, boardX + boardW - 34, y + 19, { font: '900 18px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, align: 'right' });
+    const compactToyParkStanding = toyParkOverlay;
+    const boardW = compactToyParkStanding ? Math.round(w * 0.32) : w - margin * 2;
+    const rowH = compactToyParkStanding ? 30 : 48;
+    const boardX = compactToyParkStanding ? margin : margin;
+    const boardY = compactToyParkStanding ? 42 : Math.min(h - 595, 196);
+    const liveStandingSummary = this.drawViewerLiveStandingPanel({
+      ctx,
+      ranking,
+      x: boardX,
+      y: boardY,
+      width: boardW,
+      rowHeight: rowH,
+      vertical: true,
+      toyPark: toyParkOverlay,
     });
 
-    // Bottom stacked CTA and progress lower-third.
-    const ctaX = margin;
-    const ctaY = h - 216;
-    const ctaW = w - margin * 2;
-    const ctaH = 64;
-    this.drawViewerRoundedRect(ctx, ctaX, ctaY, ctaW, ctaH, 22);
-    ctx.fillStyle = 'rgba(255, 36, 66, 0.92)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-    ctx.lineWidth = 4;
-    ctx.stroke();
-    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.ctaPrimary, ctaX + ctaW / 2, ctaY + 27, { font: '900 31px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 5, align: 'center', maxWidth: ctaW - 48 });
-    this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.channelHandle, ctaX + ctaW / 2, ctaY + 51, { font: '800 19px Arial, system-ui, sans-serif', fill: '#fff3a0', strokeWidth: 4, align: 'center', maxWidth: ctaW - 48 });
+    // Bottom stacked CTA. Toy Park uses the same arcade styling as its leaderboard, placed bottom-right to keep the start area clear.
+    const ctaW = toyParkOverlay ? Math.round(w * 0.46) : w - margin * 2;
+    const ctaH = toyParkOverlay ? 50 : 64;
+    const ctaX = toyParkOverlay ? w - margin - ctaW : margin;
+    const ctaY = toyParkOverlay ? h - ctaH - 58 : h - 216;
+    let ctaSummary = null;
+    if (toyParkOverlay) {
+      ctaSummary = this.drawToyParkArcadeCta({ ctx, x: ctaX, y: ctaY, width: ctaW, height: ctaH, vertical: true });
+    } else {
+      this.drawViewerRoundedRect(ctx, ctaX, ctaY, ctaW, ctaH, 22);
+      ctx.fillStyle = 'rgba(255, 36, 66, 0.92)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.ctaPrimary, ctaX + ctaW / 2, ctaY + 27, { font: '900 31px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 5, align: 'center', maxWidth: ctaW - 48 });
+      this.drawViewerText(ctx, CANVAS_VIEWER_OVERLAY.channelHandle, ctaX + ctaW / 2, ctaY + 51, { font: '800 19px Arial, system-ui, sans-serif', fill: '#fff3a0', strokeWidth: 4, align: 'center', maxWidth: ctaW - 48 });
+    }
 
     const infoX = margin;
     const infoY = h - 128;
     const infoW = w - margin * 2;
     const infoH = 78;
-    this.drawViewerRoundedRect(ctx, infoX, infoY, infoW, infoH, 20);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.64)';
-    ctx.fill();
-    this.drawViewerText(ctx, `TIME ${this.elapsed.toFixed(1)}s`, infoX + 24, infoY + 27, { font: '900 21px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 4 });
-    this.drawViewerText(ctx, `PROGRESS ${Math.round(leaderProgress * 100)}%`, infoX + infoW - 24, infoY + 27, { font: '900 20px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, align: 'right' });
-    const progressX = infoX + 24;
-    const progressY = infoY + 53;
-    const progressW = infoW - 68;
-    const progressH = 10;
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, progressW, progressH, 8);
-    ctx.fill();
-    ctx.fillStyle = '#35f2ff';
-    this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, Math.max(8, progressW * leaderProgress), progressH, 8);
-    ctx.fill();
-    this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, infoX + infoW / 2, infoY + 69, { font: '800 16px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, align: 'center', maxWidth: infoW - 68 });
+    if (!toyParkOverlay) {
+      this.drawViewerRoundedRect(ctx, infoX, infoY, infoW, infoH, 20);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.64)';
+      ctx.fill();
+      this.drawViewerText(ctx, `TIME ${this.elapsed.toFixed(1)}s`, infoX + 24, infoY + 27, { font: '900 21px Arial Black, Impact, sans-serif', fill: '#ffffff', strokeWidth: 4 });
+      this.drawViewerText(ctx, `PROGRESS ${Math.round(leaderProgress * 100)}%`, infoX + infoW - 24, infoY + 27, { font: '900 20px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, align: 'right' });
+      const progressX = infoX + 24;
+      const progressY = infoY + 53;
+      const progressW = infoW - 68;
+      const progressH = 10;
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, progressW, progressH, 8);
+      ctx.fill();
+      ctx.fillStyle = '#35f2ff';
+      this.drawViewerRoundedRect(ctx, progressX, progressY - progressH / 2, Math.max(8, progressW * leaderProgress), progressH, 8);
+      ctx.fill();
+      this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, infoX + infoW / 2, infoY + 69, { font: '800 16px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, align: 'center', maxWidth: infoW - 68 });
+    }
 
     this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
     const survivorSpotlightSummary = this.drawCanvasSurvivorSpotlight({ ctx, canvas, summaryTarget });
@@ -2296,16 +2679,25 @@ class MarbleRace {
       verticalLayoutMetrics: {
         margin,
         eventCard: { x: capX, y: capY, width: capW, height: capH },
-        standingCard: { x: boardX, y: boardY, width: boardW, height: boardH, rowHeight: rowH },
+        standingCard: { x: boardX, y: boardY, width: boardW, height: liveStandingSummary.height, rowHeight: rowH },
         ctaCard: { x: ctaX, y: ctaY, width: ctaW, height: ctaH },
         infoCard: { x: infoX, y: infoY, width: infoW, height: infoH },
       },
       liveEventTitle: caption.title,
       liveEventDetail: caption.detail,
+      liveEventVisible: !toyParkOverlay,
+      timeComponentVisible: !toyParkOverlay,
       liveStandingCount: ranking.length,
-      maxStandingRows: 3,
+      liveStandingStyle: liveStandingSummary.style,
+      liveStandingTitle: liveStandingSummary.title,
+      liveStandingRows: liveStandingSummary.rows,
+      toyParkOverlay,
+      liveStandingCompact: liveStandingSummary.compact === true,
+      maxStandingRows: toyParkOverlay ? CANVAS_VIEWER_OVERLAY.maxStandingRows : 3,
       channelHandle: CANVAS_VIEWER_OVERLAY.channelHandle,
       ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
+      ctaStyle: ctaSummary?.style || 'classic-red-cta',
+      ctaPosition: ctaSummary || { x: ctaX, y: ctaY, width: ctaW, height: ctaH, layout: 'vertical' },
       elapsed: Number(this.elapsed.toFixed(2)),
       leaderProgress: Number(leaderProgress.toFixed(3)),
       leaderDistance: Number(leaderDistance.toFixed(1)),
