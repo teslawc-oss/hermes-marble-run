@@ -1939,11 +1939,11 @@ class MarbleRace {
       const currentLap = Math.max(1, Math.min(totalLaps, Math.floor(leaderProgress * totalLaps) + 1));
       const raceNumber = this.cupMode?.active ? (this.cupMode.stageIndex || 0) + 1 : 1;
       const compactVertical = vertical && width <= 260;
-      const headerH = compactVertical ? 64 : (vertical ? 108 : 114);
+      const headerH = compactVertical ? 60 : (vertical ? 108 : 114);
       const rankW = compactVertical ? 30 : (vertical ? 48 : 56);
-      const rowH = compactVertical ? Math.max(34, rowHeight || 34) : (vertical ? 46 : 54);
-      const gap = compactVertical ? 5 : (vertical ? 8 : 9);
-      const avatar = compactVertical ? 26 : (vertical ? 40 : 48);
+      const rowH = compactVertical ? Math.max(30, rowHeight || 30) : (vertical ? 46 : 54);
+      const gap = compactVertical ? 4 : (vertical ? 8 : 9);
+      const avatar = compactVertical ? Math.min(24, Math.max(20, rowH - 8)) : (vertical ? 40 : 48);
       const rowX = x + rankW;
       const rowW = width - rankW;
       const boardHeight = headerH + rows * rowH + Math.max(0, rows - 1) * gap + 16;
@@ -2084,7 +2084,7 @@ class MarbleRace {
         if (index === 0) drawChecker(rowX + rowW - (compactVertical ? 30 : (vertical ? 52 : 60)), rowY + (compactVertical ? 6 : 8), compactVertical ? 22 : (vertical ? 38 : 45), rowH - (compactVertical ? 12 : 16));
         ctx.restore();
         this.drawViewerText(ctx, `${index + 1}`, x + rankW * 0.48, rowY + rowH * 0.62, {
-          font: compactVertical ? '900 19px Arial Black, Impact, sans-serif' : (vertical ? '900 32px Arial Black, Impact, sans-serif' : '900 40px Arial Black, Impact, sans-serif'),
+          font: compactVertical ? '900 18px Arial Black, Impact, sans-serif' : (vertical ? '900 32px Arial Black, Impact, sans-serif' : '900 40px Arial Black, Impact, sans-serif'),
           fill: '#ffd43d', stroke: textStroke, strokeWidth: compactVertical ? 2.5 : (vertical ? 7 : 8), align: 'center',
         });
         drawAvatar(data, rowX + (compactVertical ? 6 : (vertical ? 8 : 10)), rowY + (rowH - avatar) / 2, avatar, index);
@@ -2663,9 +2663,9 @@ class MarbleRace {
     const boardW = compactToyParkStanding
       ? (toyParkNarrowWebPreview ? Math.min(Math.round(w * 0.37), 150) : Math.min(Math.round(w * 0.32), 240))
       : w - margin * 2;
-    const rowH = compactToyParkStanding ? (toyParkNarrowWebPreview ? 32 : 40) : 48;
+    const rowH = compactToyParkStanding ? (toyParkNarrowWebPreview ? 32 : 34) : 48;
     const boardX = compactToyParkStanding ? (toyParkNarrowWebPreview ? 36 : 32) : margin;
-    const boardY = compactToyParkStanding ? (toyParkNarrowWebPreview ? 28 : 28) : Math.min(h - 595, 196);
+    const boardY = compactToyParkStanding ? (toyParkNarrowWebPreview ? 18 : 16) : Math.min(h - 595, 196);
     const liveStandingSummary = this.drawViewerLiveStandingPanel({
       ctx,
       ranking,
