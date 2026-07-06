@@ -1855,10 +1855,10 @@ class MarbleRace {
     const textStroke = '#17131f';
     const skew = Math.max(10, height * 0.18);
     ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.34)';
-    ctx.shadowBlur = vertical ? 7 : 10;
-    ctx.shadowOffsetX = 3;
-    ctx.shadowOffsetY = 5;
+    ctx.shadowColor = 'rgba(0,0,0,0)';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
     ctx.beginPath();
     ctx.moveTo(x + skew, y);
     ctx.lineTo(x + width, y);
