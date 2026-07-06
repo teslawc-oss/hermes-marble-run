@@ -2398,23 +2398,46 @@ class MarbleRace {
     let toyParkStartLight = null;
     if (toyParkStyle) {
       const lightSpecs = [
-        { key: 'red', fill: '#ff4057', dim: 'rgba(94, 29, 40, 0.92)' },
-        { key: 'yellow', fill: '#ffd43d', dim: 'rgba(105, 82, 26, 0.92)' },
-        { key: 'green', fill: '#42d96b', dim: 'rgba(26, 86, 47, 0.92)' },
+        { key: 'red', fill: '#ff4057', dim: 'rgba(94, 29, 40, 0.78)' },
+        { key: 'yellow', fill: '#ffd43d', dim: 'rgba(105, 82, 26, 0.78)' },
+        { key: 'green', fill: '#42d96b', dim: 'rgba(26, 86, 47, 0.78)' },
       ];
       const activeLight = state.isGo
         ? 'green'
         : (state.countdownRemaining > 2 ? null : (state.countdownRemaining > 1 ? 'red' : (state.countdownRemaining > 0 ? 'yellow' : 'green')));
       const activeSpec = lightSpecs.find((light) => light.key === activeLight) || { key: 'idle', fill: '#ffffff', dim: 'rgba(42, 42, 48, 0.92)' };
       toyParkStartLight = activeLight;
-      const panelW = isVertical ? Math.min(360, w * 0.48) : Math.min(330, w * 0.30);
-      const panelH = isVertical ? Math.min(240, h * 0.19) : Math.min(190, h * 0.26);
+      const panelW = isVertical ? Math.min(390, w * 0.52) : Math.min(360, w * 0.32);
+      const panelH = isVertical ? Math.min(250, h * 0.195) : Math.min(200, h * 0.27);
       const panelX = cx - panelW / 2;
       const panelY = cy - panelH / 2;
-      const panelRadius = Math.max(26, minDim * 0.04);
-      const flagW = Math.max(58, panelW * 0.20);
-      const flagH = Math.max(46, panelH * 0.28);
+      const panelRadius = Math.max(30, minDim * 0.045);
+      const flagW = Math.max(62, panelW * 0.20);
+      const flagH = Math.max(48, panelH * 0.27);
       const poleH = flagH * 1.75;
+      const candyStripe = (x, y, stripeW, stripeH, phase = 0) => {
+        ctx.save();
+        this.drawViewerRoundedRect(ctx, x, y, stripeW, stripeH, stripeH / 2);
+        ctx.clip();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(x, y, stripeW, stripeH);
+        const stripeStep = Math.max(18, stripeH * 0.82);
+        ctx.fillStyle = '#ff70a6';
+        for (let sx = x - stripeW; sx < x + stripeW * 2; sx += stripeStep) {
+          ctx.beginPath();
+          ctx.moveTo(sx + phase, y + stripeH);
+          ctx.lineTo(sx + phase + stripeStep * 0.48, y + stripeH);
+          ctx.lineTo(sx + phase + stripeStep * 1.18, y);
+          ctx.lineTo(sx + phase + stripeStep * 0.70, y);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+        this.drawViewerRoundedRect(ctx, x, y, stripeW, stripeH, stripeH / 2);
+        ctx.strokeStyle = textStroke;
+        ctx.lineWidth = Math.max(3, minDim * 0.0045);
+        ctx.stroke();
+      };
       const drawFlag = (poleX, poleY, dir = 1) => {
         ctx.save();
         ctx.strokeStyle = textStroke;
@@ -2443,28 +2466,38 @@ class MarbleRace {
       drawFlag(panelX + panelW + flagW * 0.38, panelY + panelH * 0.08, -1);
 
       this.drawViewerRoundedRect(ctx, panelX, panelY, panelW, panelH, panelRadius);
-      const housingGradient = ctx.createLinearGradient(panelX, panelY, panelX, panelY + panelH);
-      housingGradient.addColorStop(0, 'rgba(36, 38, 48, 0.96)');
-      housingGradient.addColorStop(0.48, 'rgba(18, 20, 30, 0.96)');
-      housingGradient.addColorStop(1, 'rgba(8, 10, 18, 0.96)');
+      const housingGradient = ctx.createLinearGradient(panelX, panelY, panelX + panelW, panelY + panelH);
+      housingGradient.addColorStop(0, 'rgba(55, 203, 255, 0.97)');
+      housingGradient.addColorStop(0.48, 'rgba(45, 71, 197, 0.96)');
+      housingGradient.addColorStop(1, 'rgba(255, 174, 65, 0.97)');
       ctx.fillStyle = housingGradient;
       ctx.fill();
       ctx.strokeStyle = textStroke;
-      ctx.lineWidth = Math.max(6, minDim * 0.010);
+      ctx.lineWidth = Math.max(7, minDim * 0.011);
+      ctx.stroke();
+
+      candyStripe(panelX + panelW * 0.09, panelY + panelH * 0.08, panelW * 0.82, Math.max(18, panelH * 0.075), state.ageSeconds * 10);
+
+      const innerPad = Math.max(12, panelW * 0.04);
+      this.drawViewerRoundedRect(ctx, panelX + innerPad, panelY + panelH * 0.23, panelW - innerPad * 2, panelH * 0.54, panelRadius * 0.72);
+      ctx.fillStyle = 'rgba(23, 19, 31, 0.90)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.34)';
+      ctx.lineWidth = Math.max(2.5, minDim * 0.004);
       ctx.stroke();
 
       const labelH = Math.max(34, panelH * 0.18);
-      const labelW = panelW * 0.72;
+      const labelW = panelW * 0.70;
       const labelX = cx - labelW / 2;
-      const labelY = panelY - labelH * 0.52;
+      const labelY = panelY - labelH * 0.34;
       this.drawViewerRoundedRect(ctx, labelX, labelY, labelW, labelH, labelH / 2);
-      ctx.fillStyle = 'rgba(23, 19, 31, 0.92)';
+      ctx.fillStyle = '#ffd43d';
       ctx.fill();
-      ctx.strokeStyle = activeSpec.fill;
-      ctx.lineWidth = Math.max(3, minDim * 0.0045);
+      ctx.strokeStyle = textStroke;
+      ctx.lineWidth = Math.max(4, minDim * 0.006);
       ctx.stroke();
-      this.drawViewerText(ctx, state.isGo ? 'RUSH!' : 'START LIGHTS', cx, labelY + labelH * 0.52, {
-        font: `900 ${Math.round(minDim * (isVertical ? 0.029 : 0.023))}px Arial Black, Impact, sans-serif`,
+      this.drawViewerText(ctx, state.isGo ? 'RUSH!' : 'TOY PARK START', cx, labelY + labelH * 0.54, {
+        font: `900 ${Math.round(minDim * (isVertical ? 0.027 : 0.022))}px Arial Black, Impact, sans-serif`,
         fill: '#ffffff', stroke: textStroke, strokeWidth: Math.max(3, minDim * 0.005), align: 'center', maxWidth: labelW - 28,
       });
 
@@ -2505,13 +2538,16 @@ class MarbleRace {
       const footerW = panelW * 0.78;
       const footerH = Math.max(34, panelH * 0.17);
       const footerX = cx - footerW / 2;
-      const footerY = panelY + panelH - footerH * 0.74;
+      const footerY = panelY + panelH - footerH * 0.64;
       this.drawViewerRoundedRect(ctx, footerX, footerY, footerW, footerH, footerH / 2);
-      ctx.fillStyle = 'rgba(23, 19, 31, 0.74)';
+      ctx.fillStyle = '#ffffff';
       ctx.fill();
+      ctx.strokeStyle = textStroke;
+      ctx.lineWidth = Math.max(3, minDim * 0.0045);
+      ctx.stroke();
       this.drawViewerText(ctx, state.isGo ? 'GO GO GO!' : `${Math.max(1, this.marbleData?.length || 8)} MARBLES READY`, cx, footerY + footerH * 0.52, {
         font: `900 ${Math.round(minDim * (isVertical ? 0.022 : 0.018))}px Arial Black, Impact, sans-serif`,
-        fill: activeSpec.fill, stroke: textStroke, strokeWidth: Math.max(3, minDim * 0.0045), align: 'center', maxWidth: footerW - 24,
+        fill: activeSpec.fill === '#ffffff' ? '#37cbff' : activeSpec.fill, stroke: textStroke, strokeWidth: Math.max(3, minDim * 0.0045), align: 'center', maxWidth: footerW - 24,
       });
     } else {
       this.drawViewerRoundedRect(ctx, cardX, cardY, cardW, cardH, radius);
