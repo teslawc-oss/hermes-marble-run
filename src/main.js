@@ -1851,6 +1851,19 @@ class MarbleRace {
       || this.trackStats?.toyParkStartBoard?.enabled === true;
   }
 
+  getToyParkOverlayTotalLaps() {
+    // The current Toy Park course is one closed loop from start to finish. Keep this helper
+    // separate so a future multi-lap mode can wire its configured lap count here.
+    const candidates = [
+      this.toyParkRaceLaps,
+      this.trackStats?.toyParkTotalLaps,
+      this.trackStats?.toyParkLapCount,
+      this.trackStats?.raceLaps,
+    ];
+    const configured = candidates.find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+    return Math.max(1, Math.round(Number(configured || 1)));
+  }
+
   drawToyParkArcadeCta({ ctx, x = 0, y = 0, width = 420, height = 64, vertical = false } = {}) {
     const textStroke = '#17131f';
     const skew = Math.max(10, height * 0.18);
@@ -1918,7 +1931,9 @@ class MarbleRace {
   drawViewerLiveStandingPanel({ ctx, ranking = [], x = 0, y = 0, width = 390, rowHeight = 62, vertical = false, toyPark = false } = {}) {
     const rows = ranking.length;
     if (toyPark) {
-      const totalLaps = 3;
+      // Toy Park currently runs as a single closed-course lap; keep the arcade standing
+      // lap labels tied to the actual race format rather than the old 3-lap placeholder.
+      const totalLaps = this.getToyParkOverlayTotalLaps?.() || 1;
       const leader = ranking[0] || this.getRanking({ force: false })[0] || null;
       const leaderProgress = clamp(leader?.progress || 0, 0, 1);
       const currentLap = Math.max(1, Math.min(totalLaps, Math.floor(leaderProgress * totalLaps) + 1));
