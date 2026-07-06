@@ -6942,6 +6942,12 @@ class MarbleRace {
     const gateWidth = gateLayout.gateWidth;
     let toyParkStartSlotMarkerCount = 0;
     let toyParkStartSlotMarkerPartCount = 0;
+    let toyParkStartSlotMarkerRows = null;
+    let toyParkStartSlotMarkerConfiguredRows = null;
+    let toyParkStartSlotMarkerRowSpacing = null;
+    let toyParkStartSlotMarkerConfiguredRowSpacing = null;
+    let toyParkStartSlotMarkerFitRowSpacing = null;
+    let toyParkStartSlotMarkerRowSpacingCompressed = false;
     if (isToyParkStartTile && isNoGateRacingGridStart) {
       const markerMat = new THREE.MeshPhysicalMaterial({
         color: 0xfff1b8,
@@ -6958,15 +6964,26 @@ class MarbleRace {
         boardDecoration: 'slot-marker-only-no-texture-dots-no-board-grid-lines',
       };
       const racingGridColumns = Math.max(1, Math.floor(START_GATE_DESIGN.racingGridColumns ?? 4));
-      const racingGridRows = Math.max(1, Math.floor(START_GATE_DESIGN.racingGridRows ?? 4));
+      const configuredRacingGridRows = Math.max(1, Math.floor(START_GATE_DESIGN.racingGridRows ?? 4));
       const occupiedPerRow = Math.max(1, Math.min(racingGridColumns, Math.floor(START_GATE_DESIGN.racingGridOccupiedPerRow ?? Math.ceil(racingGridColumns / 2))));
+      const racingGridRows = Math.max(configuredRacingGridRows, Math.ceil(requestedCount / occupiedPerRow));
+      toyParkStartSlotMarkerConfiguredRows = configuredRacingGridRows;
+      toyParkStartSlotMarkerRows = racingGridRows;
       const racingGridWidth = START_GATE_DESIGN.racingGridColumnSpacing ?? 1.45;
       const racingLaneGap = racingGridColumns > 1 ? racingGridWidth / (racingGridColumns - 1) : 0;
-      const racingRowSpacing = Math.max(0.95, START_GATE_DESIGN.racingGridRowSpacing ?? 1.28);
+      const configuredRacingRowSpacing = Math.max(0.95, START_GATE_DESIGN.racingGridRowSpacing ?? 1.28);
       const gateLocalZ = this.getStartPrepLocalZForBack(START_GATE_DESIGN.gateBackDistance);
       const safeBackLocalZ = -depth / 2 + 0.7;
       const gridFrontLocalZ = clamp(gateLocalZ - 0.38, safeBackLocalZ, depth / 2 - 0.95);
-      const uniqueSlotCount = Math.min(requestedCount, racingGridRows * occupiedPerRow);
+      const gridBackLimit = -depth / 2 + 0.72;
+      const usableDepth = Math.max(0.001, gridFrontLocalZ - gridBackLimit);
+      const fitRowSpacing = racingGridRows > 1 ? usableDepth / (racingGridRows - 1) : configuredRacingRowSpacing;
+      const racingRowSpacing = Math.max(0.28, Math.min(configuredRacingRowSpacing, fitRowSpacing));
+      toyParkStartSlotMarkerConfiguredRowSpacing = configuredRacingRowSpacing;
+      toyParkStartSlotMarkerFitRowSpacing = fitRowSpacing;
+      toyParkStartSlotMarkerRowSpacing = racingRowSpacing;
+      toyParkStartSlotMarkerRowSpacingCompressed = racingRowSpacing < configuredRacingRowSpacing - 0.001;
+      const uniqueSlotCount = requestedCount;
       const markerY = -0.001;
       const markerThickness = 0.055;
       const markerHeight = 0.035;
@@ -7288,9 +7305,16 @@ class MarbleRace {
         noGateRacingGridStart: isNoGateRacingGridStart,
         racingGridColumns: START_GATE_DESIGN.racingGridColumns,
         racingGridOccupiedPerRow: START_GATE_DESIGN.racingGridOccupiedPerRow,
-        racingGridRows: START_GATE_DESIGN.racingGridRows,
-        racingGridSurfaceClearance: START_GATE_DESIGN.racingGridSurfaceClearance,
-        racingGridStyle: isNoGateRacingGridStart ? 'four-column-checkerboard-alternating-two-marbles-per-row' : null,
+        racingGridRows: toyParkStartSlotMarkerRows ?? START_GATE_DESIGN.racingGridRows,
+        configuredRacingGridRows: toyParkStartSlotMarkerConfiguredRows ?? START_GATE_DESIGN.racingGridRows,
+        racingGridRequiredRows: toyParkStartSlotMarkerRows,
+        racingGridMarkerRows: toyParkStartSlotMarkerRows,
+        racingGridMarkerRowSpacing: toyParkStartSlotMarkerRowSpacing != null ? Number(toyParkStartSlotMarkerRowSpacing.toFixed(3)) : null,
+        racingGridMarkerConfiguredRowSpacing: toyParkStartSlotMarkerConfiguredRowSpacing != null ? Number(toyParkStartSlotMarkerConfiguredRowSpacing.toFixed(3)) : null,
+        racingGridMarkerFitRowSpacing: toyParkStartSlotMarkerFitRowSpacing != null ? Number(toyParkStartSlotMarkerFitRowSpacing.toFixed(3)) : null,
+        racingGridMarkerRowSpacingCompressed: toyParkStartSlotMarkerRowSpacingCompressed,
+        racingGridMarkersScaleWithMarbleCount: true,
+        racingGridStyle: isNoGateRacingGridStart ? 'four-column-checkerboard-alternating-two-marbles-per-row-extends-with-marble-count' : null,
       };
     }
 
