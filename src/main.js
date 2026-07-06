@@ -13494,6 +13494,7 @@ class MarbleRace {
     canvas.width = 256;
     canvas.height = 128;
     const ctx = canvas.getContext('2d');
+    const isToyParkCharacterPattern = TOY_PARK_MARBLE_IDENTITIES.some((toyIdentity) => toyIdentity.patternKey === patternKey);
     const colorToHex = (value) => `#${Number(value).toString(16).padStart(6, '0')}`;
     const paletteHex = (palette?.length ? palette : [color]).map(colorToHex);
     const base = paletteHex[0];
@@ -13531,35 +13532,38 @@ class MarbleRace {
       }
     } else if (patternKey === 'candy-captain') {
       ctx.fillStyle = accent;
-      for (let x = -canvas.height; x < canvas.width; x += 34) {
+      for (let x = -canvas.height; x < canvas.width; x += 26) {
         ctx.save();
         ctx.translate(x, 0);
-        ctx.rotate(-0.42);
-        ctx.fillRect(0, -20, 15, canvas.height + 50);
+        ctx.rotate(-0.45);
+        ctx.fillRect(0, -24, 20, canvas.height + 58);
         ctx.restore();
       }
+      ctx.strokeStyle = '#111111'; ctx.lineWidth = 6; ctx.strokeRect(3, 3, canvas.width - 6, canvas.height - 6);
       ctx.fillStyle = accent2;
-      ctx.fillRect(94, 35, 68, 16);
+      ctx.fillRect(86, 29, 84, 22);
+      ctx.strokeStyle = '#111111'; ctx.lineWidth = 5; ctx.strokeRect(86, 29, 84, 22);
       ctx.beginPath();
-      ctx.moveTo(108, 35); ctx.lineTo(128, 17); ctx.lineTo(148, 35); ctx.closePath(); ctx.fill();
+      ctx.moveTo(103, 29); ctx.lineTo(128, 7); ctx.lineTo(153, 29); ctx.closePath(); ctx.fill(); ctx.stroke();
       ctx.fillStyle = '#271215';
-      ctx.beginPath(); ctx.arc(116, 70, 5, 0, Math.PI * 2); ctx.arc(140, 70, 5, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#271215'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(128, 73, 19, 0.2, Math.PI - 0.2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(114, 73, 8, 0, Math.PI * 2); ctx.arc(142, 73, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#271215'; ctx.lineWidth = 8; ctx.beginPath(); ctx.arc(128, 76, 24, 0.18, Math.PI - 0.18); ctx.stroke();
     } else if (patternKey === 'bubble-goblin') {
       for (let i = 0; i < 22; i += 1) {
         const x = (i * 37 + index * 11) % canvas.width;
         const y = (i * 29 + index * 17) % canvas.height;
         ctx.strokeStyle = i % 2 ? accent : accent2;
-        ctx.lineWidth = 3;
-        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 5;
+        ctx.globalAlpha = 0.78;
         ctx.beginPath(); ctx.arc(x, y, 6 + (i % 5) * 3, 0, Math.PI * 2); ctx.stroke();
       }
       ctx.globalAlpha = 1;
       ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.ellipse(108, 66, 18, 25, -0.18, 0, Math.PI * 2); ctx.ellipse(148, 66, 18, 25, 0.18, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(101, 66, 27, 34, -0.18, 0, Math.PI * 2); ctx.ellipse(155, 66, 27, 34, 0.18, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#10251f'; ctx.lineWidth = 6; ctx.stroke();
       ctx.fillStyle = '#1b0f2f';
-      ctx.beginPath(); ctx.arc(114, 67, 8, 0, Math.PI * 2); ctx.arc(142, 67, 8, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#1b0f2f'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(104, 48); ctx.lineTo(88, 38); ctx.moveTo(152, 48); ctx.lineTo(168, 38); ctx.stroke();
+      ctx.beginPath(); ctx.arc(111, 68, 13, 0, Math.PI * 2); ctx.arc(145, 68, 13, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#1b0f2f'; ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(98, 42); ctx.lineTo(74, 25); ctx.moveTo(158, 42); ctx.lineTo(182, 25); ctx.stroke();
     } else if (patternKey === 'rocket-bunny') {
       ctx.fillStyle = accent;
       for (let i = 0; i < 18; i += 1) {
@@ -13574,56 +13578,64 @@ class MarbleRace {
         ctx.closePath(); ctx.fill();
       }
       ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.ellipse(118, 45, 9, 25, -0.2, 0, Math.PI * 2); ctx.ellipse(138, 45, 9, 25, 0.2, 0, Math.PI * 2); ctx.arc(128, 78, 24, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(114, 42, 13, 33, -0.2, 0, Math.PI * 2); ctx.ellipse(142, 42, 13, 33, 0.2, 0, Math.PI * 2); ctx.arc(128, 80, 32, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#172554'; ctx.lineWidth = 6; ctx.stroke();
       ctx.fillStyle = accent3; ctx.beginPath(); ctx.moveTo(165, 82); ctx.lineTo(205, 68); ctx.lineTo(184, 105); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = '#172554'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(120, 75, 3, 0, Math.PI * 2); ctx.arc(136, 75, 3, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#172554'; ctx.beginPath(); ctx.arc(119, 76, 6, 0, Math.PI * 2); ctx.arc(137, 76, 6, 0, Math.PI * 2); ctx.fill();
     } else if (patternKey === 'choco-bear') {
       ctx.fillStyle = accent;
       for (let x = 0; x < canvas.width; x += 34) {
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.bezierCurveTo(x + 18, 25, x - 6, 42, x + 12, 64); ctx.lineTo(x + 26, 0); ctx.fill();
       }
       ctx.fillStyle = accent2;
-      ctx.beginPath(); ctx.arc(103, 58, 18, 0, Math.PI * 2); ctx.arc(153, 58, 18, 0, Math.PI * 2); ctx.arc(128, 78, 34, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(96, 54, 25, 0, Math.PI * 2); ctx.arc(160, 54, 25, 0, Math.PI * 2); ctx.arc(128, 80, 43, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#1d0f08'; ctx.lineWidth = 7; ctx.stroke();
       ctx.fillStyle = '#3b1b0f';
-      ctx.beginPath(); ctx.arc(116, 75, 4, 0, Math.PI * 2); ctx.arc(140, 75, 4, 0, Math.PI * 2); ctx.ellipse(128, 88, 9, 6, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(113, 75, 7, 0, Math.PI * 2); ctx.arc(143, 75, 7, 0, Math.PI * 2); ctx.ellipse(128, 91, 13, 9, 0, 0, Math.PI * 2); ctx.fill();
     } else if (patternKey === 'neon-penguin') {
-      ctx.strokeStyle = accent; ctx.lineWidth = 4;
+      ctx.strokeStyle = accent; ctx.lineWidth = 8;
       for (let y = 14; y < canvas.height; y += 24) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(80, y); ctx.lineTo(80, y + 12); ctx.lineTo(canvas.width, y + 12); ctx.stroke(); }
-      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(128, 76, 30, 40, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = accent2; ctx.fillRect(100, 59, 56, 13);
+      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(128, 76, 42, 50, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#00f5ff'; ctx.lineWidth = 7; ctx.stroke();
+      ctx.fillStyle = accent2; ctx.fillRect(91, 54, 74, 22);
       ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.arc(114, 65, 9, 0, Math.PI * 2); ctx.arc(142, 65, 9, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#ffb703'; ctx.beginPath(); ctx.moveTo(128, 76); ctx.lineTo(140, 86); ctx.lineTo(116, 86); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#ffb703'; ctx.beginPath(); ctx.moveTo(128, 78); ctx.lineTo(148, 92); ctx.lineTo(108, 92); ctx.closePath(); ctx.fill();
     } else if (patternKey === 'rainbow-unicorn') {
       [accent, accent2, accent3, '#ffe66d'].forEach((hex, i) => {
         ctx.fillStyle = hex;
         for (let n = 0; n < 9; n += 1) ctx.fillRect((n * 39 + i * 12) % canvas.width, (n * 17 + i * 23) % canvas.height, 18, 5);
       });
-      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(128, 76, 30, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#ffe66d'; ctx.beginPath(); ctx.moveTo(128, 32); ctx.lineTo(139, 62); ctx.lineTo(117, 62); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = '#9b5cff'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(116, 75, 7, 0.05, Math.PI - 0.05); ctx.arc(140, 75, 7, 0.05, Math.PI - 0.05); ctx.stroke();
+      ctx.strokeStyle = '#111827'; ctx.lineWidth = 8; ctx.beginPath(); ctx.arc(128, 77, 42, 0.15, Math.PI * 1.85); ctx.stroke();
+      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(128, 76, 36, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#9b5cff'; ctx.lineWidth = 6; ctx.stroke();
+      ctx.fillStyle = '#ffe66d'; ctx.beginPath(); ctx.moveTo(128, 20); ctx.lineTo(145, 63); ctx.lineTo(111, 63); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#111827'; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(114, 75, 9, 0.05, Math.PI - 0.05); ctx.arc(142, 75, 9, 0.05, Math.PI - 0.05); ctx.stroke();
     } else if (patternKey === 'mecha-duck') {
       ctx.fillStyle = accent;
       ctx.fillRect(0, 0, canvas.width / 2, canvas.height);
       ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
       for (let x = 18; x < 120; x += 24) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
-      ctx.fillStyle = '#fff7b8'; ctx.beginPath(); ctx.arc(128, 74, 34, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = accent2; ctx.fillRect(132, 50, 28, 23);
-      ctx.fillStyle = accent3; ctx.beginPath(); ctx.ellipse(127, 84, 28, 10, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.arc(118, 65, 4, 0, Math.PI * 2); ctx.arc(146, 61, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff7b8'; ctx.beginPath(); ctx.arc(128, 74, 43, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#111827'; ctx.lineWidth = 7; ctx.stroke();
+      ctx.fillStyle = accent2; ctx.fillRect(134, 42, 38, 34); ctx.strokeRect(134, 42, 38, 34);
+      ctx.fillStyle = accent3; ctx.beginPath(); ctx.ellipse(127, 88, 40, 14, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.arc(113, 63, 7, 0, Math.PI * 2); ctx.arc(153, 59, 10, 0, Math.PI * 2); ctx.fill();
     } else if (patternKey === 'lava-dragon') {
-      ctx.strokeStyle = accent2; ctx.lineWidth = 8;
+      ctx.strokeStyle = accent2; ctx.lineWidth = 13;
       for (let i = 0; i < 10; i += 1) { ctx.beginPath(); ctx.moveTo((i * 31) % canvas.width, 0); ctx.lineTo((i * 53 + 35) % canvas.width, canvas.height); ctx.stroke(); }
-      ctx.strokeStyle = accent; ctx.lineWidth = 3;
+      ctx.strokeStyle = accent; ctx.lineWidth = 6;
       for (let i = 0; i < 12; i += 1) { ctx.beginPath(); ctx.moveTo((i * 43) % canvas.width, 0); ctx.lineTo((i * 67 + 20) % canvas.width, canvas.height); ctx.stroke(); }
-      ctx.fillStyle = accent2; ctx.beginPath(); ctx.arc(128, 72, 32, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = accent; ctx.beginPath(); ctx.ellipse(128, 72, 24, 12, -0.12, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#101010'; ctx.beginPath(); ctx.ellipse(128, 72, 5, 13, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = accent2; ctx.beginPath(); ctx.moveTo(102, 47); ctx.lineTo(113, 24); ctx.lineTo(122, 52); ctx.moveTo(154, 47); ctx.lineTo(143, 24); ctx.lineTo(134, 52); ctx.fill();
+      ctx.fillStyle = accent2; ctx.beginPath(); ctx.arc(128, 72, 43, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#ffd000'; ctx.lineWidth = 7; ctx.stroke();
+      ctx.fillStyle = accent; ctx.beginPath(); ctx.ellipse(128, 72, 34, 17, -0.12, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#101010'; ctx.beginPath(); ctx.ellipse(128, 72, 7, 18, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = accent2; ctx.strokeStyle = '#ffd000'; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(96, 47); ctx.lineTo(112, 14); ctx.lineTo(124, 55); ctx.moveTo(160, 47); ctx.lineTo(144, 14); ctx.lineTo(132, 55); ctx.fill(); ctx.stroke();
     }
 
-    ctx.globalAlpha = 0.72;
-    const drawLoop = patternKey === 'speckle' || patternKey === 'starfield' ? 38 : 12;
-    for (let i = 0; i < drawLoop; i += 1) {
+    if (!isToyParkCharacterPattern) {
+      ctx.globalAlpha = 0.72;
+      const drawLoop = patternKey === 'speckle' || patternKey === 'starfield' ? 38 : 12;
+      for (let i = 0; i < drawLoop; i += 1) {
       ctx.beginPath();
       ctx.strokeStyle = i % 3 === 0 ? accent : (i % 3 === 1 ? '#ffffff' : accent2);
       ctx.fillStyle = i % 3 === 0 ? accent : (i % 3 === 1 ? 'rgba(255,255,255,0.78)' : accent3);
@@ -13677,6 +13689,7 @@ class MarbleRace {
         ctx.arc(40 + i * 24, 58 + Math.sin(i + index) * 22, 16 + (i % 4) * 6, 0, Math.PI * 2);
         ctx.stroke();
       }
+      }
     }
     ctx.globalAlpha = 1;
     const highlight = ctx.createRadialGradient(70, 24, 8, 82, 30, 80);
@@ -13693,7 +13706,7 @@ class MarbleRace {
     texture.needsUpdate = true;
     const materialStyle = MARBLE_MATERIAL_STYLES[materialKey] || MARBLE_MATERIAL_STYLES.glass;
     const material = new THREE.MeshStandardMaterial({
-      color,
+      color: isToyParkCharacterPattern ? 0xffffff : color,
       map: texture,
       roughness: materialStyle.roughness,
       metalness: materialStyle.metalness,
