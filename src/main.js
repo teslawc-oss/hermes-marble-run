@@ -53,6 +53,8 @@ const CANVAS_VIEWER_OVERLAY = {
   channelHandle: '@VibeCodeCreator',
   ctaPrimary: 'LIKE & SUBSCRIBE',
   maxStandingRows: 5,
+  toyParkStandingRefreshMs: 1000,
+  toyParkStandingSwapAnimationMs: 520,
 };
 const CANVAS_START_HOOK = {
   enabled: true,
@@ -1278,6 +1280,9 @@ class MarbleRace {
     this.webViewerOverlayCanvas = null;
     this.webViewerOverlayContext = null;
     this.lastWebViewerOverlaySummary = null;
+    this.toyParkStandingSnapshot = null;
+    this.toyParkStandingLastRefreshAt = 0;
+    this.toyParkStandingPreviousRows = [];
     this.videoCanvasLayoutKey = 'horizontal';
     this.videoCanvasLayout = { ...VIDEO_CANVAS_LAYOUTS.horizontal };
     this.videoCompositeCanvas = null;
@@ -1810,6 +1815,56 @@ class MarbleRace {
     };
   }
 
+  getToyParkStandingRankingSnapshot(rankingSource = [], maxRows = rankingSource.length) {
+    const now = performance.now();
+    const refreshMs = CANVAS_VIEWER_OVERLAY.toyParkStandingRefreshMs || 1000;
+    const rows = rankingSource.slice(0, maxRows).map((data) => ({ ...data }));
+    const rowKey = rows.map((data) => data.id).join('|');
+    const rosterKey = rows.map((data) => data.id).sort((a, b) => a - b).join('|');
+    const oldRows = this.toyParkStandingSnapshot?.rows || [];
+    const oldRosterKey = oldRows.map((data) => data.id).sort((a, b) => a - b).join('|');
+    const needsRefresh = !this.toyParkStandingSnapshot
+      || rosterKey !== oldRosterKey
+      || now - (this.toyParkStandingLastRefreshAt || 0) >= refreshMs;
+    if (needsRefresh) {
+      this.toyParkStandingPreviousRows = oldRows.map((data) => ({ ...data }));
+      this.toyParkStandingSnapshot = {
+        rows,
+        refreshedAt: now,
+        refreshMs,
+        rowKey,
+      };
+      this.toyParkStandingLastRefreshAt = now;
+    }
+    const snapshotRows = this.toyParkStandingSnapshot?.rows || rows;
+    const previousIndexById = new Map((this.toyParkStandingPreviousRows || []).map((data, index) => [data.id, index]));
+    const animationMs = CANVAS_VIEWER_OVERLAY.toyParkStandingSwapAnimationMs || 520;
+    const elapsedMs = Math.max(0, now - (this.toyParkStandingSnapshot?.refreshedAt || now));
+    const rawT = animationMs > 0 ? clamp(elapsedMs / animationMs, 0, 1) : 1;
+    const easedT = 1 - Math.pow(1 - rawT, 3);
+    const moves = snapshotRows.map((data, index) => {
+      const fromIndex = previousIndexById.has(data.id) ? previousIndexById.get(data.id) : index;
+      return {
+        id: data.id,
+        fromIndex,
+        toIndex: index,
+        delta: fromIndex - index,
+        changed: fromIndex !== index,
+        progress: easedT,
+      };
+    });
+    return {
+      rows: snapshotRows,
+      refreshMs,
+      animationMs,
+      elapsedMs,
+      progress: easedT,
+      active: moves.some((move) => move.changed) && rawT < 1,
+      moves,
+      lastRefreshAt: this.toyParkStandingSnapshot?.refreshedAt || now,
+    };
+  }
+
   drawViewerRoundedRect(ctx, x, y, w, h, r = 18) {
     const radius = Math.min(r, w / 2, h / 2);
     ctx.beginPath();
@@ -1928,7 +1983,7 @@ class MarbleRace {
     };
   }
 
-  drawViewerLiveStandingPanel({ ctx, ranking = [], x = 0, y = 0, width = 390, rowHeight = 62, vertical = false, toyPark = false } = {}) {
+  drawViewerLiveStandingPanel({ ctx, ranking = [], x = 0, y = 0, width = 390, rowHeight = 62, vertical = false, toyPark = false, standingAnimation = null } = {}) {
     const rows = ranking.length;
     if (toyPark) {
       // Toy Park currently runs as a single closed-course lap; keep the arcade standing
@@ -2046,11 +2101,17 @@ class MarbleRace {
       drawChecker(x + width - (compactVertical ? 34 : (vertical ? 62 : 72)), y + (compactVertical ? 32 : (vertical ? 40 : 44)), compactVertical ? 26 : (vertical ? 50 : 58), compactVertical ? 18 : (vertical ? 34 : 40));
 
       const summaryRows = [];
+      const moveById = new Map((standingAnimation?.moves || []).map((move) => [move.id, move]));
+      const animationActive = standingAnimation?.active === true;
       ranking.forEach((data, index) => {
-        const rowY = y + headerH + index * (rowH + gap);
+        const move = moveById.get(data.id) || null;
+        const visualIndex = animationActive && move
+          ? move.fromIndex + (move.toIndex - move.fromIndex) * (standingAnimation.progress ?? 1)
+          : index;
+        const rowY = y + headerH + visualIndex * (rowH + gap);
         const progress = clamp(data.progress || 0, 0, 1);
         const lap = data.finished ? totalLaps : Math.max(1, Math.min(totalLaps, Math.floor(progress * totalLaps) + 1));
-        summaryRows.push({ rank: index + 1, name: data.name || `Marble ${data.id + 1}`, lap, totalLaps, progress: Math.round(progress * 100) });
+        summaryRows.push({ rank: index + 1, name: data.name || `Marble ${data.id + 1}`, lap, totalLaps, progress: Math.round(progress * 100), animationFromRank: move ? move.fromIndex + 1 : index + 1, animationToRank: index + 1, animationChanged: move?.changed === true });
         const skew = compactVertical ? 6 : (vertical ? 9 : 13);
         ctx.save();
         ctx.shadowColor = noDropShadow ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.36)';
@@ -2117,6 +2178,11 @@ class MarbleRace {
         hasLapLabels: false,
         rowLapLabelsHidden: true,
         compact: compactVertical,
+        standingRefreshMs: standingAnimation?.refreshMs || null,
+        standingAnimationMs: standingAnimation?.animationMs || null,
+        standingAnimationActive: standingAnimation?.active === true,
+        standingAnimationProgress: standingAnimation ? Number((standingAnimation.progress || 0).toFixed(3)) : null,
+        standingAnimationMoves: (standingAnimation?.moves || []).filter((move) => move.changed),
         dropShadow: !noDropShadow,
       };
     }
@@ -2471,13 +2537,14 @@ class MarbleRace {
     const maxRows = toyParkOverlay
       ? rankingSource.length
       : (isVertical ? 3 : CANVAS_VIEWER_OVERLAY.maxStandingRows);
-    const ranking = rankingSource.slice(0, maxRows);
+    const standingSnapshot = toyParkOverlay ? this.getToyParkStandingRankingSnapshot(rankingSource, maxRows) : null;
+    const ranking = toyParkOverlay ? standingSnapshot.rows : rankingSource.slice(0, maxRows);
     const leader = ranking[0] || null;
     const leaderProgress = clamp(leader?.progress || 0, 0, 1);
     const leaderDistance = Math.max(0, Math.min(this.trackLength || 0, leader?.distance || 0));
     const caption = this.getViewerOverlayCaption();
     if (isVertical) {
-      this.drawVerticalViewerCanvasOverlay({ ctx, canvas, ranking, leaderProgress, leaderDistance, caption, summaryTarget, toyParkOverlay });
+      this.drawVerticalViewerCanvasOverlay({ ctx, canvas, ranking, leaderProgress, leaderDistance, caption, summaryTarget, toyParkOverlay, standingAnimation: standingSnapshot });
       return;
     }
 
@@ -2526,6 +2593,7 @@ class MarbleRace {
       rowHeight: rowH,
       vertical: false,
       toyPark: toyParkOverlay,
+      standingAnimation: standingSnapshot,
     });
 
     // Bottom CTA and channel handle.
@@ -2588,6 +2656,11 @@ class MarbleRace {
       liveStandingStyle: liveStandingSummary.style,
       liveStandingTitle: liveStandingSummary.title,
       liveStandingRows: liveStandingSummary.rows,
+      standingRefreshMs: liveStandingSummary.standingRefreshMs || null,
+      standingAnimationMs: liveStandingSummary.standingAnimationMs || null,
+      standingAnimationActive: liveStandingSummary.standingAnimationActive === true,
+      standingAnimationProgress: liveStandingSummary.standingAnimationProgress ?? null,
+      standingAnimationMoves: liveStandingSummary.standingAnimationMoves || [],
       toyParkOverlay,
       layout: 'horizontal',
       maxStandingRows: maxRows,
@@ -2606,7 +2679,7 @@ class MarbleRace {
     else this.lastViewerOverlaySummary = overlaySummary;
   }
 
-  drawVerticalViewerCanvasOverlay({ ctx, canvas, ranking = [], leaderProgress = 0, leaderDistance = 0, caption = {}, summaryTarget = 'recording', toyParkOverlay = false } = {}) {
+  drawVerticalViewerCanvasOverlay({ ctx, canvas, ranking = [], leaderProgress = 0, leaderDistance = 0, caption = {}, summaryTarget = 'recording', toyParkOverlay = false, standingAnimation = null } = {}) {
     let w = canvas.width;
     let h = canvas.height;
     const toyParkWebStageTransform = toyParkOverlay && summaryTarget === 'web' && w < 600
@@ -2675,6 +2748,7 @@ class MarbleRace {
       rowHeight: rowH,
       vertical: true,
       toyPark: toyParkOverlay,
+      standingAnimation,
     });
 
     // Toy Park vertical uses a fixed 9:16 overlay-stage composition: leaderboard top-left,
@@ -2755,6 +2829,11 @@ class MarbleRace {
       liveStandingStyle: liveStandingSummary.style,
       liveStandingTitle: liveStandingSummary.title,
       liveStandingRows: liveStandingSummary.rows,
+      standingRefreshMs: liveStandingSummary.standingRefreshMs || null,
+      standingAnimationMs: liveStandingSummary.standingAnimationMs || null,
+      standingAnimationActive: liveStandingSummary.standingAnimationActive === true,
+      standingAnimationProgress: liveStandingSummary.standingAnimationProgress ?? null,
+      standingAnimationMoves: liveStandingSummary.standingAnimationMoves || [],
       toyParkOverlay,
       liveStandingCompact: liveStandingSummary.compact === true,
       maxStandingRows: maxRows,
