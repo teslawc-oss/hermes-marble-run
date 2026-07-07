@@ -5760,6 +5760,7 @@ class MarbleRace {
     this.createObstacles(obstacleCount);
     if (this.physicsMechanicKey === 'toyPark') {
       this.createToyParkCandyPopStraightObstacleTiles();
+      this.createToyParkWindmillSpinnerCircleTiles();
     }
     this.createDecorations();
   }
@@ -8818,6 +8819,285 @@ class MarbleRace {
     return created;
   }
 
+  createToyParkWindmillSpinnerMaterialSet() {
+    const blade = new THREE.MeshPhysicalMaterial({
+      color: 0xe9d8ff,
+      roughness: 0.9,
+      metalness: 0,
+      clearcoat: 0.04,
+      clearcoatRoughness: 0.88,
+      transparent: false,
+      opacity: 1,
+      depthWrite: true,
+    });
+    blade.userData = { type: 'toy-park-windmill-spinner-blade-clay-material', opaqueClay: true, clayGrain: 'chunky-pastel-molded-clay-plastic', transparentTexture: false };
+    const edge = new THREE.MeshPhysicalMaterial({
+      color: 0xb794ff,
+      roughness: 0.88,
+      metalness: 0,
+      clearcoat: 0.035,
+      clearcoatRoughness: 0.9,
+      transparent: false,
+      opacity: 1,
+      depthWrite: true,
+    });
+    edge.userData = { type: 'toy-park-windmill-spinner-raised-rib-clay-material', opaqueClay: true, clayGrain: 'chunky-pastel-molded-clay-plastic', transparentTexture: false };
+    const hub = new THREE.MeshPhysicalMaterial({
+      color: 0x9b82ff,
+      roughness: 0.86,
+      metalness: 0,
+      clearcoat: 0.045,
+      clearcoatRoughness: 0.86,
+      transparent: false,
+      opacity: 1,
+      depthWrite: true,
+    });
+    hub.userData = { type: 'toy-park-windmill-spinner-hub-clay-material', opaqueClay: true, clayGrain: 'chunky-pastel-molded-clay-plastic', transparentTexture: false };
+    return { blade, edge, hub };
+  }
+
+  createToyParkWindmillSpinnerObstacle(trackSurface, yaw, pitch, materialSet, options = {}) {
+    const group = new THREE.Group();
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation(group, yaw, pitch);
+    group.userData = {
+      type: 'toy-park-windmill-spinner-circle-obstacle-group',
+      visualStyle: 'four-thicker-rounded-clay-blade-windmill-spinner-near-circular-rail',
+      tileKey: options.tileKey || null,
+      pieceIndex: options.pieceIndex ?? null,
+    };
+    this.trackGroup.add(group);
+
+    const trackWidth = Math.max(0.1, Number(options.trackWidth) || this.trackWidth || 5.88);
+    const railOffset = this.trackStats?.toyParkRailOffset ?? 0.392;
+    const railRadius = this.trackStats?.toyParkRailRadius ?? 0.784;
+    const circleDiameter = trackWidth * 1.95;
+    const railInnerRadius = Math.max(1.2, circleDiameter / 2 - railRadius * 1.18);
+    const bladeLength = Math.max(1.6, railInnerRadius * 0.9);
+    const bladeWidth = Math.max(0.52, trackWidth * 0.15);
+    const bladeHeight = 0.42;
+    const bladeY = 0.68;
+    const hubRadius = Math.max(0.48, trackWidth * 0.12);
+    const hubHeight = 0.58;
+    const colliderRadius = Math.max(0.85, bladeLength * 0.42);
+    const colliderHeight = 0.42;
+
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(hubRadius, hubRadius * 1.08, hubHeight, 40), materialSet.hub);
+    hub.position.y = bladeY;
+    hub.castShadow = PERFORMANCE_TUNING.shadows;
+    hub.receiveShadow = PERFORMANCE_TUNING.shadows;
+    hub.userData = { type: 'toy-park-windmill-spinner-hub', bladeCount: 4 };
+    group.add(hub);
+
+    const spinnerBlades = [];
+    const bladeGlows = [];
+    const bladeBodies = [];
+    for (let index = 0; index < 4; index += 1) {
+      const bladeGroup = new THREE.Group();
+      bladeGroup.position.y = bladeY;
+      bladeGroup.rotation.y = (Math.PI * 2 * index) / 4;
+      group.add(bladeGroup);
+      spinnerBlades.push(bladeGroup);
+
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(bladeLength, bladeHeight, bladeWidth), materialSet.blade);
+      blade.position.x = bladeLength / 2;
+      blade.castShadow = PERFORMANCE_TUNING.shadows;
+      blade.receiveShadow = PERFORMANCE_TUNING.shadows;
+      blade.userData = {
+        type: 'toy-park-windmill-spinner-thick-rounded-clay-blade',
+        bladeIndex: index,
+        lengthCloseToCircleRail: true,
+        stopsBeforeRail: true,
+        clayPlasticFeel: 'chunky-opaque-molded-clay',
+        bladeThicknessScale: 1.85,
+      };
+      bladeGroup.add(blade);
+
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(bladeLength * 0.9, bladeHeight * 0.34, bladeWidth * 1.08), materialSet.edge);
+      edge.position.set(bladeLength * 0.52, bladeHeight * 0.44, 0);
+      edge.castShadow = PERFORMANCE_TUNING.shadows;
+      edge.userData = { type: 'toy-park-windmill-spinner-blade-purple-raised-rib', bladeIndex: index };
+      bladeGroup.add(edge);
+
+      [-1, 1].forEach((capSide) => {
+        const cap = new THREE.Mesh(new THREE.SphereGeometry(bladeWidth * 0.5, 22, 12), materialSet.blade);
+        cap.position.set(capSide < 0 ? bladeWidth * 0.18 : bladeLength - bladeWidth * 0.18, 0, 0);
+        cap.scale.set(1.05, bladeHeight / bladeWidth, 1);
+        cap.castShadow = PERFORMANCE_TUNING.shadows;
+        cap.receiveShadow = PERFORMANCE_TUNING.shadows;
+        cap.userData = { type: 'toy-park-windmill-spinner-rounded-clay-blade-cap', bladeIndex: index, capSide };
+        bladeGroup.add(cap);
+      });
+    }
+
+    for (let index = 0; index < 4; index += 1) {
+      const bladeBody = new CANNON.Body({
+        mass: 0,
+        type: CANNON.Body.KINEMATIC,
+        material: this.obstacleMaterial,
+      });
+      bladeBody.addShape(new CANNON.Box(new CANNON.Vec3(bladeLength / 2, bladeHeight / 2, bladeWidth / 2)));
+      bladeBody.collisionResponse = true;
+      bladeBody.userData = {
+        ...(bladeBody.userData || {}),
+        name: 'toy-park-windmill-spinner-solid-blade-body',
+        toyParkWindmillSpinnerBlade: true,
+        bladeIndex: index,
+        tileKey: options.tileKey || null,
+        bladeLength,
+        bladeWidth,
+        bladeHeight,
+      };
+      this.addObstacleBody(bladeBody, group);
+      bladeBodies.push(bladeBody);
+    }
+
+    const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
+    body.addShape(new CANNON.Cylinder(colliderRadius, colliderRadius, colliderHeight, 24));
+    body.collisionResponse = false;
+    const center = trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, bladeY, 0, yaw, pitch));
+    this.setSlopeBodyTransform(body, center, yaw, pitch);
+    body.userData = {
+      ...(body.userData || {}),
+      name: 'toy-park-windmill-spinner-guide-sensor-body',
+      toyParkWindmillSpinner: true,
+      guideSensorOnly: true,
+      bladeCount: 4,
+      tileKey: options.tileKey || null,
+      colliderRadius,
+    };
+    this.addObstacleBody(body, group);
+
+    const obstacle = {
+      type: 'toyParkWindmillSpinner',
+      kind: 'toyParkWindmillSpinner',
+      visualStyle: 'toy-park-four-thick-rounded-clay-blade-windmill-spinner',
+      textureStyle: 'chunkier-light-purple-opaque-clay-plastic-windmill-circle-tile',
+      trackSurface: trackSurface.clone(),
+      center,
+      radius: Math.max(colliderRadius, bladeLength * 0.48),
+      impulse: PINBALL_PHYSICS.spinnerImpulse * 0.82,
+      cooldown: new Map(),
+      cooldownSeconds: 0.08,
+      group,
+      hub,
+      body,
+      bladeBodies,
+      spinnerBlades,
+      bladeGlows,
+      spinnerSpeed: PINBALL_PHYSICS.spinnerSpeed * 0.82 * 0.7,
+      spinnerSpeedScale: 0.7,
+      spinAngle: 0,
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
+      placementDistance: options.distance ?? null,
+      guideMode: 'entrance-to-exit-track-tangent-push',
+      guideSensorOnly: true,
+      guideForwardSpeed: Math.max(3.0, (this.speedPreset?.maxSpeed || 17.2) * 0.22),
+      guideForwardAcceleration: Math.max(4.2, (this.speedPreset?.accel || 2.4) * 2.0),
+      guideCenteringAcceleration: Math.max(5.0, (this.speedPreset?.accel || 2.4) * 2.4),
+      guideLateralDamping: 0.7,
+      bladeContactSpeedCap: 5.2,
+      postContactGuideSpeedCap: 5.2,
+      minimumPostContactExitSpeed: 1.15,
+      bladeContactPolicy: 'block-and-dampen-no-sweep-boost',
+      category: 'normal',
+      categoryLabel: OBSTACLE_CATEGORIES.normal?.label || '普通障礙物',
+      distributionMode: 'toy-park-circle-tile-center-windmill-spinner',
+      tileKey: options.tileKey || null,
+      pieceIndex: options.pieceIndex ?? null,
+      windmillDimensions: {
+        circleDiameter: Number(circleDiameter.toFixed(3)),
+        standardTrackWidth: Number(trackWidth.toFixed(3)),
+        diameterScaleVsStandardRoadWidth: Number((circleDiameter / trackWidth).toFixed(3)),
+        connectorWidth: Number(trackWidth.toFixed(3)),
+        railInnerRadius: Number(railInnerRadius.toFixed(3)),
+        bladeCount: 4,
+        bladeLength: Number(bladeLength.toFixed(3)),
+        bladeWidth: Number(bladeWidth.toFixed(3)),
+        bladeHeight: Number(bladeHeight.toFixed(3)),
+        bladeThicknessScale: 1.85,
+        clayPlasticFeel: 'chunky-opaque-molded-clay',
+        bladeStopsBeforeRail: true,
+      },
+    };
+    this.updateToyParkWindmillBladeBodies(obstacle, 1 / 60);
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
+  }
+
+  createToyParkWindmillSpinnerCircleTiles() {
+    if (this.physicsMechanicKey !== 'toyPark' || !Array.isArray(this.trackPieces)) return [];
+    const tileKey = TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle?.key;
+    if (!tileKey) return [];
+    const pieces = this.trackPieces.filter((piece) => piece.tileKey === tileKey);
+    if (!pieces.length) {
+      this.trackStats.toyParkWindmillSpinnerCircleTiles = { enabled: true, tileCount: 0, spinnerCount: 0 };
+      return [];
+    }
+
+    const materialSet = this.createToyParkWindmillSpinnerMaterialSet();
+    const created = [];
+    const summary = [];
+    pieces.forEach((piece, pieceIndex) => {
+      const distance = clamp((piece.startD + piece.endD) / 2, 0, this.trackLength);
+      const frame = this.getTrackFrameAt(distance);
+      const yaw = Math.atan2(frame.tangent.x, frame.tangent.z);
+      const pitch = Math.atan2(frame.tangent.y, Math.max(0.0001, Math.hypot(frame.tangent.x, frame.tangent.z)));
+      const trackSurface = new THREE.Vector3(frame.p.x, frame.p.y, frame.p.z);
+      const trackWidth = this.getTrackWidthAt(distance);
+      const obstacle = this.createToyParkWindmillSpinnerObstacle(trackSurface, yaw, pitch, materialSet, {
+        distance,
+        trackWidth,
+        tileKey,
+        pieceIndex: piece.index ?? pieceIndex,
+      });
+      created.push(obstacle);
+      summary.push({
+        pieceIndex: piece.index ?? pieceIndex,
+        tileKey,
+        startD: Number(piece.startD.toFixed(2)),
+        endD: Number(piece.endD.toFixed(2)),
+        centerDistance: Number(distance.toFixed(2)),
+        length: Number((piece.endD - piece.startD).toFixed(2)),
+        circleDiameter: obstacle.windmillDimensions.circleDiameter,
+        standardConnectorWidth: obstacle.windmillDimensions.connectorWidth,
+        bladeCount: 4,
+        bladeLength: obstacle.windmillDimensions.bladeLength,
+        bladeStopsBeforeRail: true,
+      });
+    });
+    this.trackStats.toyParkWindmillSpinnerCircleTiles = {
+      enabled: true,
+      tileKey,
+      tileCount: pieces.length,
+      spinnerCount: created.length,
+      boardShape: 'larger-round-circle-with-straight-light-purple-road-surface-and-open-circle-rail-no-inner-rails',
+      diameterScaleVsStandardRoadWidth: 1.95,
+      interfaceWidthPolicy: 'straight-light-purple-road-surface-passes-through-open-circle-rail-no-side-rails-inside-spinner',
+      entranceExitPolicy: 'circle-rail-openings-align-with-straight-road-surface-rails-stop-before-spinner-circle',
+      surfaceAndRailColor: 'light-purple',
+      ribbonRailColor: null,
+      straightRoadSurfaceThroughCircle: true,
+      splitShortTransitionSurfaces: true,
+      uniformStraightPurpleApproachExitSurface: false,
+      noRailsInsideSpinnerCircle: true,
+      circleRailOpeningPolicy: 'open-at-local-negative-z-and-positive-z-for-straight-road-surface-rounded-end-caps-no-inner-rails',
+      circleRailGapFix: 'rounded-end-caps-on-open-circle-rail-ends-no-inner-rail',
+      straightSurfacePolicy: 'circle-interior-straight-purple-road-plus-two-short-railed-approach-exit-transition-boards-no-long-unrailed-strip',
+      transitionSideRailPolicy: 'left-right-light-purple-rails-on-short-approach-and-exit-surfaces-only-stop-before-spinner-circle',
+      mechanicPolicy: 'solid-rotating-blade-bodies-plus-entrance-to-exit-track-tangent-guide-no-straight-through-blade-pass',
+      bladePhysicsPolicy: 'four-kinematic-box-bodies-follow-visual-windmill-blades-and-block-marble-passthrough',
+      bladeContactPolicy: 'block-and-dampen-contact-no-sweep-velocity-boost-speed-capped',
+      solidBladeBodiesPerSpinner: 4,
+      bladeContactSpeedCap: 5.2,
+      spinnerSpeedScale: 0.7,
+      spinner: 'center-four-long-thin-rotating-blades-length-close-to-circle-rail-but-stops-before-rail-30-percent-slower',
+      pieces: summary,
+    };
+    return created;
+  }
+
   createObstacles(count) {
     // 彈珠台換皮膚：高亮壓克力、電鍍金屬、霓虹橡膠，讓障礙物一眼像 pinball table 玩具件。
     const palette = {
@@ -10617,6 +10897,40 @@ class MarbleRace {
     return obstacle;
   }
 
+  updateToyParkWindmillBladeBodies(obstacle, delta = 1 / 60) {
+    if (!obstacle?.bladeBodies?.length) return;
+    const bladeLength = obstacle.windmillDimensions?.bladeLength ?? obstacle.bladeBodies[0]?.userData?.bladeLength ?? 1.6;
+    const bladeY = 0.68;
+    const yaw = obstacle.trackYaw || 0;
+    const pitch = obstacle.trackSlopePitch || 0;
+    const spinAngle = obstacle.spinAngle || 0;
+    const safeDelta = Math.max(1 / 240, delta || 1 / 60);
+    obstacle.bladeBodies.forEach((body, index) => {
+      if (!body) return;
+      const angle = spinAngle + (Math.PI * 2 * index) / 4;
+      const localX = Math.cos(angle) * bladeLength * 0.5;
+      const localZ = -Math.sin(angle) * bladeLength * 0.5;
+      const center = obstacle.trackSurface.clone().add(this.localToWorldOffsetOnSlope(localX, bladeY, localZ, yaw, pitch));
+      const previous = body.position ? new THREE.Vector3(body.position.x, body.position.y, body.position.z) : center.clone();
+      body.position.copy(center);
+      const quaternion = this.getTrackSlopeQuaternion(yaw, pitch, angle);
+      body.quaternion.set(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
+      body.velocity.set(
+        (center.x - previous.x) / safeDelta,
+        (center.y - previous.y) / safeDelta,
+        (center.z - previous.z) / safeDelta,
+      );
+      const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.getTrackSlopeQuaternion(yaw, pitch, 0));
+      body.angularVelocity.set(
+        localUp.x * (obstacle.spinnerSpeed || 0),
+        localUp.y * (obstacle.spinnerSpeed || 0),
+        localUp.z * (obstacle.spinnerSpeed || 0),
+      );
+      body.aabbNeedsUpdate = true;
+    });
+    obstacle.lastSolidBladeBodyCount = obstacle.bladeBodies.length;
+  }
+
   updatePinballObstacles(delta) {
     if (!this.pinballObstacles.length) return;
     const animationWindow = this.getObstacleAnimationCullingWindow();
@@ -10632,6 +10946,16 @@ class MarbleRace {
         obstacle.spinAngle = (obstacle.spinAngle || 0) + delta * obstacle.spinnerSpeed;
         obstacle.spinnerArms?.forEach((arm, index) => {
           arm.rotation.y = obstacle.spinAngle + (Math.PI * 2 * index) / 3;
+        });
+      }
+      if (animationActive && obstacle.type === 'toyParkWindmillSpinner') {
+        obstacle.spinAngle = (obstacle.spinAngle || 0) + delta * obstacle.spinnerSpeed;
+        obstacle.spinnerBlades?.forEach((blade, index) => {
+          blade.rotation.y = obstacle.spinAngle + (Math.PI * 2 * index) / 4;
+        });
+        this.updateToyParkWindmillBladeBodies(obstacle, delta);
+        obstacle.bladeGlows?.forEach((glow, index) => {
+          if (glow.material) glow.material.opacity = 0.12 + 0.08 * Math.sin(obstacle.spinAngle * 1.7 + index);
         });
       }
       if (animationActive && obstacle.type === 'pendulumHammer') {
@@ -10805,6 +11129,10 @@ class MarbleRace {
         if (distSq > obstacle.radius * obstacle.radius) return;
         const lastHit = obstacle.cooldown?.get(data.id) || -Infinity;
         if (this.elapsed - lastHit < (obstacle.cooldownSeconds ?? 0.32)) {
+          if (obstacle.type === 'toyParkWindmillSpinner') {
+            this.applyToyParkWindmillGuide(obstacle, data, dx, dz, false);
+            return;
+          }
           if (obstacle.type !== 'splitterFork') return;
           const frame = this.getTrackFrameAt(Math.max(this.findClosestProgress(data.body.position).distance, data.distance || 0) + this.finishDirectionAssist.lookAhead);
           const forwardSpeed = data.body.velocity.x * frame.tangent.x + data.body.velocity.y * frame.tangent.y + data.body.velocity.z * frame.tangent.z;
@@ -10816,6 +11144,7 @@ class MarbleRace {
         if (obstacle.type === 'gongBumper') this.applyGongBumperImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'slingshot') this.applySlingshotImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'spinnerGate') this.applySpinnerGateImpulse(obstacle, data, dx, dz);
+        if (obstacle.type === 'toyParkWindmillSpinner') this.applyToyParkWindmillGuide(obstacle, data, dx, dz);
         if (obstacle.type === 'movingGate') this.applyMovingGateImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'tiltBridge') this.applyTiltBridgeImpulse(obstacle, data, dx, dz);
         if (obstacle.type === 'pendulumHammer') this.applyPendulumHammerImpulse(obstacle, data, dx, dz);
@@ -10966,6 +11295,156 @@ class MarbleRace {
     this.pinballInteractions.slingshot += 1;
     this.spawnImpactEffect(obstacle.center, 0x7cf7d4, 'spark');
     this.pushBroadcastEvent('Slingshot Kick', `${data.name} slingshot`, { kind: 'obstacle', marbleId: data.id, distance: data.lastObstacleHitDistance, progress: data.lastObstacleHitProgress, lines: [`${data.name} slingshot`, `${data.name} shoots across`, `${data.name} kicks out`] });
+  }
+
+  applyToyParkWindmillSolidBladeContact(obstacle, data) {
+    const bladeLength = obstacle.windmillDimensions?.bladeLength ?? obstacle.bladeBodies?.[0]?.userData?.bladeLength ?? 1.6;
+    const bladeWidth = obstacle.windmillDimensions?.bladeWidth ?? obstacle.bladeBodies?.[0]?.userData?.bladeWidth ?? 0.8;
+    const marbleRadius = data.radius ?? data.body?.shapes?.[0]?.radius ?? 0.46;
+    const yaw = obstacle.trackYaw || 0;
+    const pitch = obstacle.trackSlopePitch || 0;
+    const spinAngle = obstacle.spinAngle || 0;
+    const hub = obstacle.center || obstacle.trackSurface;
+    const position = new THREE.Vector3(data.body.position.x, data.body.position.y, data.body.position.z);
+    const velocity = new THREE.Vector3(data.body.velocity.x, data.body.velocity.y, data.body.velocity.z);
+    const rel = position.sub(hub);
+    const halfWidth = Math.max(bladeWidth * 0.5 + marbleRadius * 0.72, bladeWidth * 0.78);
+    let strongest = null;
+    for (let index = 0; index < 4; index += 1) {
+      const angle = spinAngle + (Math.PI * 2 * index) / 4;
+      const dir = this.localToWorldOffsetOnSlope(Math.cos(angle), 0, -Math.sin(angle), yaw, pitch).normalize();
+      const normal = this.localToWorldOffsetOnSlope(Math.sin(angle), 0, Math.cos(angle), yaw, pitch).normalize();
+      const along = rel.dot(dir);
+      const across = rel.dot(normal);
+      const withinLength = along >= -marbleRadius * 0.65 && along <= bladeLength + marbleRadius * 0.45;
+      if (!withinLength || Math.abs(across) > halfWidth) continue;
+      const penetration = halfWidth - Math.abs(across);
+      if (!strongest || penetration > strongest.penetration) {
+        strongest = { index, dir, normal, along, across, penetration };
+      }
+    }
+    if (!strongest) return false;
+
+    let pushNormal = strongest.normal.clone().multiplyScalar(strongest.across >= 0 ? 1 : -1);
+    if (Math.abs(strongest.across) < 0.02) {
+      const normalSpeed = velocity.dot(strongest.normal);
+      pushNormal = strongest.normal.clone().multiplyScalar(normalSpeed <= 0 ? 1 : -1);
+    }
+    const correction = Math.min(0.42, strongest.penetration + 0.035);
+    data.body.position.x += pushNormal.x * correction;
+    data.body.position.y += Math.max(0, pushNormal.y * correction);
+    data.body.position.z += pushNormal.z * correction;
+
+    const normalSpeed = data.body.velocity.x * pushNormal.x + data.body.velocity.y * pushNormal.y + data.body.velocity.z * pushNormal.z;
+    if (normalSpeed < 0.18) {
+      const delta = 0.18 - normalSpeed;
+      data.body.velocity.x += pushNormal.x * delta * 0.55;
+      data.body.velocity.y += Math.max(0, pushNormal.y * delta * 0.25);
+      data.body.velocity.z += pushNormal.z * delta * 0.55;
+    }
+    const horizontalSpeed = Math.hypot(data.body.velocity.x, data.body.velocity.z);
+    const contactSpeedCap = obstacle.bladeContactSpeedCap ?? 5.2;
+    if (horizontalSpeed > contactSpeedCap) {
+      const scale = contactSpeedCap / horizontalSpeed;
+      data.body.velocity.x *= scale;
+      data.body.velocity.z *= scale;
+    }
+    data.body.angularVelocity.scale(0.82, data.body.angularVelocity);
+    obstacle.lastSolidBladeContact = {
+      marbleId: data.id,
+      bladeIndex: strongest.index,
+      penetration: Number(strongest.penetration.toFixed(3)),
+      along: Number(strongest.along.toFixed(3)),
+      across: Number(strongest.across.toFixed(3)),
+      at: Number((this.elapsed || 0).toFixed(3)),
+    };
+    data.lastMovementTime = this.elapsed;
+    data.lastDriveMovementTime = this.elapsed;
+    data.body.wakeUp();
+    return true;
+  }
+
+  applyToyParkWindmillGuide(obstacle, data, dx, dz, registerHit = true) {
+    const closest = this.findClosestProgress(data.body.position, {
+      fallbackDistance: obstacle.placementDistance ?? data.distance ?? 0,
+      minDistance: Math.max(0, (obstacle.placementDistance ?? data.distance ?? 0) - Math.max(4, obstacle.radius * 1.2)),
+      maxDistance: Math.min(this.trackLength || Infinity, (obstacle.placementDistance ?? data.distance ?? 0) + Math.max(4, obstacle.radius * 1.2)),
+    });
+    const centerDistance = Number.isFinite(obstacle.placementDistance) ? obstacle.placementDistance : closest.distance;
+    const frame = this.getTrackFrameAt(centerDistance);
+    const radialDistance = Math.max(0.001, Math.hypot(dx, dz));
+    const solidBladeContact = this.applyToyParkWindmillSolidBladeContact(obstacle, data);
+    const radius = Math.max(0.001, obstacle.radius || radialDistance);
+    const zoneFalloff = clamp(1 - (radialDistance / radius) * 0.42, 0.45, 1);
+    const fromCenter = new THREE.Vector3(
+      data.body.position.x - obstacle.center.x,
+      data.body.position.y - obstacle.center.y,
+      data.body.position.z - obstacle.center.z,
+    );
+    const lateralOffset = fromCenter.dot(frame.right);
+    const velocity = new THREE.Vector3(data.body.velocity.x, data.body.velocity.y, data.body.velocity.z);
+    const forwardSpeed = velocity.dot(frame.tangent);
+    const lateralSpeed = velocity.dot(frame.right);
+    const targetForwardSpeed = obstacle.guideForwardSpeed ?? Math.max(3.0, (this.speedPreset?.maxSpeed || 17.2) * 0.22);
+    const forwardAccel = (obstacle.guideForwardAcceleration ?? Math.max(4.2, (this.speedPreset?.accel || 2.4) * 2.0)) * zoneFalloff;
+    const centeringAccel = (obstacle.guideCenteringAcceleration ?? Math.max(5.0, (this.speedPreset?.accel || 2.4) * 2.4)) * zoneFalloff;
+    const mass = Math.max(0.001, data.body.mass || 1);
+    const forwardDeficitScale = clamp((targetForwardSpeed - forwardSpeed) / Math.max(targetForwardSpeed, 0.001), 0, 1);
+    const forwardAssist = frame.tangent.clone().multiplyScalar(forwardAccel * forwardDeficitScale * mass);
+    const centerAssist = frame.right.clone().multiplyScalar(-lateralOffset * centeringAccel * mass);
+
+    data.body.wakeUp();
+    data.body.force.x += forwardAssist.x + centerAssist.x;
+    data.body.force.y += Math.min(0.08 * mass, forwardAssist.y + centerAssist.y);
+    data.body.force.z += forwardAssist.z + centerAssist.z;
+
+    const lateralDamping = obstacle.guideLateralDamping ?? 0.7;
+    const lateralDelta = lateralSpeed * (lateralDamping - 1) * zoneFalloff;
+    data.body.velocity.x += frame.right.x * lateralDelta;
+    data.body.velocity.z += frame.right.z * lateralDelta;
+
+    if (solidBladeContact) {
+      const postContactForwardSpeed = data.body.velocity.x * frame.tangent.x + data.body.velocity.y * frame.tangent.y + data.body.velocity.z * frame.tangent.z;
+      const minimumGuidedExitSpeed = obstacle.minimumPostContactExitSpeed ?? 1.15;
+      if (postContactForwardSpeed < minimumGuidedExitSpeed) {
+        const forwardCorrection = Math.min(1.35, minimumGuidedExitSpeed - postContactForwardSpeed);
+        data.body.velocity.x += frame.tangent.x * forwardCorrection;
+        data.body.velocity.y += Math.max(0, Math.min(0.04, frame.tangent.y * forwardCorrection));
+        data.body.velocity.z += frame.tangent.z * forwardCorrection;
+      }
+      const horizontalSpeed = Math.hypot(data.body.velocity.x, data.body.velocity.z);
+      const postContactGuideCap = obstacle.postContactGuideSpeedCap ?? 5.2;
+      if (horizontalSpeed > postContactGuideCap) {
+        const scale = postContactGuideCap / horizontalSpeed;
+        data.body.velocity.x *= scale;
+        data.body.velocity.z *= scale;
+      }
+      data.lastMovementTime = this.elapsed;
+      data.lastDriveMovementTime = this.elapsed;
+    }
+
+    obstacle.lastHitBy = data.name;
+    obstacle.lastGuideForwardSpeed = Number(forwardSpeed.toFixed(3));
+    obstacle.lastGuideLateralOffset = Number(lateralOffset.toFixed(3));
+    obstacle.lastGuideMode = obstacle.guideMode || 'entrance-to-exit-track-tangent-push';
+    if (registerHit) {
+      this.noteObstacleHit(data, obstacle, closest.distance);
+      obstacle.cooldown.set(data.id, this.elapsed);
+      obstacle.pulse = 1;
+      if (Object.prototype.hasOwnProperty.call(this.pinballInteractions, 'toyParkWindmillSpinner')) {
+        this.pinballInteractions.toyParkWindmillSpinner += 1;
+      } else {
+        this.pinballInteractions.spinnerGate += 1;
+      }
+      this.spawnImpactEffect(obstacle.center, 0xb78cff, 'ring');
+      this.pushBroadcastEvent('Windmill Guide', `${data.name} rides the windmill`, {
+        kind: 'obstacle',
+        marbleId: data.id,
+        distance: data.lastObstacleHitDistance,
+        progress: data.lastObstacleHitProgress,
+        lines: [`${data.name} rides the windmill`, `${data.name} is guided through`, `${data.name} follows the spinner path`],
+      });
+    }
   }
 
   applySpinnerGateImpulse(obstacle, data, dx, dz) {

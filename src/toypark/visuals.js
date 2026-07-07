@@ -69,12 +69,27 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
     });
+    const windmillCircleMat = new THREE.MeshPhysicalMaterial({
+      color: 0xd8bdff,
+      roughness: 0.92,
+      metalness: 0,
+      clearcoat: 0.025,
+      clearcoatRoughness: 0.94,
+      transparent: false,
+      opacity: 1,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: 0,
+      polygonOffsetUnits: 0,
+    });
 
     straightMat.userData = {
       type: 'toy-park-straight-road-tile-surface-material',
       opaqueClay: true,
       tileSurfaceColor: 'sky-blue-direct-track-board-color',
       sourceTrackMaterialStyle: sourceMaterial?.userData?.style || null,
+      clayGrain: 'opaque-pastel-molded-clay-plastic',
+      thickerMoldedLook: true,
     };
     candyPopStraightMat.userData = {
       type: 'toy-park-candy-pop-straight-obstacle-tile-surface-material',
@@ -83,6 +98,8 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
       obstacleTile: true,
       obstaclePattern: 'alternating-left-right-candy-pop-bumpers',
       sourceTrackMaterialStyle: sourceMaterial?.userData?.style || null,
+      clayGrain: 'opaque-pastel-molded-clay-plastic',
+      thickerMoldedLook: true,
     };
     variableBendMat.userData = {
       type: 'toy-park-variable-angle-bend-tile-surface-material',
@@ -90,12 +107,26 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
       tileSurfaceColor: 'warm-orange-direct-track-board-color',
       angleVariable: true,
       sourceTrackMaterialStyle: sourceMaterial?.userData?.style || null,
+      clayGrain: 'opaque-pastel-molded-clay-plastic',
+      thickerMoldedLook: true,
+    };
+    windmillCircleMat.userData = {
+      type: 'toy-park-windmill-spinner-circle-tile-surface-material',
+      opaqueClay: true,
+      tileSurfaceColor: 'light-purple-direct-track-board-color',
+      obstacleTile: true,
+      circleTile: true,
+      obstaclePattern: 'center-four-blade-rotating-windmill-spinner',
+      sourceTrackMaterialStyle: sourceMaterial?.userData?.style || null,
+      clayGrain: 'opaque-pastel-molded-clay-plastic',
+      thickerMoldedLook: true,
     };
     const cancelledBridgeSurfaceMaterials = new Map();
-    const counts = { straight: 0, rampUp: 0, elevatedStraight: 0, rampDown: 0, variableBend: 0, uTurn180: 0, corner45: 0 };
+    const counts = { straight: 0, rampUp: 0, elevatedStraight: 0, rampDown: 0, variableBend: 0, windmillCircle: 0, uTurn180: 0, corner45: 0 };
     app.trackPieces.forEach((piece, index) => {
       if (!piece.tileKey) return;
       const isCandyPopStraight = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle?.key;
+      const isWindmillCircle = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle?.key;
       const isVariableBend = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend.key;
       const isRampUp = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampUp.key;
       const isElevatedStraight = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight.key;
@@ -112,20 +143,22 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
       const tileType = piece.tileKey;
       const tileName = isCandyPopStraight
         ? `TOY_PARK_CANDY_POP_STRAIGHT_OBSTACLE_TILE_SURFACE_${counts.straight}`
-        : isVariableBend
-        ? `TOY_PARK_VARIABLE_ANGLE_BEND_TILE_SURFACE_${counts.variableBend}`
-        : isRampUp
-          ? `TOY_PARK_RAMP_UP_ROAD_TILE_SURFACE_${counts.rampUp}`
-          : isElevatedStraight
-            ? `TOY_PARK_ELEVATED_STRAIGHT_ROAD_TILE_SURFACE_${counts.elevatedStraight}`
-            : isRampDown
-              ? `TOY_PARK_RAMP_DOWN_ROAD_TILE_SURFACE_${counts.rampDown}`
-              : `TOY_PARK_STRAIGHT_ROAD_TILE_SURFACE_${counts.straight}`;
+        : isWindmillCircle
+          ? `TOY_PARK_WINDMILL_SPINNER_CIRCLE_TILE_SURFACE_${counts.windmillCircle}`
+          : isVariableBend
+            ? `TOY_PARK_VARIABLE_ANGLE_BEND_TILE_SURFACE_${counts.variableBend}`
+            : isRampUp
+              ? `TOY_PARK_RAMP_UP_ROAD_TILE_SURFACE_${counts.rampUp}`
+              : isElevatedStraight
+                ? `TOY_PARK_ELEVATED_STRAIGHT_ROAD_TILE_SURFACE_${counts.elevatedStraight}`
+                : isRampDown
+                  ? `TOY_PARK_RAMP_DOWN_ROAD_TILE_SURFACE_${counts.rampDown}`
+                  : `TOY_PARK_STRAIGHT_ROAD_TILE_SURFACE_${counts.straight}`;
       const mesh = app.addTrackRibbon(samples, app.trackWidth, material, {
         name: tileName,
         distanceStart: Number(startD.toFixed(2)),
         distanceEnd: Number(endD.toFixed(2)),
-        renderOrder: isVariableBend ? 2 : 1,
+        renderOrder: isWindmillCircle ? 3 : (isVariableBend ? 2 : 1),
         userData: {
           type: tileType,
           tileKey: piece.tileKey,
@@ -139,28 +172,273 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
           physicsPreserved: true,
           tileSurfaceColor: isCandyPopStraight
             ? 'pink-orange-candy-pop-straight-obstacle'
-            : isVariableBend
-            ? 'warm-orange-variable-bend'
-            : isRampUp
-              ? 'mint-green-ramp-up'
-              : isElevatedStraight
-                ? 'lavender-elevated-straight'
-                : isRampDown
-                  ? 'mint-green-ramp-down'
-                  : 'sky-blue',
+            : isWindmillCircle
+              ? 'sky-blue-host-straight-under-short-purple-windmill-overlay'
+              : isVariableBend
+                ? 'warm-orange-variable-bend'
+                : isRampUp
+                  ? 'mint-green-ramp-up'
+                  : isElevatedStraight
+                    ? 'lavender-elevated-straight'
+                    : isRampDown
+                      ? 'mint-green-ramp-down'
+                      : 'sky-blue',
           variableAngleDegrees: piece.variableAngleDegrees ?? null,
           elevationRole: piece.elevationRole ?? null,
           bridgeModule: Boolean(piece.bridgeModule),
           bridgeModuleRole: piece.bridgeModuleRole ?? null,
           bridgeHeight: piece.bridgeHeight ?? 0,
-          obstacleTile: isCandyPopStraight,
-          obstaclePattern: isCandyPopStraight ? 'alternating-left-right-candy-pop-bumpers' : null,
+          obstacleTile: isCandyPopStraight || isWindmillCircle,
+          circleTile: isWindmillCircle,
+          obstaclePattern: isCandyPopStraight ? 'alternating-left-right-candy-pop-bumpers' : (isWindmillCircle ? 'center-four-blade-rotating-windmill-spinner' : null),
           pathHeightMode: piece.pathHeightMode ?? null,
           uTurn180: false,
         },
       });
       mesh.userData.tileIndex = index;
+      if (isWindmillCircle) {
+        const midD = (startD + endD) / 2;
+        const midPoint = app.getTrackPointAt(midD);
+        const midFrame = app.getTrackFrameAt(midD);
+        const localWidth = midPoint.w ?? app.getTrackWidthAt(midD) ?? app.trackWidth;
+        const circleDiameter = localWidth * 1.95;
+        const circleRadius = circleDiameter / 2;
+        const railRadius = app.trackStats?.toyParkRailRadius ?? 0.784;
+        const railOffset = app.trackStats?.toyParkRailOffset ?? 0.392;
+        const connectorDepth = Math.max(0.85, railRadius * 1.1);
+        const group = new THREE.Group();
+        group.name = `TOY_PARK_WINDMILL_SPINNER_CIRCLE_TILE_BOARD_${counts.windmillCircle}`;
+        group.position.set(midPoint.x, midPoint.y + 0.018, midPoint.z);
+        const yaw = Math.atan2(midFrame.tangent.x, midFrame.tangent.z);
+        const pitch = Math.atan2(midFrame.tangent.y, Math.max(0.0001, Math.hypot(midFrame.tangent.x, midFrame.tangent.z)));
+        app.applyTrackSlopeRotation?.(group, yaw, pitch);
+        group.userData = {
+          type: 'toy-park-windmill-spinner-circle-board-module',
+          tileKey: piece.tileKey,
+          tileLabel: piece.tileLabel,
+          circleTile: true,
+          circularBoard: true,
+          diameterScaleVsStandardRoadWidth: 1.95,
+          circleDiameter: Number(circleDiameter.toFixed(3)),
+          connectorWidth: Number(localWidth.toFixed(3)),
+          connectorPolicy: 'straight-light-purple-road-surface-passes-through-circle-no-rails-inside-spinner-uniform-approach-exit-overhang',
+          outsideConnectorSurfaceCount: 0,
+          ribbonRailCount: 0,
+          straightSurfaceThroughCircle: true,
+          noRailsInsideSpinnerCircle: true,
+          circleRailOpeningPolicy: 'open-at-local-negative-z-and-positive-z-for-straight-road-surface-with-rounded-rail-end-caps',
+          surfaceAndRailColor: 'light-purple',
+        };
+        const circleFloor = new THREE.Mesh(new THREE.CylinderGeometry(circleRadius, circleRadius, 0.085, 80), windmillCircleMat);
+        circleFloor.name = `TOY_PARK_WINDMILL_SPINNER_CIRCLE_LIGHT_PURPLE_FLOOR_${counts.windmillCircle}`;
+        circleFloor.position.y = 0;
+        circleFloor.receiveShadow = shadowsEnabled(app);
+        circleFloor.userData = {
+          type: 'toy-park-windmill-spinner-circle-floor',
+          circularBoard: true,
+          diameter: Number(circleDiameter.toFixed(3)),
+          lightPurpleTrack: true,
+          outsideConnectorsCancelled: true,
+        };
+        group.add(circleFloor);
+        const desiredApproachSurfaceOverhang = Math.max(1.7, Math.min(localWidth * 0.3, railRadius * 2.25));
+        const pieceLength = Math.max(0, endD - startD);
+        const seamMargin = Math.max(0.24, railRadius * 0.22);
+        const maxApproachSurfaceOverhang = Math.max(0, (pieceLength - seamMargin * 2 - circleDiameter) / 2);
+        const approachSurfaceOverhang = Math.max(0, Math.min(desiredApproachSurfaceOverhang, maxApproachSurfaceOverhang));
+        const passThroughDepth = circleDiameter;
+        const totalPurpleFootprintDepth = circleDiameter + approachSurfaceOverhang * 2;
+        const passThroughSurface = new THREE.Mesh(
+          new THREE.BoxGeometry(localWidth, 0.052, passThroughDepth),
+          windmillCircleMat
+        );
+        passThroughSurface.name = `TOY_PARK_WINDMILL_SPINNER_CIRCLE_CENTER_STRAIGHT_LIGHT_PURPLE_ROAD_SURFACE_${counts.windmillCircle}`;
+        passThroughSurface.position.y = 0.071;
+        passThroughSurface.receiveShadow = shadowsEnabled(app);
+        passThroughSurface.userData = {
+          type: 'toy-park-windmill-spinner-circle-straight-light-purple-road-surface-no-rail',
+          tileKey: piece.tileKey,
+          straightRoadSurfaceThroughCircle: true,
+          centerCircleSurfaceOnly: true,
+          noRailsInsideSpinnerCircle: true,
+          surfaceOnly: true,
+          railCountInsideCircle: 0,
+          width: Number(localWidth.toFixed(3)),
+          depth: Number(passThroughDepth.toFixed(3)),
+          circleDiameter: Number(circleDiameter.toFixed(3)),
+          desiredApproachSurfaceOverhang: Number(desiredApproachSurfaceOverhang.toFixed(3)),
+          approachSurfaceOverhang: Number(approachSurfaceOverhang.toFixed(3)),
+          seamMargin: Number(seamMargin.toFixed(3)),
+          totalPurpleFootprintDepth: Number(totalPurpleFootprintDepth.toFixed(3)),
+          clampedToHostPiece: approachSurfaceOverhang < desiredApproachSurfaceOverhang - 0.001,
+          pieceLength: Number(pieceLength.toFixed(3)),
+          splitTransitionSurfaces: true,
+          materialColor: 'light-purple',
+          purpose: 'circle-interior-straight-purple-road-only-transition-boards-are-separate-short-railed-pieces',
+        };
+        group.add(passThroughSurface);
+        let transitionSurfaceCount = 0;
+        if (approachSurfaceOverhang > 0.08) {
+          [
+            { zone: 'approach', z: -circleRadius - approachSurfaceOverhang / 2 },
+            { zone: 'exit', z: circleRadius + approachSurfaceOverhang / 2 },
+          ].forEach(({ zone, z }) => {
+            const transitionSurface = new THREE.Mesh(
+              new THREE.BoxGeometry(localWidth, 0.058, approachSurfaceOverhang),
+              windmillCircleMat
+            );
+            transitionSurface.name = `TOY_PARK_WINDMILL_SPINNER_CIRCLE_${zone.toUpperCase()}_SHORT_RAILED_TRANSITION_SURFACE_${counts.windmillCircle}`;
+            transitionSurface.position.set(0, 0.076, z);
+            transitionSurface.receiveShadow = shadowsEnabled(app);
+            transitionSurface.userData = {
+              type: 'toy-park-windmill-spinner-circle-short-railed-transition-surface',
+              tileKey: piece.tileKey,
+              transitionZone: zone,
+              shortTransitionSurface: true,
+              hasLeftRightRails: true,
+              noRailInsideSpinnerCircle: true,
+              width: Number(localWidth.toFixed(3)),
+              depth: Number(approachSurfaceOverhang.toFixed(3)),
+              circleDiameter: Number(circleDiameter.toFixed(3)),
+              totalPurpleFootprintDepth: Number(totalPurpleFootprintDepth.toFixed(3)),
+              purpose: 'short-purple-approach-exit-board-with-visible-side-rails-not-one-long-unrailed-strip',
+            };
+            group.add(transitionSurface);
+            transitionSurfaceCount += 1;
+          });
+        }
+        const railMat = new THREE.MeshPhysicalMaterial({ color: 0xd8bdff, roughness: 0.93, metalness: 0, clearcoat: 0.025, clearcoatRoughness: 0.94, side: THREE.DoubleSide, transparent: false, opacity: 1, depthWrite: true });
+        railMat.userData = { type: 'toy-park-windmill-spinner-circle-light-purple-rail-material', tileRailColor: 'light-purple', circularRail: true, opaqueClay: true, clayGrain: 'chunky-pastel-molded-clay-plastic', halfRoundRailProfile: true };
+        const halfRoundRailRadius = railRadius;
+        const halfRoundRailBaseY = 0.104;
+        const makeLocalHalfRoundRail = (samples, name, userData) => {
+          const rail = buildToyParkHalfRoundRailMesh(app,
+            samples,
+            halfRoundRailRadius,
+            railMat,
+            name,
+            {
+              ...userData,
+              halfRoundRailProfile: true,
+              matchesOtherToyParkTileRails: true,
+              noCylindricalTubeRail: true,
+            }
+          );
+          rail.castShadow = shadowsEnabled(app);
+          rail.receiveShadow = shadowsEnabled(app);
+          return rail;
+        };
+        let transitionSideRailCount = 0;
+        const transitionRailX = localWidth / 2 + railOffset;
+        const makeStraightTransitionRailSamples = (side, zCenter, length) => {
+          const segmentCount = Math.max(3, Math.ceil(length / 0.28));
+          const samples = [];
+          for (let i = 0; i <= segmentCount; i += 1) {
+            const t = i / segmentCount;
+            const z = zCenter - length / 2 + length * t;
+            samples.push({
+              center: new THREE.Vector3(side * transitionRailX, halfRoundRailBaseY, z),
+              right: new THREE.Vector3(side, 0, 0),
+              y: halfRoundRailBaseY,
+            });
+          }
+          return samples;
+        };
+        [
+          { zone: 'approach', z: -circleRadius - approachSurfaceOverhang / 2 },
+          { zone: 'exit', z: circleRadius + approachSurfaceOverhang / 2 },
+        ].forEach(({ zone, z }) => {
+          [-1, 1].forEach((side) => {
+            const rail = makeLocalHalfRoundRail(
+              makeStraightTransitionRailSamples(side, z, approachSurfaceOverhang),
+              `TOY_PARK_WINDMILL_SPINNER_CIRCLE_LIGHT_PURPLE_${zone.toUpperCase()}_HALF_ROUND_SIDE_RAIL_${side < 0 ? 'LEFT' : 'RIGHT'}_${counts.windmillCircle}`,
+              {
+                type: 'toy-park-windmill-spinner-circle-light-purple-transition-side-rail',
+                railSide: side,
+                transitionZone: zone,
+                approachExitSideRail: true,
+                noRailInsideSpinnerCircle: true,
+                stopsAtCircleOpening: true,
+                length: Number(approachSurfaceOverhang.toFixed(3)),
+                xOffset: Number(transitionRailX.toFixed(3)),
+                purpose: 'left-right-half-round-rails-only-on-purple-approach-and-exit-surfaces-before-the-circle',
+              }
+            );
+            group.add(rail);
+            transitionSideRailCount += 1;
+          });
+        });
+        // Keep the big circular rail open at the local -Z/+Z entrance/exit direction.
+        // The straight light-purple road surface passes through those openings, but side rails
+        // must NOT run inside the spinner circle; the only interior moving shape is the windmill X.
+        // The rail center sits inside the circular board so the half-round's outer lip is flush
+        // with the board edge instead of protruding outside the circle.
+        const circleOpeningAngle = Math.PI * 0.26;
+        const sideArcAngle = Math.PI - circleOpeningAngle;
+        const circleRailMajorRadius = Math.max(0.1, circleRadius - halfRoundRailRadius * 1.18);
+        let circleRailEndCapCount = 0;
+        const makeCircleArcRailSamples = (centerAngle, arcAngle) => {
+          const segmentCount = 52;
+          const startAngle = centerAngle - arcAngle / 2;
+          const samples = [];
+          for (let i = 0; i <= segmentCount; i += 1) {
+            const angle = startAngle + arcAngle * (i / segmentCount);
+            const radial = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
+            samples.push({
+              center: new THREE.Vector3(radial.x * circleRailMajorRadius, halfRoundRailBaseY, radial.z * circleRailMajorRadius),
+              right: radial,
+              y: halfRoundRailBaseY,
+            });
+          }
+          return samples;
+        };
+        [
+          { side: 'right', centerAngle: 0 },
+          { side: 'left', centerAngle: Math.PI },
+        ].forEach(({ side, centerAngle }) => {
+          const rail = makeLocalHalfRoundRail(
+            makeCircleArcRailSamples(centerAngle, sideArcAngle),
+            `TOY_PARK_WINDMILL_SPINNER_CIRCLE_LIGHT_PURPLE_OPEN_SIDE_HALF_ROUND_ARC_RAIL_${side}_${counts.windmillCircle}`,
+            {
+              type: 'toy-park-windmill-spinner-circle-light-purple-open-side-arc-rail',
+              circularRail: true,
+              fullCircleRail: false,
+              sideArcRail: true,
+              arcSide: side,
+              openingAtEntranceAndExit: true,
+              openingAxis: 'local-z-entrance-exit',
+              entranceExitGapCenters: ['local-negative-z', 'local-positive-z'],
+              connectedByRibbonRails: false,
+              connectedByStraightRoadSurface: true,
+              connectorPolicy: 'circle-rail-open-at-local-z-for-straight-road-surface-no-rails-inside-spinner',
+              bladeClearanceTarget: 'spinner-blades-stop-before-this-rail',
+              insetCircleRail: true,
+              circleRailMajorRadius: Number(circleRailMajorRadius.toFixed(3)),
+              circleBoardRadius: Number(circleRadius.toFixed(3)),
+            }
+          );
+          group.add(rail);
+          // Half-round rail geometry already has flat capped ends like other Toy Park rails.
+          // Keep the debug count at zero because separate bulb/sphere caps are intentionally removed.
+        });
+        group.userData.circleRailEndCapCount = circleRailEndCapCount;
+        group.userData.transitionSurfaceCount = transitionSurfaceCount;
+        group.userData.transitionSideRailCount = transitionSideRailCount;
+        group.userData.transitionSideRailPolicy = 'left-right-rails-only-on-short-approach-and-exit-purple-transition-surfaces-stop-before-circle-opening';
+        group.userData.straightSurfaceDepth = Number(passThroughDepth.toFixed(3));
+        group.userData.totalPurpleFootprintDepth = Number(totalPurpleFootprintDepth.toFixed(3));
+        group.userData.desiredApproachSurfaceOverhang = Number(desiredApproachSurfaceOverhang.toFixed(3));
+        group.userData.approachSurfaceOverhang = Number(approachSurfaceOverhang.toFixed(3));
+        group.userData.seamMargin = Number(seamMargin.toFixed(3));
+        group.userData.clampedToHostPiece = approachSurfaceOverhang < desiredApproachSurfaceOverhang - 0.001;
+        group.userData.overlapSafeFootprint = totalPurpleFootprintDepth <= pieceLength - seamMargin * 2 + 0.001;
+        group.userData.splitShortTransitionSurfaces = true;
+        group.userData.circleRailOpeningAngleRadians = Number(circleOpeningAngle.toFixed(3));
+        group.userData.circleRailGapFix = 'rounded-end-caps-on-open-circle-rail-ends-no-inner-rail';
+        app.trackGroup.add(group);
+      }
       if (isVariableBend) counts.variableBend += 1;
+      else if (isWindmillCircle) counts.windmillCircle += 1;
       else if (isRampUp) counts.rampUp += 1;
       else if (isElevatedStraight) counts.elevatedStraight += 1;
       else if (isRampDown) counts.rampDown += 1;
@@ -491,6 +769,19 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
     const railChunkGap = 0.035;
     const tileConnectorOverlap = TOY_PARK_RAIL_TILE_CONNECTOR_OVERLAP;
     const { red: redMaterial, white: whiteMaterial, innerGray: innerGrayMaterial, straightBlue: straightBlueMaterial, candyPopPinkOrange: candyPopPinkOrangeMaterial } = createToyParkRailMaterialSet(app, material);
+    const windmillLightPurpleMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xd8bdff,
+      roughness: 0.88,
+      metalness: 0,
+      clearcoat: 0.04,
+      clearcoatRoughness: 0.9,
+      transparent: false,
+      opacity: 1,
+      depthWrite: true,
+      depthTest: true,
+      side: THREE.DoubleSide,
+    });
+    windmillLightPurpleMaterial.userData = { type: 'toy-park-windmill-spinner-circle-tile-rail-light-purple-material', sharedToyParkRailTexture: false, opaqueDoubleSidedRail: true, circleObstacleTileRail: true, matchesWindmillSpinnerCircleSurfaceColor: true, tileRailColor: 'light-purple', materialFeel: 'rough pitted molded clay half-round rail matching windmill spinner circle tile surface' };
     const makeBridgeRailMaterial = (color, role) => {
       const bridgeMat = new THREE.MeshPhysicalMaterial({
         color,
@@ -522,14 +813,18 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
     let ninetyDegreeInnerRailRemoved = 0;
     let ninetyDegreeOuterRailChunks = 0;
     let straightBlueRailSegments = 0;
+    let windmillHostStraightRailSegments = 0;
     let bridgeBoardRailSegments = 0;
     let rampUpBridgeRailSegments = 0;
     let elevatedBridgeRailSegments = 0;
     let rampDownBridgeRailSegments = 0;
     let tileConnectorRailSegments = 0;
+    let windmillBoundaryJoinConnectorSkipped = 0;
     const bendRailRoleSummary = [];
     const straightPieces = (app.trackPieces || [])
-      .filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.straight.key || piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle?.key);
+      .filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.straight.key
+        || piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle?.key
+        || piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle?.key);
     const bridgeTileKeys = new Set([
       TOY_PARK_TRACK_TILE_LIBRARY.rampUp.key,
       TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight.key,
@@ -545,6 +840,14 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
     const innerBendJoinSides = new Map();
     const ninetyDegreeBendBoundaries = new Set();
     const boundaryKey = (distance) => Number(distance).toFixed(3);
+    const windmillBoundaryDistances = new Set();
+    (app.trackPieces || [])
+      .filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle?.key)
+      .forEach((piece) => {
+        if (Number.isFinite(piece.startD) && piece.startD > 0 && piece.startD < app.trackLength) windmillBoundaryDistances.add(boundaryKey(piece.startD));
+        if (Number.isFinite(piece.endD) && piece.endD > 0 && piece.endD < app.trackLength) windmillBoundaryDistances.add(boundaryKey(piece.endD));
+      });
+    const isWindmillBoundary = (distance) => windmillBoundaryDistances.has(boundaryKey(distance));
     const markNinetyDegreeBendBoundary = (distance) => {
       if (!Number.isFinite(distance) || distance <= 0 || distance >= app.trackLength) return;
       ninetyDegreeBendBoundaries.add(boundaryKey(distance));
@@ -581,55 +884,85 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
         const endTouchesInnerGray = innerBendJoinSides.has(`${boundaryKey(piece.endD)}:${side}`);
         const startTouchesNinetyDegreeBend = isNinetyDegreeBendBoundary(piece.startD);
         const endTouchesNinetyDegreeBend = isNinetyDegreeBendBoundary(piece.endD);
-        const startD = clamp(piece.startD - ((startTouchesInnerGray || startTouchesNinetyDegreeBend) ? 0 : tileConnectorOverlap), 0, app.trackLength);
-        const endD = clamp(piece.endD + ((endTouchesInnerGray || endTouchesNinetyDegreeBend) ? 0 : tileConnectorOverlap), startD, app.trackLength);
+        const baseStartD = clamp(piece.startD - ((startTouchesInnerGray || startTouchesNinetyDegreeBend) ? 0 : tileConnectorOverlap), 0, app.trackLength);
+        const baseEndD = clamp(piece.endD + ((endTouchesInnerGray || endTouchesNinetyDegreeBend) ? 0 : tileConnectorOverlap), baseStartD, app.trackLength);
         if (startTouchesNinetyDegreeBend || endTouchesNinetyDegreeBend) {
           straightBlueNinetyDegreeBoundaryClips += 1;
         }
-        const samples = buildToyParkRailCurve(app, startD, endD, side, width, railOffset, railBaseLift);
         const isCandyPopStraight = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle?.key;
+        const isWindmillCircle = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle?.key;
         const straightRailMaterial = isCandyPopStraight ? candyPopPinkOrangeMaterial : straightBlueMaterial;
         const straightRailColorName = isCandyPopStraight ? 'pink-orange' : 'sky-blue';
-        const tube = buildToyParkHalfRoundRailMesh(app,
-          samples,
-          railRadius,
-          straightRailMaterial,
-          `toy-park-half-round-straight-${straightRailColorName}-continuous-rail-${side < 0 ? 'left' : 'right'}-${straightBlueRailSegments}`,
-          {
-            type: isCandyPopStraight ? 'toy-park-candy-pop-straight-obstacle-tile-pink-orange-continuous-rail' : 'toy-park-straight-road-tile-sky-blue-continuous-rail',
-            railSide: side,
-            curveRole: 'straight-continuous',
-            tileKey: piece.tileKey,
-            tileLabel: piece.tileLabel,
-            straightRoadTileRail: true,
-            candyPopObstacleTileRail: isCandyPopStraight,
-            continuousRail: true,
-            segmentedChunks: false,
-            distanceStart: Number(startD.toFixed(2)),
-            distanceEnd: Number(endD.toFixed(2)),
-            tileRailConnectorOverlap: tileConnectorOverlap,
-            clippedAtInnerGrayBoundary: startTouchesInnerGray || endTouchesInnerGray,
-            clippedAtNinetyDegreeBendBoundary: startTouchesNinetyDegreeBend || endTouchesNinetyDegreeBend,
-            startTouchesInnerGray,
-            endTouchesInnerGray,
-            startTouchesNinetyDegreeBend,
-            endTouchesNinetyDegreeBend,
-            railJoinFix: (startTouchesNinetyDegreeBend || endTouchesNinetyDegreeBend)
-              ? 'straight-blue-rail-stops-flush-at-90-degree-bend-boundary-to-avoid-neighbor-board-rail-overlap'
-              : ((startTouchesInnerGray || endTouchesInnerGray)
-                ? 'straight-blue-rail-stops-flush-at-inner-gray-bend-boundary-to-avoid-overlap-collar'
-                : 'overlap-straight-rail-slightly-across-non-90-tile-boundaries'),
-            materialFeel: isCandyPopStraight
-              ? 'single continuous pink-orange rough clay half-round rail matching the candy pop straight obstacle tile track surface'
-              : 'single continuous sky-blue rough clay half-round rail matching the straight road tile track surface',
-            cameraOccluder: true,
-            cameraOccluderType: 'toy-park-straight-road-tile-sky-blue-continuous-rail',
-            cameraOccluderDistanceStart: startD,
-            cameraOccluderDistanceEnd: endD,
-          }
-        );
-        app.trackGroup.add(tube);
-        straightBlueRailSegments += 1;
+        let railSpans = [{ startD: baseStartD, endD: baseEndD, spanRole: 'full-straight' }];
+        if (isWindmillCircle) {
+          const midD = (piece.startD + piece.endD) / 2;
+          const midPoint = app.getTrackPointAt(midD);
+          const localWidth = midPoint.w ?? app.getTrackWidthAt(midD) ?? width;
+          const circleDiameter = localWidth * 1.95;
+          const desiredApproachSurfaceOverhang = Math.max(1.7, Math.min(localWidth * 0.3, railRadius * 2.25));
+          const seamMargin = Math.max(0.24, railRadius * 0.22);
+          const pieceLength = Math.max(0, piece.endD - piece.startD);
+          const maxApproachSurfaceOverhang = Math.max(0, (pieceLength - seamMargin * 2 - circleDiameter) / 2);
+          const approachSurfaceOverhang = Math.max(0, Math.min(desiredApproachSurfaceOverhang, maxApproachSurfaceOverhang));
+          const protectedHalfDepth = (circleDiameter + approachSurfaceOverhang * 2) / 2;
+          const protectedStartD = clamp(midD - protectedHalfDepth - seamMargin * 0.25, piece.startD, piece.endD);
+          const protectedEndD = clamp(midD + protectedHalfDepth + seamMargin * 0.25, piece.startD, piece.endD);
+          railSpans = [
+            { startD: baseStartD, endD: protectedStartD, spanRole: 'windmill-host-before-circle' },
+            { startD: protectedEndD, endD: baseEndD, spanRole: 'windmill-host-after-circle' },
+          ].filter((span) => span.endD - span.startD > 0.35);
+        }
+        railSpans.forEach((span) => {
+          const samples = buildToyParkRailCurve(app, span.startD, span.endD, side, width, railOffset, railBaseLift);
+          const tube = buildToyParkHalfRoundRailMesh(app,
+            samples,
+            railRadius,
+            straightRailMaterial,
+            `toy-park-half-round-straight-${straightRailColorName}-continuous-rail-${side < 0 ? 'left' : 'right'}-${straightBlueRailSegments}`,
+            {
+              type: isWindmillCircle ? 'toy-park-windmill-host-straight-sky-blue-split-rail' : (isCandyPopStraight ? 'toy-park-candy-pop-straight-obstacle-tile-pink-orange-continuous-rail' : 'toy-park-straight-road-tile-sky-blue-continuous-rail'),
+              railSide: side,
+              curveRole: isWindmillCircle ? 'windmill-host-straight-split-before-after-circle' : 'straight-continuous',
+              railSpanRole: span.spanRole,
+              tileKey: piece.tileKey,
+              tileLabel: piece.tileLabel,
+              straightRoadTileRail: true,
+              candyPopObstacleTileRail: isCandyPopStraight,
+              windmillHostStraightRail: isWindmillCircle,
+              windmillCircleTileRail: false,
+              avoidsWindmillCircleInterior: isWindmillCircle,
+              continuousRail: true,
+              segmentedChunks: false,
+              distanceStart: Number(span.startD.toFixed(2)),
+              distanceEnd: Number(span.endD.toFixed(2)),
+              tileRailConnectorOverlap: isWindmillCircle ? 0 : tileConnectorOverlap,
+              clippedAtInnerGrayBoundary: startTouchesInnerGray || endTouchesInnerGray,
+              clippedAtNinetyDegreeBendBoundary: startTouchesNinetyDegreeBend || endTouchesNinetyDegreeBend,
+              clippedAroundWindmillCircle: isWindmillCircle,
+              startTouchesInnerGray,
+              endTouchesInnerGray,
+              startTouchesNinetyDegreeBend,
+              endTouchesNinetyDegreeBend,
+              railJoinFix: isWindmillCircle
+                ? 'windmill-host-straight-blue-rails-restored-before-and-after-circle-but-clipped-away-from-spinner-interior'
+                : ((startTouchesNinetyDegreeBend || endTouchesNinetyDegreeBend)
+                  ? 'straight-blue-rail-stops-flush-at-90-degree-bend-boundary-to-avoid-neighbor-board-rail-overlap'
+                  : ((startTouchesInnerGray || endTouchesInnerGray)
+                    ? 'straight-blue-rail-stops-flush-at-inner-gray-bend-boundary-to-avoid-overlap-collar'
+                    : 'overlap-straight-rail-slightly-across-non-90-tile-boundaries')),
+              materialFeel: isCandyPopStraight
+                ? 'single continuous pink-orange rough clay half-round rail matching the candy pop straight obstacle tile surface'
+                : 'single continuous sky-blue rough clay half-round rail matching the straight road tile track surface',
+              cameraOccluder: true,
+              cameraOccluderType: isWindmillCircle ? 'toy-park-windmill-host-straight-sky-blue-split-rail' : 'toy-park-straight-road-tile-sky-blue-continuous-rail',
+              cameraOccluderDistanceStart: span.startD,
+              cameraOccluderDistanceEnd: span.endD,
+            }
+          );
+          app.trackGroup.add(tube);
+          straightBlueRailSegments += 1;
+          if (isWindmillCircle) windmillHostStraightRailSegments += 1;
+        });
       });
 
       bridgePieces.forEach((piece) => {
@@ -687,8 +1020,11 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
         const endD = clamp(boundaryD + tileConnectorOverlap, startD, app.trackLength);
         const innerBendJoin = innerBendJoinSides.has(`${boundaryKey(boundaryD)}:${side}`);
         const ninetyDegreeBendJoin = isNinetyDegreeBendBoundary(boundaryD);
-        if (innerBendJoin || ninetyDegreeBendJoin) {
-          if (ninetyDegreeBendJoin) {
+        const windmillBoundaryJoin = isWindmillBoundary(boundaryD);
+        if (innerBendJoin || ninetyDegreeBendJoin || windmillBoundaryJoin) {
+          if (windmillBoundaryJoin) {
+            windmillBoundaryJoinConnectorSkipped += 1;
+          } else if (ninetyDegreeBendJoin) {
             ninetyDegreeJoinConnectorSkipped += 1;
           } else {
             grayInnerJoinConnectorSegments += 1;
@@ -907,7 +1243,11 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
     app.trackStats.toyParkGrayInnerJoinConnectorSegments = 0;
     app.trackStats.toyParkGrayInnerJoinConnectorSkipped = grayInnerJoinConnectorSegments;
     app.trackStats.toyParkStraightBlueRailSegments = straightBlueRailSegments;
+    app.trackStats.toyParkWindmillHostStraightRailSegments = windmillHostStraightRailSegments;
+    app.trackStats.toyParkWindmillHostStraightRailPolicy = 'sky-blue-straight-rails-restored-before-and-after-windmill-circle-clipped-out-of-spinner-interior';
     app.trackStats.toyParkTileConnectorRailSegments = tileConnectorRailSegments;
+    app.trackStats.toyParkWindmillBoundaryJoinConnectorSkipped = windmillBoundaryJoinConnectorSkipped;
+    app.trackStats.toyParkWindmillNoInnerRailPolicy = 'straight-purple-road-surface-through-circle-rails-and-connector-caps-stop-at-circle-openings';
     app.trackStats.toyParkNinetyDegreeJoinConnectorSkipped = ninetyDegreeJoinConnectorSkipped;
     app.trackStats.toyParkStraightBlueNinetyDegreeBoundaryClips = straightBlueNinetyDegreeBoundaryClips;
     app.trackStats.toyParkNinetyDegreeBoundaryFlushButtJoint = true;

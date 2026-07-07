@@ -2,6 +2,13 @@ import { TOY_PARK_TRACK_TILE_LIBRARY } from './config.js';
 
 const degreesToRadians = (degrees) => degrees * (Math.PI / 180);
 
+const TOY_PARK_WINDMILL_VISUAL_FOOTPRINT = {
+  // Conservative minimum host straight length for the fixed purple approach/circle/exit
+  // surface. Shorter straights put the visual overhang on top of adjacent 45-degree bends.
+  minHostStraightLength: 21.5,
+  policy: 'only-place-windmill-on-straights-long-enough-for-purple-approach-circle-exit-footprint',
+};
+
 // The Toy Park start board is deeper than the road tiles: d=0 is the start-board
 // exit where the first road tile begins, while the user-facing board entrance is
 // farther back on the start board. The loop prototype must close to that entrance,
@@ -444,26 +451,31 @@ const applyBridgeModuleSetToPieces = (pieces) => {
 const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, attempt, generator }) => {
   const straightTile = TOY_PARK_TRACK_TILE_LIBRARY.straight;
   const candyPopStraightObstacleTile = TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle;
+  const windmillSpinnerCircleTile = TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle;
   const variableBendTile = TOY_PARK_TRACK_TILE_LIBRARY.variableBend;
   const pieces = [];
   const pickStraightTile = (straightIndex, length) => {
+    const enoughRoomForWindmillCircle = length >= TOY_PARK_WINDMILL_VISUAL_FOOTPRINT.minHostStraightLength;
     const enoughRoomForCandyPopPattern = length >= 7.8;
-    if (!enoughRoomForCandyPopPattern || !candyPopStraightObstacleTile) return straightTile;
-    // Keep the start-board connector plain, then sprinkle the new straight obstacle board
-    // through ordinary straights so the interface width stays identical to the base straight tile.
-    return straightIndex > 0 && straightIndex % 3 === 1
-      ? candyPopStraightObstacleTile
-      : straightTile;
+    if (straightIndex > 0 && straightIndex % 4 === 2 && enoughRoomForWindmillCircle && windmillSpinnerCircleTile) {
+      return windmillSpinnerCircleTile;
+    }
+    if (straightIndex > 0 && straightIndex % 3 === 1 && enoughRoomForCandyPopPattern && candyPopStraightObstacleTile) {
+      // Keep the start-board connector plain, then sprinkle themed obstacle boards
+      // through ordinary straights so the interface width stays identical to the base straight tile.
+      return candyPopStraightObstacleTile;
+    }
+    return straightTile;
   };
   turns.forEach((turnDegrees, index) => {
     const selectedStraightTile = pickStraightTile(index, straightLengths[index]);
     pieces.push(cloneTilePiece(selectedStraightTile, {
-      type: selectedStraightTile.role === 'straight-obstacle' ? 'straight-obstacle' : 'straight',
+      type: ['straight-obstacle', 'circle-obstacle'].includes(selectedStraightTile.role) ? selectedStraightTile.role : 'straight',
       length: straightLengths[index],
       turnDegrees: 0,
       loopPrototype: true,
       loopPrototypeIndex: index,
-      loopSegmentRole: index === 0 ? 'random-loop-opening-straight' : (selectedStraightTile.role === 'straight-obstacle' ? 'random-loop-candy-pop-straight-obstacle' : 'random-loop-straight'),
+      loopSegmentRole: index === 0 ? 'random-loop-opening-straight' : (selectedStraightTile.role === 'straight-obstacle' ? 'random-loop-candy-pop-straight-obstacle' : (selectedStraightTile.role === 'circle-obstacle' ? 'random-loop-windmill-spinner-circle-obstacle' : 'random-loop-straight')),
       randomLoop: true,
       randomLoopGenerator: generator,
       randomLoopAttempt: attempt,
@@ -488,14 +500,16 @@ const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, a
   });
   const finishStraightTile = pickStraightTile(straightLengths.length - 1, straightLengths[straightLengths.length - 1]);
   pieces.push(cloneTilePiece(finishStraightTile, {
-    type: finishStraightTile.role === 'straight-obstacle' ? 'straight-obstacle' : 'straight',
+    type: ['straight-obstacle', 'circle-obstacle'].includes(finishStraightTile.role) ? finishStraightTile.role : 'straight',
     length: straightLengths[straightLengths.length - 1],
     turnDegrees: 0,
     loopPrototype: true,
     loopPrototypeIndex: turns.length,
     loopSegmentRole: finishStraightTile.role === 'straight-obstacle'
       ? 'finish-board-square-entry-candy-pop-straight-obstacle-random-loop-closure'
-      : 'finish-board-square-entry-straight-connector-random-loop-closure',
+      : (finishStraightTile.role === 'circle-obstacle'
+        ? 'finish-board-square-entry-windmill-spinner-circle-obstacle-random-loop-closure'
+        : 'finish-board-square-entry-straight-connector-random-loop-closure'),
     randomLoop: true,
     randomLoopGenerator: generator,
     randomLoopAttempt: attempt,
