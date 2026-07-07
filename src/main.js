@@ -11470,20 +11470,45 @@ class MarbleRace {
     });
   }
 
-  createMarbleNameLabel(name) {
+  createMarbleNameLabel(name, identity = null) {
     const canvas = document.createElement('canvas');
     canvas.width = 384;
     canvas.height = 96;
     const ctx = canvas.getContext('2d');
     const label = String(name || '').replace(/\s+/g, ' ').trim();
+    const normalizeHex = (value, fallback = '#ffd84d') => {
+      if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) return value;
+      if (Number.isFinite(value)) return `#${Number(value).toString(16).padStart(6, '0')}`;
+      return fallback;
+    };
+    const isToyParkLabel = identity?.visualThemeKey === 'toyPark' || this.visualThemeKey === 'toyPark';
+    const paletteHex = Array.isArray(identity?.paletteHex) && identity.paletteHex.length
+      ? identity.paletteHex
+      : [identity?.colorHex || identity?.color || '#ffd84d', '#ffffff', '#17131f'];
+    const labelFill = isToyParkLabel ? normalizeHex(paletteHex[0], '#ffd84d') : '#ffd84d';
+    const labelAccent = normalizeHex(paletteHex[1], '#ffffff');
+    const labelStroke = isToyParkLabel ? '#17131f' : 'rgba(35, 24, 0, 0.74)';
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.font = '700 34px Inter, Arial, sans-serif';
+    ctx.font = isToyParkLabel ? '900 36px Arial Black, Impact, Inter, sans-serif' : '700 34px Inter, Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = 'rgba(35, 24, 0, 0.74)';
+    if (isToyParkLabel) {
+      const pillGradient = ctx.createLinearGradient(44, 16, canvas.width - 44, canvas.height - 16);
+      pillGradient.addColorStop(0, 'rgba(255,255,255,0.86)');
+      pillGradient.addColorStop(0.55, `${labelAccent}cc`);
+      pillGradient.addColorStop(1, 'rgba(23,19,31,0.18)');
+      ctx.beginPath();
+      ctx.roundRect(28, 16, canvas.width - 56, canvas.height - 32, 26);
+      ctx.fillStyle = pillGradient;
+      ctx.fill();
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = '#17131f';
+      ctx.stroke();
+    }
+    ctx.lineWidth = isToyParkLabel ? 7 : 4;
+    ctx.strokeStyle = labelStroke;
     ctx.strokeText(label, canvas.width / 2, canvas.height / 2 + 2);
-    ctx.fillStyle = '#ffd84d';
+    ctx.fillStyle = labelFill;
     ctx.fillText(label, canvas.width / 2, canvas.height / 2 + 2);
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -11498,6 +11523,15 @@ class MarbleRace {
     const material = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false });
     const sprite = new THREE.Sprite(material);
     sprite.name = `marble-name-label-${label}`;
+    sprite.userData = {
+      ...(sprite.userData || {}),
+      labelFill,
+      labelAccent,
+      labelStroke,
+      visualThemeKey: identity?.visualThemeKey || this.visualThemeKey || null,
+      paletteHex,
+      style: isToyParkLabel ? 'toy-park-palette-name-label' : 'default-name-label',
+    };
     sprite.renderOrder = 80;
     sprite.frustumCulled = false;
     sprite.scale.set(1.8, 0.45, 1);
@@ -13430,7 +13464,7 @@ class MarbleRace {
       const radius = identity.radius * (profile.marbleRadiusScale ?? 1);
       const baseMass = 1.1 + (i % 4) * 0.04;
       const mesh = this.makeMarbleMesh(radius, color, i, identity.patternKey, identity.palette, identity.materialKey, identity);
-      const labelSprite = this.createMarbleNameLabel(identity.name);
+      const labelSprite = this.createMarbleNameLabel(identity.name, identity);
       const gridIndex = racingGridEnabled ? i : i;
       const row = racingGridEnabled
         ? Math.floor(gridIndex / racingGridOccupiedPerRow)
