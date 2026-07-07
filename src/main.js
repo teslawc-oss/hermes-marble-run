@@ -4511,6 +4511,8 @@ class MarbleRace {
         progress: this.trackLength ? Number((distance / this.trackLength).toFixed(4)) : 0,
         laneOffset: Number(laneOffset.toFixed(2)),
         radius: Number((obstacle.radius || obstacle.halfLength || obstacle.halfWidth || 0).toFixed(2)),
+        visualRadius: obstacle.visualRadius != null ? Number(obstacle.visualRadius.toFixed(2)) : null,
+        interactionRadiusPolicy: obstacle.interactionRadiusPolicy ?? null,
         animationState: animationState.state,
         animationActive: animationState.active,
         animationDistanceAhead: animationState.distanceAhead != null ? Number(animationState.distanceAhead.toFixed(2)) : null,
@@ -8700,8 +8702,9 @@ class MarbleRace {
       textureStyle: material.userData?.visualStyle || 'candy-pop-pastel-striped-bumper',
       trackSurface: trackSurface.clone(),
       center,
-      radius: Math.max(radius + 0.36, PINBALL_PHYSICS.popBumperRadius * 0.82),
+      radius: Math.max(PINBALL_PHYSICS.popBumperRadius, radius + 0.62),
       visualRadius: radius,
+      interactionRadiusPolicy: 'visual-radius-plus-marble-contact-margin-matches-standard-pop-bumper',
       impulse: PINBALL_PHYSICS.popBumperImpulse * 0.78,
       cooldown: new Map(),
       cooldownSeconds: 0.34,
@@ -10749,7 +10752,7 @@ class MarbleRace {
           if (obstacle.glow?.material) obstacle.glow.material.opacity = 0.28;
         }
       }
-      if (animationActive && obstacle.pulse) {
+      if (obstacle.pulse && (animationActive || obstacle.visualStyle === 'toy-park-candy-pop-bumper')) {
         obstacle.pulse = Math.max(0, obstacle.pulse - delta * 5.5);
         const scale = 1 + obstacle.pulse * 0.18;
         obstacle.mesh?.scale.set(scale, 1 + obstacle.pulse * 0.08, scale);
@@ -11773,7 +11776,7 @@ class MarbleRace {
     return sprite;
   }
 
-  refreshMarbleNameLabelSet(now = performance.now(), force = false) {
+  refreshMarbleNameLabelSet(now = performance.now(), force = false, topIdsOverride = null) {
     const labelsAllowed = !MARBLE_LABEL_POLICY.showOnlyAfterRaceStart
       || this.state === 'running'
       || this.state === 'finished';
@@ -11787,6 +11790,17 @@ class MarbleRace {
       this.lastNameLabelRankingUpdate = now;
       return this.cachedNameLabelIds || new Set();
     }
+    const overrideIds = Array.isArray(topIdsOverride)
+      ? topIdsOverride.slice(0, topCount).filter((id) => Number.isFinite(id))
+      : null;
+    const overrideKey = overrideIds?.join('|') || '';
+    if (overrideIds && (force || overrideKey !== this.cachedNameLabelIdsKey)) {
+      this.cachedNameLabelIds = new Set(overrideIds);
+      this.cachedNameLabelIdsKey = overrideKey;
+      this.lastNameLabelRankingUpdate = now;
+      this.uiThrottleCounters.labelRankingRefreshes += 1;
+      return this.cachedNameLabelIds;
+    }
     if (!force && this.cachedNameLabelIds && now - (this.lastNameLabelRankingUpdate || 0) < rankUpdateMs) {
       return this.cachedNameLabelIds;
     }
@@ -11798,6 +11812,17 @@ class MarbleRace {
     this.lastNameLabelRankingUpdate = now;
     this.uiThrottleCounters.labelRankingRefreshes += 1;
     return this.cachedNameLabelIds;
+  }
+
+  syncTopRankNameLabels(ranking = this.getRanking({ force: true }), now = performance.now()) {
+    if (!Array.isArray(ranking)) return this.cachedNameLabelIds || new Set();
+    const topCount = Math.max(0, MARBLE_LABEL_POLICY.visibleTopRankCount ?? 5);
+    const topIds = ranking.slice(0, topCount).map((data) => data?.id).filter((id) => Number.isFinite(id));
+    const ids = this.refreshMarbleNameLabelSet(now, true, topIds);
+    const previousRankUpdate = this.lastNameLabelRankingUpdate;
+    this.updateMarbleNameLabels(0, { forceRanking: false, forceScaleTarget: false });
+    this.lastNameLabelRankingUpdate = previousRankUpdate;
+    return ids;
   }
 
   updateMarbleNameLabels(delta = 0, { forceRanking = false, forceScaleTarget = false } = {}) {
@@ -17245,6 +17270,7 @@ class MarbleRace {
     if (!force && now - this.lastLeaderboardUpdate < (this.performanceProfile?.leaderboardUpdateMs || 300)) return;
     this.lastLeaderboardUpdate = now;
     const ranking = this.getRanking({ force: true });
+    this.syncTopRankNameLabels(ranking);
     const signature = this.buildLeaderboardSignature(ranking);
     if (!force && signature === this.lastLeaderboardSignature) {
       this.uiThrottleCounters.leaderboardSkippedBySignature += 1;
