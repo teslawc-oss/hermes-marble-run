@@ -11475,39 +11475,29 @@ class MarbleRace {
     canvas.width = 384;
     canvas.height = 96;
     const ctx = canvas.getContext('2d');
-    const label = String(name || '').replace(/\s+/g, ' ').trim();
+    const fullLabel = String(name || '').replace(/\s+/g, ' ').trim();
     const normalizeHex = (value, fallback = '#ffd84d') => {
       if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) return value;
       if (Number.isFinite(value)) return `#${Number(value).toString(16).padStart(6, '0')}`;
       return fallback;
     };
     const isToyParkLabel = identity?.visualThemeKey === 'toyPark' || this.visualThemeKey === 'toyPark';
+    const label = isToyParkLabel ? fullLabel.slice(0, 5).trimEnd() : fullLabel;
     const paletteHex = Array.isArray(identity?.paletteHex) && identity.paletteHex.length
       ? identity.paletteHex
       : [identity?.colorHex || identity?.color || '#ffd84d', '#ffffff', '#17131f'];
     const labelFill = isToyParkLabel ? normalizeHex(paletteHex[0], '#ffd84d') : '#ffd84d';
     const labelAccent = normalizeHex(paletteHex[1], '#ffffff');
-    const labelStroke = isToyParkLabel ? '#17131f' : 'rgba(35, 24, 0, 0.74)';
+    const labelStroke = 'rgba(35, 24, 0, 0.74)';
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = isToyParkLabel ? '900 36px Arial Black, Impact, Inter, sans-serif' : '700 34px Inter, Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    if (isToyParkLabel) {
-      const pillGradient = ctx.createLinearGradient(44, 16, canvas.width - 44, canvas.height - 16);
-      pillGradient.addColorStop(0, 'rgba(255,255,255,0.86)');
-      pillGradient.addColorStop(0.55, `${labelAccent}cc`);
-      pillGradient.addColorStop(1, 'rgba(23,19,31,0.18)');
-      ctx.beginPath();
-      ctx.roundRect(28, 16, canvas.width - 56, canvas.height - 32, 26);
-      ctx.fillStyle = pillGradient;
-      ctx.fill();
-      ctx.lineWidth = 5;
-      ctx.strokeStyle = '#17131f';
-      ctx.stroke();
+    if (!isToyParkLabel) {
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = labelStroke;
+      ctx.strokeText(label, canvas.width / 2, canvas.height / 2 + 2);
     }
-    ctx.lineWidth = isToyParkLabel ? 7 : 4;
-    ctx.strokeStyle = labelStroke;
-    ctx.strokeText(label, canvas.width / 2, canvas.height / 2 + 2);
     ctx.fillStyle = labelFill;
     ctx.fillText(label, canvas.width / 2, canvas.height / 2 + 2);
 
@@ -11528,9 +11518,13 @@ class MarbleRace {
       labelFill,
       labelAccent,
       labelStroke,
+      fullLabel,
+      displayLabel: label,
+      hasBackground: false,
+      hasFrame: false,
       visualThemeKey: identity?.visualThemeKey || this.visualThemeKey || null,
       paletteHex,
-      style: isToyParkLabel ? 'toy-park-palette-name-label' : 'default-name-label',
+      style: isToyParkLabel ? 'toy-park-five-char-text-label' : 'default-name-label',
     };
     sprite.renderOrder = 80;
     sprite.frustumCulled = false;
