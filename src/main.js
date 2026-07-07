@@ -13177,6 +13177,111 @@ class MarbleRace {
     }
   }
 
+  createToyParkResultAvatarDataUrl(data, size = 128) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+    const normalizeHex = (value, fallback = '#ffffff') => {
+      if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) return value;
+      if (Number.isFinite(value)) return `#${Number(value).toString(16).padStart(6, '0')}`;
+      return fallback;
+    };
+    const palette = (Array.isArray(data?.paletteHex) && data.paletteHex.length ? data.paletteHex : [data?.colorHex || data?.color, '#ffffff', '#ffd43d'])
+      .map((hex, index) => normalizeHex(hex, index === 0 ? '#ffffff' : '#17131f'));
+    const [base, accent = '#ffffff', accent2 = '#ffd43d', accent3 = '#ff7a3d'] = palette;
+    const dark = '#17131f';
+    const cx = size / 2;
+    const cy = size / 2;
+    const r = size * 0.43;
+    const patternKey = data?.patternKey || '';
+    const grad = ctx.createLinearGradient(0, 0, size, size);
+    grad.addColorStop(0, '#ffffff');
+    grad.addColorStop(0.18, accent);
+    grad.addColorStop(0.62, base);
+    grad.addColorStop(1, accent2);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * 0.49, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = size * 0.06;
+    ctx.strokeStyle = dark;
+    ctx.stroke();
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const dot = (x, y, rr, fill = dark) => { ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.fill(); };
+    const strokeArc = (x, y, rr, a0, a1, color, width) => { ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); ctx.arc(x, y, rr, a0, a1); ctx.stroke(); };
+    if (patternKey === 'candy-captain') {
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = size * 0.16;
+      for (let i = -2; i < 5; i += 1) { ctx.beginPath(); ctx.moveTo(i * size * 0.25, size); ctx.lineTo((i + 1.35) * size * 0.25, 0); ctx.stroke(); }
+      ctx.strokeStyle = accent2; ctx.lineWidth = size * 0.065;
+      for (let i = -2; i < 5; i += 1) { ctx.beginPath(); ctx.moveTo(i * size * 0.25 + 8, size); ctx.lineTo((i + 1.35) * size * 0.25 + 8, 0); ctx.stroke(); }
+      ctx.fillStyle = accent2; ctx.fillRect(cx - size * 0.26, cy - size * 0.36, size * 0.52, size * 0.18);
+      dot(cx - size * 0.12, cy - size * 0.02, size * 0.045); dot(cx + size * 0.12, cy - size * 0.02, size * 0.045);
+      strokeArc(cx, cy + size * 0.07, size * 0.13, 0.12 * Math.PI, 0.88 * Math.PI, dark, size * 0.035);
+    } else if (patternKey === 'bubble-goblin') {
+      ctx.strokeStyle = accent; ctx.lineWidth = size * 0.05;
+      for (let i = 0; i < 12; i += 1) { ctx.beginPath(); ctx.arc(((i * 31) % 97) / 97 * size, ((i * 47) % 91) / 91 * size, size * (0.06 + (i % 3) * 0.018), 0, Math.PI * 2); ctx.stroke(); }
+      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(cx - size * 0.13, cy, size * 0.17, size * 0.24, -0.2, 0, Math.PI * 2); ctx.ellipse(cx + size * 0.16, cy, size * 0.17, size * 0.24, 0.2, 0, Math.PI * 2); ctx.fill();
+      dot(cx - size * 0.09, cy + size * 0.02, size * 0.075); dot(cx + size * 0.12, cy + size * 0.02, size * 0.075);
+    } else if (patternKey === 'rocket-bunny') {
+      for (let i = 0; i < 7; i += 1) dot((0.12 + (i % 4) * 0.24) * size, (0.14 + Math.floor(i / 4) * 0.48 + (i % 2) * 0.14) * size, size * 0.035, accent2);
+      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(cx - size * 0.12, cy - size * 0.18, size * 0.07, size * 0.24, -0.16, 0, Math.PI * 2); ctx.ellipse(cx + size * 0.12, cy - size * 0.18, size * 0.07, size * 0.24, 0.16, 0, Math.PI * 2); ctx.arc(cx, cy + size * 0.08, size * 0.25, 0, Math.PI * 2); ctx.fill();
+      dot(cx - size * 0.08, cy + size * 0.05, size * 0.035); dot(cx + size * 0.08, cy + size * 0.05, size * 0.035);
+    } else if (patternKey === 'choco-bear') {
+      ctx.fillStyle = accent; ctx.fillRect(0, 0, size, size * 0.3);
+      ctx.fillStyle = accent2; ctx.beginPath(); ctx.arc(cx - size * 0.22, cy - size * 0.14, size * 0.16, 0, Math.PI * 2); ctx.arc(cx + size * 0.22, cy - size * 0.14, size * 0.16, 0, Math.PI * 2); ctx.arc(cx, cy + size * 0.08, size * 0.31, 0, Math.PI * 2); ctx.fill();
+      dot(cx - size * 0.1, cy + size * 0.02, size * 0.04); dot(cx + size * 0.1, cy + size * 0.02, size * 0.04); ctx.fillStyle = dark; ctx.beginPath(); ctx.ellipse(cx, cy + size * 0.15, size * 0.08, size * 0.05, 0, 0, Math.PI * 2); ctx.fill();
+    } else if (patternKey === 'neon-penguin') {
+      ctx.strokeStyle = accent; ctx.lineWidth = size * 0.08;
+      for (let i = 0; i < 5; i += 1) { ctx.beginPath(); ctx.moveTo(0, size * (0.16 + i * 0.18)); ctx.lineTo(size, size * (0.05 + i * 0.18)); ctx.stroke(); }
+      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(cx, cy + size * 0.08, size * 0.28, size * 0.35, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = accent2; ctx.fillRect(cx - size * 0.25, cy - size * 0.1, size * 0.5, size * 0.14);
+      dot(cx - size * 0.1, cy - size * 0.03, size * 0.035); dot(cx + size * 0.1, cy - size * 0.03, size * 0.035);
+    } else if (patternKey === 'rainbow-unicorn') {
+      [accent, accent2, accent3].forEach((hex, i) => strokeArc(cx, cy, size * (0.24 + i * 0.1), Math.PI * 1.04, Math.PI * 1.86, hex, size * 0.06));
+      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(cx, cy + size * 0.07, size * 0.27, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffe66d'; ctx.beginPath(); ctx.moveTo(cx, cy - size * 0.43); ctx.lineTo(cx + size * 0.13, cy - size * 0.07); ctx.lineTo(cx - size * 0.13, cy - size * 0.07); ctx.closePath(); ctx.fill();
+      dot(cx - size * 0.07, cy + size * 0.05, size * 0.032); dot(cx + size * 0.09, cy + size * 0.05, size * 0.032);
+    } else if (patternKey === 'mecha-duck') {
+      ctx.fillStyle = accent; ctx.fillRect(0, 0, size * 0.48, size);
+      ctx.fillStyle = accent3; ctx.beginPath(); ctx.arc(cx, cy + size * 0.02, size * 0.31, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = accent2; ctx.fillRect(cx + size * 0.06, cy - size * 0.23, size * 0.28, size * 0.25);
+      ctx.fillStyle = '#ff8a00'; ctx.beginPath(); ctx.ellipse(cx, cy + size * 0.19, size * 0.28, size * 0.085, 0, 0, Math.PI * 2); ctx.fill();
+      dot(cx - size * 0.12, cy - size * 0.06, size * 0.04); dot(cx + size * 0.2, cy - size * 0.11, size * 0.06);
+    } else if (patternKey === 'lava-dragon') {
+      ctx.strokeStyle = accent2; ctx.lineWidth = size * 0.12;
+      for (let i = -1; i < 4; i += 1) { ctx.beginPath(); ctx.moveTo(size * (i * 0.26), 0); ctx.lineTo(size * (0.26 + i * 0.26), size); ctx.stroke(); }
+      ctx.strokeStyle = accent3; ctx.lineWidth = size * 0.05; ctx.stroke();
+      ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(cx, cy, size * 0.32, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = base; ctx.beginPath(); ctx.ellipse(cx, cy, size * 0.25, size * 0.13, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#101010'; ctx.beginPath(); ctx.ellipse(cx, cy, size * 0.045, size * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+    const shine = ctx.createRadialGradient(size * 0.32, size * 0.25, size * 0.02, size * 0.34, size * 0.28, size * 0.3);
+    shine.addColorStop(0, 'rgba(255,255,255,0.88)');
+    shine.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = shine;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = size * 0.045;
+    ctx.strokeStyle = dark;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+    return canvas.toDataURL('image/png');
+  }
+
+  getToyParkResultPaletteStyle(data) {
+    const clean = (value) => String(value || '').replace(/[^#a-zA-Z0-9(),.%\s-]/g, '');
+    const palette = Array.isArray(data?.paletteHex) && data.paletteHex.length ? data.paletteHex : [data?.colorHex || '#ffd43d', '#ffffff', '#17131f'];
+    return `--marble-color:${clean(palette[0] || '#ffd43d')};--marble-accent:${clean(palette[1] || '#ffffff')};--marble-accent-2:${clean(palette[2] || '#17131f')};`;
+  }
+
   showFinalShowcase() {
     const ranking = this.getRanking({ force: true });
     const winner = ranking[0];
@@ -13208,16 +13313,17 @@ class MarbleRace {
       const finishText = (data) => `${Number.isFinite(data?.finishTime) ? data.finishTime.toFixed(2) : '--'}s`;
       if (toyParkShowcase && !this.cupMode?.active) {
         const safeWinnerId = escapeHtml(winner?.id ?? '');
+        const avatarHtml = (data, className = '') => data ? `<img class="toypark-result-avatar ${className}" src="${this.createToyParkResultAvatarDataUrl(data, className.includes('winner') ? 160 : 112)}" alt="${escapeHtml(data.name || 'Toy Park marble')} marble" loading="eager">` : '';
         const winnerHtml = winner ? `
-          <section class="toypark-result-winner" style="--winner-color:${escapeHtml(winner.colorHex || '#ffd43d')}">
+          <section class="toypark-result-winner" style="--winner-color:${escapeHtml(winner.colorHex || '#ffd43d')};${this.getToyParkResultPaletteStyle(winner)}">
             <div class="toypark-result-winner-kicker">🏆 WINNER</div>
             <div class="toypark-result-winner-main">
-              <span class="toypark-result-orb" aria-hidden="true"></span>
+              ${avatarHtml(winner, 'winner-avatar')}
               <span class="showcase-racer-name toypark-result-name" data-marble-id="${safeWinnerId}" title="Double-click to copy reusable marble identity" style="--medal-color:${escapeHtml(winner.colorHex || '#ffd43d')}">${escapeHtml(winner.name)}</span>
             </div>
             <div class="toypark-result-time">${finishText(winner)}</div>
           </section>` : '';
-        const podiumRows = ranking.slice(1, 3).map((data, index) => `<li class="podium-medalist rank-${index + 2}" style="--medal-color:${escapeHtml(data.colorHex || '#ffffff')}"><strong>${medals[index + 1]} #${index + 2}</strong><span class="showcase-racer-name" data-marble-id="${escapeHtml(data.id)}" title="Double-click to copy reusable marble identity" style="--medal-color:${escapeHtml(data.colorHex || '#ffffff')}">${escapeHtml(data.name)}</span><span class="toypark-result-row-time">${finishText(data)}</span></li>`).join('');
+        const podiumRows = ranking.slice(1, 3).map((data, index) => `<li class="podium-medalist rank-${index + 2}" style="--medal-color:${escapeHtml(data.colorHex || '#ffffff')};${this.getToyParkResultPaletteStyle(data)}"><strong>${medals[index + 1]} #${index + 2}</strong>${avatarHtml(data)}<span class="showcase-racer-name" data-marble-id="${escapeHtml(data.id)}" title="Double-click to copy reusable marble identity" style="--medal-color:${escapeHtml(data.colorHex || '#ffffff')}">${escapeHtml(data.name)}</span><span class="toypark-result-row-time">${finishText(data)}</span></li>`).join('');
         this.ui.finalShowcase.classList.add('toypark-final-result');
         this.ui.finalShowcase.innerHTML = `<div class="toypark-result-flags" aria-hidden="true"><span></span><span></span></div><h2>${escapeHtml(showcaseTitle)}</h2>${winnerHtml}<ol class="podium-list toypark-result-podium">${podiumRows}</ol>`;
       } else {
