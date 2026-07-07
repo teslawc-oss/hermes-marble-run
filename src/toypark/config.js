@@ -16,6 +16,18 @@ export const TOY_PARK_TRACK_TILE_LIBRARY = {
     turnDegrees: 0,
     surfaceMarker: 'soft-blue-center-inset',
   },
+  candyPopStraightObstacle: {
+    key: 'toy-park-candy-pop-straight-obstacle-tile',
+    label: 'Candy Pop直線障礙物板塊',
+    role: 'straight-obstacle',
+    length: 14,
+    prototypeLoopLength: 7,
+    turnDegrees: 0,
+    surfaceMarker: 'pink-orange-candy-pop-bumper-lane',
+    obstaclePattern: 'alternating-left-right-candy-pop-bumpers',
+    obstacleSizing: 'bumper-diameter-about-2.5x-marble-diameter',
+    interfaceWidthPolicy: 'same-track-width-and-rail-opening-as-other-toy-park-road-tiles',
+  },
   rampUp: {
     key: 'toy-park-ramp-up-road-tile',
     label: '上斜橋板塊（已取消）',

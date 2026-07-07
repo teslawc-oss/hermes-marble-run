@@ -5756,6 +5756,9 @@ class MarbleRace {
       this.trackStats.toyParkObstaclePolicy = 'temporary-default-no-obstacles';
     }
     this.createObstacles(obstacleCount);
+    if (this.physicsMechanicKey === 'toyPark') {
+      this.createToyParkCandyPopStraightObstacleTiles();
+    }
     this.createDecorations();
   }
 
@@ -8574,6 +8577,242 @@ class MarbleRace {
     if (length > this.finishDirectionAssist.maxImpulse) guarded.multiplyScalar(this.finishDirectionAssist.maxImpulse / length);
 
     data.body.applyImpulse(new CANNON.Vec3(guarded.x, upImpulse, guarded.z), data.body.position);
+  }
+
+  createToyParkCandyPopMaterialSet() {
+    const candyTexture = this.createPinballInsertTexture('POP', {
+      base: '#ffb07c',
+      glow: '#fff7d1',
+      mid: '#ff7ab8',
+      edge: '#d45b41',
+    });
+    const body = new THREE.MeshPhysicalMaterial({
+      color: 0xff6fae,
+      map: candyTexture,
+      roughness: 0.18,
+      metalness: 0.02,
+      clearcoat: 1,
+      clearcoatRoughness: 0.07,
+      emissive: 0x7c234d,
+      emissiveIntensity: 0.18,
+    });
+    const cap = new THREE.MeshPhysicalMaterial({
+      color: 0xfff3d6,
+      roughness: 0.14,
+      metalness: 0.02,
+      clearcoat: 1,
+      clearcoatRoughness: 0.05,
+      emissive: 0xff9d5c,
+      emissiveIntensity: 0.14,
+    });
+    const ring = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      roughness: 0.16,
+      metalness: 0.04,
+      clearcoat: 1,
+      clearcoatRoughness: 0.08,
+      emissive: 0xffc07a,
+      emissiveIntensity: 0.1,
+    });
+    body.userData = {
+      capMaterial: cap,
+      ringMaterial: ring,
+      visualStyle: 'candy-pop-pastel-striped-bumper',
+      requestedWidth: '2.5x-marble-diameter',
+    };
+    return { body, cap, ring };
+  }
+
+  createToyParkCandyPopBumperObstacle(trackSurface, yaw, pitch, material, options = {}) {
+    const capMaterial = material.userData?.capMaterial || material;
+    const ringMaterial = material.userData?.ringMaterial || material;
+    const radius = Math.max(0.58, Number(options.radius) || 0.575);
+    const height = 0.52;
+    const group = new THREE.Group();
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation(group, yaw, pitch);
+    group.userData = {
+      type: 'toy-park-candy-pop-bumper-group',
+      visualStyle: 'candy-pop-pastel-bumper',
+      requestedWidthPolicy: 'diameter-about-2.5x-marble-diameter',
+      tileKey: options.tileKey || null,
+      patternIndex: options.patternIndex ?? null,
+      laneSide: options.laneSide ?? null,
+    };
+    this.trackGroup.add(group);
+
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, height, 44), material);
+    mesh.position.y = 0.31;
+    mesh.castShadow = PERFORMANCE_TUNING.shadows;
+    mesh.receiveShadow = PERFORMANCE_TUNING.shadows;
+    mesh.userData = { type: 'toy-park-candy-pop-bumper-body', radius, diameter: radius * 2 };
+    group.add(mesh);
+
+    const skirt = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.06, 0.07, 8, 42), ringMaterial);
+    skirt.position.y = 0.58;
+    skirt.rotation.x = Math.PI / 2;
+    skirt.castShadow = PERFORMANCE_TUNING.shadows;
+    skirt.userData = { type: 'toy-park-candy-pop-white-candy-ring' };
+    group.add(skirt);
+
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(radius * 0.76, 28, 14), capMaterial);
+    cap.position.y = 0.72;
+    cap.scale.y = 0.36;
+    cap.castShadow = PERFORMANCE_TUNING.shadows;
+    cap.userData = { type: 'toy-park-candy-pop-cream-cap' };
+    group.add(cap);
+
+    const stripeMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xfff6f8,
+      roughness: 0.18,
+      metalness: 0.02,
+      clearcoat: 0.9,
+      clearcoatRoughness: 0.08,
+      emissive: 0xffb86f,
+      emissiveIntensity: 0.08,
+    });
+    for (let i = 0; i < 6; i += 1) {
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.08, radius * 1.65), stripeMaterial);
+      stripe.position.y = 0.61;
+      stripe.rotation.y = (Math.PI * i) / 6;
+      stripe.userData = { type: 'toy-park-candy-pop-radial-stripe', stripeIndex: i };
+      group.add(stripe);
+    }
+
+    const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
+    body.addShape(new CANNON.Cylinder(radius, radius, height + 0.12, 32));
+    const center = trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, 0.32, 0, yaw, pitch));
+    this.setSlopeBodyTransform(body, center, yaw, pitch);
+    body.userData = {
+      ...(body.userData || {}),
+      name: 'toy-park-candy-pop-bumper-body',
+      toyParkCandyPopBumper: true,
+      tileKey: options.tileKey || null,
+      patternIndex: options.patternIndex ?? null,
+      laneSide: options.laneSide ?? null,
+    };
+    this.addObstacleBody(body, group);
+
+    const obstacle = {
+      type: 'popBumper',
+      kind: 'candyPop',
+      visualStyle: 'toy-park-candy-pop-bumper',
+      textureStyle: material.userData?.visualStyle || 'candy-pop-pastel-striped-bumper',
+      trackSurface: trackSurface.clone(),
+      center,
+      radius: Math.max(radius + 0.36, PINBALL_PHYSICS.popBumperRadius * 0.82),
+      visualRadius: radius,
+      impulse: PINBALL_PHYSICS.popBumperImpulse * 0.78,
+      cooldown: new Map(),
+      cooldownSeconds: 0.34,
+      mesh,
+      group,
+      cap,
+      skirt,
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
+      pulse: 0,
+      placementDistance: options.distance ?? null,
+      placementMinSpacing: options.spacing ?? null,
+      category: 'normal',
+      categoryLabel: OBSTACLE_CATEGORIES.normal?.label || '普通障礙物',
+      distributionMode: 'toy-park-straight-tile-alternating-left-right',
+      tileKey: options.tileKey || null,
+      pieceIndex: options.pieceIndex ?? null,
+      laneSide: options.laneSide ?? null,
+      laneOffset: options.laneOffset ?? null,
+      candyPopDimensions: {
+        diameter: Number((radius * 2).toFixed(3)),
+        requestedDiameterInMarbleDiameters: 2.5,
+        marbleDiameterReference: options.marbleDiameter ?? null,
+      },
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
+  }
+
+  createToyParkCandyPopStraightObstacleTiles() {
+    if (this.physicsMechanicKey !== 'toyPark' || !Array.isArray(this.trackPieces)) return [];
+    const tileKey = TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle?.key;
+    if (!tileKey) return [];
+    const pieces = this.trackPieces.filter((piece) => piece.tileKey === tileKey);
+    if (!pieces.length) {
+      this.trackStats.toyParkCandyPopObstacleTiles = { enabled: true, tileCount: 0, bumperCount: 0 };
+      return [];
+    }
+
+    const materialSet = this.createToyParkCandyPopMaterialSet();
+    const marbleRadiusReference = 0.46;
+    const bumperRadius = (marbleRadiusReference * 2 * 2.5) / 2;
+    const created = [];
+    const summary = [];
+    pieces.forEach((piece, pieceIndex) => {
+      const startD = clamp(piece.startD + 1.65, 0, this.trackLength);
+      const endD = clamp(piece.endD - 1.65, startD, this.trackLength);
+      const usableLength = Math.max(0, endD - startD);
+      const spacing = 3.4;
+      const count = usableLength < 2.2 ? 0 : Math.max(1, Math.floor(usableLength / spacing));
+      const actualSpacing = count > 1 ? usableLength / (count - 1) : usableLength;
+      const localWidth = this.getTrackWidthAt((startD + endD) / 2);
+      const laneOffset = Math.max(0.72, Math.min(localWidth * 0.27, localWidth / 2 - bumperRadius - 0.72));
+      const pieceEntries = [];
+      for (let index = 0; index < count; index += 1) {
+        const distance = count === 1 ? (startD + endD) / 2 : startD + actualSpacing * index;
+        const frame = this.getTrackFrameAt(distance);
+        const side = index % 2 === 0 ? -1 : 1;
+        const lane = side * laneOffset;
+        const yaw = Math.atan2(frame.tangent.x, frame.tangent.z);
+        const pitch = Math.atan2(frame.tangent.y, Math.max(0.0001, Math.hypot(frame.tangent.x, frame.tangent.z)));
+        const trackSurface = new THREE.Vector3(
+          frame.p.x + frame.right.x * lane,
+          frame.p.y,
+          frame.p.z + frame.right.z * lane
+        );
+        const obstacle = this.createToyParkCandyPopBumperObstacle(trackSurface, yaw, pitch, materialSet.body, {
+          radius: bumperRadius,
+          distance,
+          spacing: actualSpacing,
+          marbleDiameter: marbleRadiusReference * 2,
+          tileKey,
+          pieceIndex: piece.index ?? pieceIndex,
+          patternIndex: index,
+          laneSide: side < 0 ? 'left' : 'right',
+          laneOffset: lane,
+        });
+        created.push(obstacle);
+        pieceEntries.push({
+          index,
+          distance: Number(distance.toFixed(2)),
+          side: side < 0 ? 'left' : 'right',
+          laneOffset: Number(lane.toFixed(3)),
+        });
+      }
+      summary.push({
+        pieceIndex: piece.index ?? pieceIndex,
+        tileKey,
+        startD: Number(piece.startD.toFixed(2)),
+        endD: Number(piece.endD.toFixed(2)),
+        length: Number((piece.endD - piece.startD).toFixed(2)),
+        usableLength: Number(usableLength.toFixed(2)),
+        bumperCount: count,
+        pattern: 'ox/xo alternating left-right',
+        bumpers: pieceEntries,
+      });
+    });
+    this.trackStats.toyParkCandyPopObstacleTiles = {
+      enabled: true,
+      tileKey,
+      tileCount: pieces.length,
+      bumperCount: created.length,
+      bumperDiameter: Number((bumperRadius * 2).toFixed(3)),
+      requestedDiameterInMarbleDiameters: 2.5,
+      lanePattern: 'ox/xo/ox/xo alternating left-right by longitudinal slot',
+      interfaceWidthPolicy: 'uses the same app.trackWidth/path width and Toy Park rail opening as other road tiles',
+      surfaceAndRailColor: 'pink-orange',
+      railMaterialFeel: 'rough pitted molded clay half-round rail via shared Toy Park clay texture',
+      pieces: summary,
+    };
+    return created;
   }
 
   createObstacles(count) {

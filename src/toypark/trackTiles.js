@@ -443,16 +443,27 @@ const applyBridgeModuleSetToPieces = (pieces) => {
 
 const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, attempt, generator }) => {
   const straightTile = TOY_PARK_TRACK_TILE_LIBRARY.straight;
+  const candyPopStraightObstacleTile = TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle;
   const variableBendTile = TOY_PARK_TRACK_TILE_LIBRARY.variableBend;
   const pieces = [];
+  const pickStraightTile = (straightIndex, length) => {
+    const enoughRoomForCandyPopPattern = length >= 7.8;
+    if (!enoughRoomForCandyPopPattern || !candyPopStraightObstacleTile) return straightTile;
+    // Keep the start-board connector plain, then sprinkle the new straight obstacle board
+    // through ordinary straights so the interface width stays identical to the base straight tile.
+    return straightIndex > 0 && straightIndex % 3 === 1
+      ? candyPopStraightObstacleTile
+      : straightTile;
+  };
   turns.forEach((turnDegrees, index) => {
-    pieces.push(cloneTilePiece(straightTile, {
-      type: 'straight',
+    const selectedStraightTile = pickStraightTile(index, straightLengths[index]);
+    pieces.push(cloneTilePiece(selectedStraightTile, {
+      type: selectedStraightTile.role === 'straight-obstacle' ? 'straight-obstacle' : 'straight',
       length: straightLengths[index],
       turnDegrees: 0,
       loopPrototype: true,
       loopPrototypeIndex: index,
-      loopSegmentRole: index === 0 ? 'random-loop-opening-straight' : 'random-loop-straight',
+      loopSegmentRole: index === 0 ? 'random-loop-opening-straight' : (selectedStraightTile.role === 'straight-obstacle' ? 'random-loop-candy-pop-straight-obstacle' : 'random-loop-straight'),
       randomLoop: true,
       randomLoopGenerator: generator,
       randomLoopAttempt: attempt,
@@ -475,13 +486,16 @@ const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, a
       closureSolved: true,
     }));
   });
-  pieces.push(cloneTilePiece(straightTile, {
-    type: 'straight',
+  const finishStraightTile = pickStraightTile(straightLengths.length - 1, straightLengths[straightLengths.length - 1]);
+  pieces.push(cloneTilePiece(finishStraightTile, {
+    type: finishStraightTile.role === 'straight-obstacle' ? 'straight-obstacle' : 'straight',
     length: straightLengths[straightLengths.length - 1],
     turnDegrees: 0,
     loopPrototype: true,
     loopPrototypeIndex: turns.length,
-    loopSegmentRole: 'finish-board-square-entry-straight-connector-random-loop-closure',
+    loopSegmentRole: finishStraightTile.role === 'straight-obstacle'
+      ? 'finish-board-square-entry-candy-pop-straight-obstacle-random-loop-closure'
+      : 'finish-board-square-entry-straight-connector-random-loop-closure',
     randomLoop: true,
     randomLoopGenerator: generator,
     randomLoopAttempt: attempt,
