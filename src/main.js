@@ -327,13 +327,22 @@ const FALL_RESPAWN_POLICY = {
   finishGuardDistanceMeters: 1.25,
   trackEdgeMarginMeters: 0.85,
   maxVerticalClearanceMeters: 2.4,
-  label: 'Out-of-bounds respawn uses last confirmed on-track progress only; falling/off-track marbles cannot snap to finish or respawn ahead by closest-path percentage.',
+  verticalDropMeters: 5,
+  label: 'Out-of-bounds respawn uses last confirmed on-track progress only; lateral fall detection uses local track edge plus margin so off-track marbles respawn before drifting far away.',
 };
 
 const FINISH_LINE_RULE = {
   mode: 'single-line-crossing',
   threshold: 0.08,
   label: '終點判定用一條線：波子距離跨過 trackLength 即完成，只保留 8cm 容差，唔再用太闊 finish zone',
+};
+
+const TOY_PARK_RACE_LAPS = {
+  defaultTotalLaps: 2,
+  finishMode: 'dynamic-closed-course-lap-count',
+  postCrossingWrapDistanceMeters: 8,
+  postCrossingFinishBandHoldSeconds: 1.2,
+  label: 'Toy Park closed loop uses a dynamic configured lap count; intermediate finish-line crossings increment completedLaps while preserving the live Cannon body position, velocity, spin, and rolling continuity; only the final required crossing places the marble in the finish container.',
 };
 
 const RAIL_REBOUND = {
@@ -601,12 +610,17 @@ const BROADCAST_CAMERA = {
   cinematicLeaderFromProgress: 0.8,
   toyParkDefaultAlternatingPhaseSize: 1,
   toyParkDefaultAlternatingSequence: ['cinematicLeader'],
-  toyParkDefaultAlternatingLabel: 'Toy Park Default Auto uses cinematic leader from ready/countdown until the final approach, then holds the finish-line shot so the crossing is visible before first-finish/podium rules continue',
+  toyParkDefaultAlternatingLabel: 'Toy Park Default Auto stays on cinematicLeader through non-final-lap finish-line crossings; the finish-line camera is reserved for after the final-lap winner crosses the line.',
   toyParkFinalApproachProgress: 0.94,
   toyParkFinalApproachDistance: 15,
-  toyParkFinalApproachLabel: 'Toy Park final approach: once the leader reaches 94% progress or is within 15 track units of the line, Default Auto switches to the finish-line shot to capture the crossing instead of staying on cinematicLeader',
+  toyParkFinalApproachMode: 'final-lap-crossed-only',
+  toyParkFinalApproachLabel: 'Toy Park final approach is gated to the final lap: non-final laps stay cinematicLeader through the finish line, and the camera switches to finish only after the final-lap crossing / first finisher is recorded.',
   finishSlowMotionCameraHoldSeconds: 3.4,
-  finishSlowMotionCameraLabel: 'when finish slow motion triggers near/crossing the line, Default Auto holds the finish-line shot through the slow-mo window so the slow finish camera remains visible before returning to race/podium coverage',
+  finishSlowMotionCameraLabel: 'when final-lap finish slow motion triggers near/crossing the line, Default Auto holds the finish-line shot through the slow-mo window so the slow finish camera remains visible before returning to race/podium coverage; intermediate lap crossings do not start finish slow motion',
+  lapTransitionCamera: {
+    snapFollowSeconds: 1.2,
+    label: 'after an intermediate Toy Park lap crossing, snap Default Auto from the finish-line shot back to the lap-2 cinematic leader follow so the camera does not linger at the finish/start line',
+  },
   postFirstFinish: {
     finishHoldSeconds: 7,
     followModeAfterHold: 'cinematicLeader',
@@ -774,10 +788,11 @@ const PODIUM_CEREMONY = {
 };
 
 const MARBLE_LABEL_POLICY = {
-  showOnlyAfterRaceStart: true,
+  showOnlyAfterRaceStart: false,
+  alwaysShowAllLabels: true,
   visibleTopRankCount: 5,
   hidePendingFallAfterSeconds: 1.1,
-  label: 'name labels are hidden before the race starts; once racing/finished, only the current top 5 ranked marbles show labels',
+  label: 'name labels are always visible for every marble, including ready/running/finished states; pending fall labels still hide after the safety grace period',
 };
 
 const PERFORMANCE_TUNING = {
@@ -1178,6 +1193,7 @@ class MarbleRace {
     this.trackBodies = [];
     this.obstacleMeshes = [];
     this.obstacleBodies = [];
+    this.toyParkAnimatedDecorations = [];
     this.finishers = [];
     this.state = 'idle';
     this.cameraMode = 'default';
@@ -1192,6 +1208,9 @@ class MarbleRace {
     this.toyParkBroadcastMoment = null;
     this.defaultCameraPhaseUntil = 0;
     this.defaultCameraFocusId = null;
+    this.lapTransitionCameraUntil = 0;
+    this.lapTransitionCameraFocusId = null;
+    this.lapTransitionCameraSnapState = null;
     this.firstFinishTime = 0;
     this.firstFinishRealTimeMs = 0;
     this.elapsed = 0;
@@ -1232,6 +1251,10 @@ class MarbleRace {
     this.ttsPitch = 1;
     this.lastObstacleSfxAt = -Infinity;
     this.trackLength = 190;
+    this.trackLapLength = 190;
+    this.raceTotalLaps = 1;
+    this.raceDistanceLength = 190;
+    this.raceLapPolicy = null;
     this.trackWidth = 16;
     this.trackWidthProfile = null;
     this.seed = '';
@@ -1374,6 +1397,10 @@ class MarbleRace {
     this.toyParkSoftGuidePhysics = this.physicsMechanicKey === 'toyPark' ? (this.physicsMechanic?.softGuidePhysics || TOY_PARK_SOFT_GUIDE_PHYSICS) : null;
     this.toyParkSoftGuideForceCount = 0;
     this.trackStats = { ribbonMeshes: 0, visibleDecks: 0, physicsDecks: 0, railTubes: 0, branchJoinDecks: 0, physicalRailBodies: 0, smoothRailJoinBodies: 0, optimizedRailBodies: 0, broadcastStageMarkers: 0 };
+    this.trackLapLength = this.trackLength;
+    this.raceTotalLaps = 1;
+    this.raceDistanceLength = this.trackLength;
+    this.raceLapPolicy = null;
     if (this.physicsMechanicKey === 'toyPark') {
       this.trackStats.toyParkPhysicsMode = this.toyParkSoftGuidePhysics?.mode || null;
       this.trackStats.toyParkHardSplineLock = Boolean(this.toyParkSoftGuidePhysics?.hardSplineLock);
@@ -1965,16 +1992,39 @@ class MarbleRace {
   }
 
   getToyParkOverlayTotalLaps() {
-    // The current Toy Park course is one closed loop from start to finish. Keep this helper
-    // separate so a future multi-lap mode can wire its configured lap count here.
     const candidates = [
       this.toyParkRaceLaps,
+      this.raceTotalLaps,
+      this.raceLapPolicy?.totalLaps,
       this.trackStats?.toyParkTotalLaps,
       this.trackStats?.toyParkLapCount,
       this.trackStats?.raceLaps,
     ];
     const configured = candidates.find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
     return Math.max(1, Math.round(Number(configured || 1)));
+  }
+
+  getMarbleCurrentLap(data, totalLaps = this.getToyParkOverlayTotalLaps?.() || this.raceTotalLaps || 1) {
+    if (!data) return 1;
+    const lap = Number(data.currentLap);
+    if (Number.isFinite(lap) && lap > 0) return Math.max(1, Math.min(totalLaps, Math.round(lap)));
+    const completed = Math.max(0, Math.floor(Number(data.completedLaps) || 0));
+    return Math.max(1, Math.min(totalLaps, completed + 1));
+  }
+
+  getMarbleLapProgress(data) {
+    if (!data) return 0;
+    if (Number.isFinite(Number(data.lapProgress))) return clamp(Number(data.lapProgress), 0, 1);
+    const lapLength = Math.max(0.001, this.trackLapLength || this.trackLength || 1);
+    return clamp((Number(data.distance) || 0) / lapLength, 0, 1);
+  }
+
+  getMarbleRaceProgress(data, totalLaps = this.getToyParkOverlayTotalLaps?.() || this.raceTotalLaps || 1) {
+    if (!data) return 0;
+    if (data.finished) return 1;
+    const lapProgress = this.getMarbleLapProgress(data);
+    const completed = Math.max(0, Math.min(totalLaps, Math.floor(Number(data.completedLaps) || 0)));
+    return clamp((completed + lapProgress) / Math.max(1, totalLaps), 0, 1);
   }
 
   drawToyParkArcadeCta({ ctx, x = 0, y = 0, width = 420, height = 64, vertical = false } = {}) {
@@ -2048,8 +2098,7 @@ class MarbleRace {
       // lap labels tied to the actual race format rather than the old 3-lap placeholder.
       const totalLaps = this.getToyParkOverlayTotalLaps?.() || 1;
       const leader = ranking[0] || this.getRanking({ force: false })[0] || null;
-      const leaderProgress = clamp(leader?.progress || 0, 0, 1);
-      const currentLap = Math.max(1, Math.min(totalLaps, Math.floor(leaderProgress * totalLaps) + 1));
+      const currentLap = this.getMarbleCurrentLap(leader, totalLaps);
       const raceNumber = this.cupMode?.active ? (this.cupMode.stageIndex || 0) + 1 : 1;
       const compactVertical = vertical && width <= 260;
       const headerH = compactVertical ? 60 : (vertical ? 108 : 114);
@@ -2234,8 +2283,8 @@ class MarbleRace {
           ? move.fromIndex + (move.toIndex - move.fromIndex) * (standingAnimation.progress ?? 1)
           : index;
         const rowY = y + headerH + visualIndex * (rowH + gap);
-        const progress = clamp(data.progress || 0, 0, 1);
-        const lap = data.finished ? totalLaps : Math.max(1, Math.min(totalLaps, Math.floor(progress * totalLaps) + 1));
+        const progress = this.getMarbleRaceProgress(data, totalLaps);
+        const lap = data.finished ? totalLaps : this.getMarbleCurrentLap(data, totalLaps);
         summaryRows.push({ rank: index + 1, name: data.name || `Marble ${data.id + 1}`, lap, totalLaps, progress: Math.round(progress * 100), animationFromRank: move ? move.fromIndex + 1 : index + 1, animationToRank: index + 1, animationChanged: move?.changed === true });
         const skew = compactVertical ? 6 : (vertical ? 9 : 13);
         ctx.save();
@@ -3694,6 +3743,11 @@ class MarbleRace {
     this.leadBattleState = null;
     this.defaultCameraFocusId = null;
     if (!preservePhase) this.defaultCameraPhaseUntil = 0;
+    if (!preservePhase) {
+      this.lapTransitionCameraUntil = 0;
+      this.lapTransitionCameraFocusId = null;
+      this.lapTransitionCameraSnapState = null;
+    }
     if (this.state === 'finished' && !this.replayHighlight?.active) this.activeCameraMode = this.getDefaultCameraMode();
   }
 
@@ -4601,6 +4655,10 @@ class MarbleRace {
       trackPresetKey: this.trackPresetKey,
       customTrackLength: this.customTrackLength || null,
       actualTrackLength: this.trackLength,
+      trackLapLength: this.trackLapLength || this.trackLength,
+      raceDistanceLength: this.raceDistanceLength || this.trackLength,
+      raceTotalLaps: this.raceTotalLaps || 1,
+      raceLapPolicy: this.raceLapPolicy || null,
       widthPresetKey: this.widthPresetKey,
       speedIndex: this.speedIndex,
       speedLabel: this.speedPreset?.label,
@@ -4839,6 +4897,7 @@ class MarbleRace {
     this.obstacleBodies.forEach((body) => this.world.removeBody(body));
     this.trackBodies = [];
     this.obstacleBodies = [];
+    this.toyParkAnimatedDecorations = [];
     this.obstacleMeshes = [];
     this.pinballObstacles = [];
     this.obstacleDistributionSummary = null;
@@ -4855,6 +4914,10 @@ class MarbleRace {
     this.toyParkSoftGuidePhysics = this.physicsMechanicKey === 'toyPark' ? (this.physicsMechanic?.softGuidePhysics || TOY_PARK_SOFT_GUIDE_PHYSICS) : null;
     this.toyParkSoftGuideForceCount = 0;
     this.trackStats = { ribbonMeshes: 0, visibleDecks: 0, physicsDecks: 0, railTubes: 0, branchJoinDecks: 0, physicalRailBodies: 0, smoothRailJoinBodies: 0, optimizedRailBodies: 0, broadcastStageMarkers: 0 };
+    this.trackLapLength = this.trackLength;
+    this.raceTotalLaps = 1;
+    this.raceDistanceLength = this.trackLength;
+    this.raceLapPolicy = null;
     if (this.physicsMechanicKey === 'toyPark') {
       this.trackStats.toyParkPhysicsMode = this.toyParkSoftGuidePhysics?.mode || null;
       this.trackStats.toyParkHardSplineLock = Boolean(this.toyParkSoftGuidePhysics?.hardSplineLock);
@@ -5701,7 +5764,7 @@ class MarbleRace {
       textureDisabled: Boolean(toyParkSolidBackground),
     };
     this.trackStats.toyParkBackground = toyParkSolidBackground ? {
-      mode: 'solid-color-warm-cream-no-texture',
+      mode: 'solid-color-vanilla-cream-no-texture',
       color: toyParkSolidBackground.color,
       groundMaterialColor: toyParkSolidBackground.color,
       sceneBackgroundColor: toyParkSolidBackground.color,
@@ -6387,6 +6450,16 @@ class MarbleRace {
     this.toyParkOverlapBridges = toyParkOverlapBridges;
     this.pathPoints = pathPoints;
     this.trackLength = pathPoints[pathPoints.length - 1].d;
+    this.trackLapLength = this.trackLength;
+    this.raceTotalLaps = toyParkFlatTrack ? Math.max(1, Math.round(TOY_PARK_RACE_LAPS.defaultTotalLaps || 1)) : 1;
+    this.raceDistanceLength = this.trackLapLength * this.raceTotalLaps;
+    this.raceLapPolicy = toyParkFlatTrack ? {
+      ...TOY_PARK_RACE_LAPS,
+      lapLength: Number(this.trackLapLength.toFixed(3)),
+      totalLaps: this.raceTotalLaps,
+      raceDistanceLength: Number(this.raceDistanceLength.toFixed(3)),
+      distanceModel: 'physical-distance-resets-each-lap-plus-completedLaps-for-race-progress',
+    } : null;
     const rightAngleTurns = pieceMetadata.filter((piece) => Math.abs(piece.turnDegrees) === 90);
     const fortyFiveTurns = pieceMetadata.filter((piece) => Math.abs(piece.turnDegrees) === 45);
     const variableBendTurns = pieceMetadata.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend?.key);
@@ -7320,6 +7393,155 @@ class MarbleRace {
     this.world.addBody(floorBody);
     this.trackBodies.push(floorBody);
 
+    let toyParkStartSpectatorStandCount = 0;
+    let toyParkStartSpectatorTierCount = 0;
+    let toyParkStartSpectatorMarbleCount = 0;
+    let spectatorRadiusMin = null;
+    let spectatorRadiusMax = null;
+    let spectatorRadiusAvg = null;
+    const toyParkStartSpectatorReserve = isToyParkStartTile ? {
+      sideCount: 2,
+      reservedGapFromBoard: 0.82,
+      sideReserveWidth: 5.2,
+      standDepth: Number((depth * 0.96).toFixed(3)),
+      tierCountPerSide: 6,
+      marblesPerTier: 24,
+      targetSlopeDegrees: 35,
+      densityStyle: 'dense-85-to-95-percent-full-reference-like-grandstand',
+      status: 'visual-preview-only-dense-six-tier-sloped-grandstand-packed-with-varied-spectator-marbles',
+    } : null;
+    if (isToyParkStartTile) {
+      const reserveGap = toyParkStartSpectatorReserve.reservedGapFromBoard;
+      const reserveWidth = toyParkStartSpectatorReserve.sideReserveWidth;
+      const standDepth = toyParkStartSpectatorReserve.standDepth;
+      const tierCount = toyParkStartSpectatorReserve.tierCountPerSide;
+      const marblesPerTier = toyParkStartSpectatorReserve.marblesPerTier;
+      const standBaseMat = new THREE.MeshPhysicalMaterial({
+        color: 0xf4d6ac,
+        roughness: 0.88,
+        metalness: 0,
+        clearcoat: 0.04,
+        clearcoatRoughness: 0.9,
+        transparent: false,
+        opacity: 1,
+        side: THREE.DoubleSide,
+      });
+      standBaseMat.userData = { type: 'toy-park-start-spectator-stand-base-material', opaqueClay: true, transparentTexture: false, role: 'reserved-side-space-molded-clay-grandstand-base' };
+      const tierMats = [0xffc6da, 0xbfe6ff, 0xd9c6ff].map((color, index) => {
+        const mat = new THREE.MeshPhysicalMaterial({ color, roughness: 0.84, metalness: 0, clearcoat: 0.05, clearcoatRoughness: 0.88, transparent: false, opacity: 1, side: THREE.DoubleSide });
+        mat.userData = { type: 'toy-park-start-spectator-stand-tier-material', tierIndex: index, opaqueClay: true, transparentTexture: false };
+        return mat;
+      });
+      const spectatorPalette = [
+        0xff4f9a, 0x45d7ff, 0xffd166, 0x8cff96, 0xb58cff, 0xff7f50, 0xffffff, 0x2dd4bf,
+        0xf97316, 0x60a5fa, 0xf472b6, 0xa3e635, 0xfacc15, 0xc084fc, 0x38bdf8, 0xfb7185,
+      ].map((color, index) => {
+        const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.42, metalness: 0.02, emissive: color, emissiveIntensity: 0.015 });
+        mat.userData = { type: 'toy-park-start-spectator-marble-material', spectatorPaletteIndex: index, variedSpectatorMarble: true };
+        return mat;
+      });
+      const spectatorRaceSizeStyles = MARBLE_SIZE_STYLES;
+      spectatorRadiusMin = Math.min(...spectatorRaceSizeStyles.map((style) => style.radius));
+      spectatorRadiusMax = Math.max(...spectatorRaceSizeStyles.map((style) => style.radius));
+      spectatorRadiusAvg = spectatorRaceSizeStyles.reduce((sum, style) => sum + style.radius, 0) / spectatorRaceSizeStyles.length;
+      const spectatorGeometriesBySize = new Map(spectatorRaceSizeStyles.map((style) => [
+        style.key,
+        new THREE.SphereGeometry(style.radius, 18, 12),
+      ]));
+      const targetSlopeDegrees = toyParkStartSpectatorReserve.targetSlopeDegrees;
+      const tierBandWidth = reserveWidth / tierCount;
+      const tierStepHeight = Math.max(
+        Math.tan(targetSlopeDegrees * Math.PI / 180) * tierBandWidth,
+        spectatorRadiusMax * 1.72,
+      );
+      [-1, 1].forEach((side) => {
+        const sideLabel = side < 0 ? 'left' : 'right';
+        const platformCenterX = side * (width / 2 + reserveGap + reserveWidth / 2);
+        const platform = new THREE.Mesh(new THREE.BoxGeometry(reserveWidth, 0.14, standDepth), standBaseMat);
+        platform.name = `TOY_PARK_START_SPECTATOR_RESERVED_SPACE_${sideLabel.toUpperCase()}`;
+        platform.position.set(platformCenterX, -0.05, -0.12);
+        platform.rotation.x = pitch;
+        platform.receiveShadow = PERFORMANCE_TUNING.shadows;
+        platform.userData = {
+          type: 'toy-park-start-board-spectator-reserved-side-space',
+          startBoardSpectatorSpace: true,
+          side: sideLabel,
+          noPhysics: true,
+          reservedFor: 'dense-six-tier-sloped-grandstand-filled-with-varied-marbles',
+          reserveGapFromBoard: reserveGap,
+          reserveWidth,
+          standDepth,
+          targetSlopeDegrees,
+          densityStyle: toyParkStartSpectatorReserve.densityStyle,
+        };
+        group.add(platform);
+        toyParkStartSpectatorStandCount += 1;
+        for (let tierIndex = 0; tierIndex < tierCount; tierIndex += 1) {
+          const tierHeight = 0.16 + tierIndex * tierStepHeight;
+          const tierX = side * (width / 2 + reserveGap + tierBandWidth * (tierIndex + 0.5));
+          const tierDepth = standDepth * (0.93 - tierIndex * 0.018);
+          const tier = new THREE.Mesh(new THREE.BoxGeometry(tierBandWidth * 0.96, 0.24 + tierIndex * 0.035, tierDepth), tierMats[tierIndex % tierMats.length]);
+          tier.name = `TOY_PARK_START_SPECTATOR_GRANDSTAND_TIER_${sideLabel.toUpperCase()}_${tierIndex}`;
+          tier.position.set(tierX, tierHeight, -0.12);
+          tier.rotation.x = pitch;
+          tier.castShadow = PERFORMANCE_TUNING.shadows;
+          tier.receiveShadow = PERFORMANCE_TUNING.shadows;
+          tier.userData = {
+            type: 'toy-park-start-board-spectator-grandstand-tier',
+            startBoardSpectatorStandTier: true,
+            side: sideLabel,
+            tierIndex,
+            noPhysics: true,
+            multilevelGrandstand: true,
+            slopedGrandstand: true,
+            targetSlopeDegrees,
+            denseReferenceLikeGrandstand: true,
+            reservedSideSpace: true,
+          };
+          group.add(tier);
+          toyParkStartSpectatorTierCount += 1;
+          for (let marbleIndex = 0; marbleIndex < marblesPerTier; marbleIndex += 1) {
+            const zNorm = marblesPerTier <= 1 ? 0.5 : marbleIndex / (marblesPerTier - 1);
+            const jitter = ((marbleIndex * 37 + tierIndex * 17 + (side < 0 ? 11 : 23)) % 100) / 100 - 0.5;
+            const rowStagger = (tierIndex % 2 === 0 ? 0.5 : -0.5) * (standDepth / Math.max(1, marblesPerTier - 1)) * 0.28;
+            const sizeStyle = spectatorRaceSizeStyles[(marbleIndex + tierIndex * 2 + (side < 0 ? 0 : 3)) % spectatorRaceSizeStyles.length];
+            const spectatorRadius = sizeStyle.radius;
+            const spectatorGeometry = spectatorGeometriesBySize.get(sizeStyle.key);
+            const spectator = new THREE.Mesh(spectatorGeometry, spectatorPalette[(marbleIndex + tierIndex * 5 + (side < 0 ? 0 : 7)) % spectatorPalette.length]);
+            spectator.name = `TOY_PARK_START_SPECTATOR_MARBLE_${sideLabel.toUpperCase()}_${tierIndex}_${marbleIndex}`;
+            spectator.scale.setScalar(1);
+            spectator.position.set(
+              tierX + side * (tierBandWidth * 0.13 + jitter * 0.08),
+              tierHeight + 0.18 + spectatorRadius,
+              -standDepth * 0.43 + zNorm * standDepth * 0.86 + rowStagger,
+            );
+            spectator.castShadow = PERFORMANCE_TUNING.shadows;
+            spectator.receiveShadow = PERFORMANCE_TUNING.shadows;
+            spectator.userData = {
+              type: 'toy-park-start-board-spectator-marble',
+              startBoardSpectatorMarble: true,
+              side: sideLabel,
+              tierIndex,
+              marbleIndex,
+              noPhysics: true,
+              variedSpectatorMarble: true,
+              spectatorOnly: true,
+              spectatorSizePolicy: 'same-radius-cycle-as-race-marbles',
+              spectatorRadius,
+              spectatorSizeKey: sizeStyle.key,
+              raceMarbleRadiusMin: spectatorRadiusMin,
+              raceMarbleRadiusMax: spectatorRadiusMax,
+              packedGrandstandAudience: true,
+              densityStyle: toyParkStartSpectatorReserve.densityStyle,
+              targetSlopeDegrees,
+            };
+            group.add(spectator);
+            toyParkStartSpectatorMarbleCount += 1;
+          }
+        }
+      });
+    }
+
     if (START_GATE_DESIGN.surroundingWallsEnabled && !isToyParkStartTile) {
       const sideSpecs = [
         { x: -width / 2 - START_GATE_DESIGN.sideWallThickness / 2, z: 0, sx: START_GATE_DESIGN.sideWallThickness, sz: depth + 0.8 },
@@ -7663,6 +7885,21 @@ class MarbleRace {
         trackWidth: Number(toyParkStartTrackWidth.toFixed(2)),
         boardWidthMatchesTrackAndRailFootprint: Math.abs(width - (toyParkStartTrackWidth + toyParkStartSideRailOffset * 2)) < 0.001,
         boardWidthClosesSideGap: true,
+        spectatorSideSpace: toyParkStartSpectatorReserve,
+        spectatorSideSpaceStatus: toyParkStartSpectatorReserve?.status || null,
+        spectatorReservedGapFromBoard: toyParkStartSpectatorReserve?.reservedGapFromBoard ?? null,
+        spectatorReservedSideWidth: toyParkStartSpectatorReserve?.sideReserveWidth ?? null,
+        spectatorTargetSlopeDegrees: toyParkStartSpectatorReserve?.targetSlopeDegrees ?? null,
+        spectatorDensityStyle: toyParkStartSpectatorReserve?.densityStyle || null,
+        spectatorTiersPerSide: toyParkStartSpectatorReserve?.tierCountPerSide ?? null,
+        spectatorMarblesPerTier: toyParkStartSpectatorReserve?.marblesPerTier ?? null,
+        spectatorMarbleSizePolicy: toyParkStartSpectatorReserve ? 'same-radius-cycle-as-race-marbles' : null,
+        spectatorRaceMarbleRadiusMin: toyParkStartSpectatorReserve ? Number(spectatorRadiusMin.toFixed(3)) : null,
+        spectatorRaceMarbleRadiusMax: toyParkStartSpectatorReserve ? Number(spectatorRadiusMax.toFixed(3)) : null,
+        spectatorRaceMarbleRadiusAvg: toyParkStartSpectatorReserve ? Number(spectatorRadiusAvg.toFixed(3)) : null,
+        spectatorStandCount: toyParkStartSpectatorStandCount,
+        spectatorTierCount: toyParkStartSpectatorTierCount,
+        spectatorMarbleCount: toyParkStartSpectatorMarbleCount,
         boardDepth: Number(depth.toFixed(2)),
         baseBoardDepth: Number(baseChuteDepth.toFixed(2)),
         boardLengthScale: isToyParkStartTile ? 2 : 1,
@@ -8985,8 +9222,8 @@ class MarbleRace {
       bladeBodies,
       spinnerBlades,
       bladeGlows,
-      spinnerSpeed: PINBALL_PHYSICS.spinnerSpeed * 0.82 * 0.7,
-      spinnerSpeedScale: 0.7,
+      spinnerSpeed: PINBALL_PHYSICS.spinnerSpeed * 0.82 * 0.42,
+      spinnerSpeedScale: 0.42,
       spinAngle: 0,
       trackSlopePitch: pitch,
       trackYaw: yaw,
@@ -9091,8 +9328,8 @@ class MarbleRace {
       bladeContactPolicy: 'block-and-dampen-contact-no-sweep-velocity-boost-speed-capped',
       solidBladeBodiesPerSpinner: 4,
       bladeContactSpeedCap: 5.2,
-      spinnerSpeedScale: 0.7,
-      spinner: 'center-four-long-thin-rotating-blades-length-close-to-circle-rail-but-stops-before-rail-30-percent-slower',
+      spinnerSpeedScale: 0.42,
+      spinner: 'center-four-long-thin-rotating-blades-length-close-to-circle-rail-but-stops-before-rail-58-percent-base-speed-for-gentler-marble-contact',
       pieces: summary,
     };
     return created;
@@ -12042,16 +12279,1707 @@ class MarbleRace {
   }
 
   createDecorations() {
-    // Trackside lamp posts were visually noisy around the course and added extra
-    // geometry to render. Keep this hook as a no-op so track rebuilds still have
-    // a stable extension point for future non-lamp decorations.
+    // Trackside lamp posts and broad Toy Park ambient/sideline props are
+    // intentionally disabled while rebuilding the field-side decoration set one
+    // item at a time. Current pass: a small set of donut decorations only.
+    const toyParkActive = this.physicsMechanicKey === 'toyPark' || this.visualThemeKey === 'toyPark';
+
     this.decorationSummary = {
       lampPosts: 0,
       lampGlobes: 0,
       decorativePointLights: 0,
       removed: true,
-      reason: 'trackside-lamp-posts-disabled',
+      reason: 'trackside-and-toy-park-sideline-decorations-disabled-for-incremental-rebuild',
+      toyParkAmbientClayDecorations: 0,
+      toyParkSidelineAccessoryCount: 0,
+      toyParkDonutDecorations: 0,
+      toyParkAmbientDecorationDensity: 'donut-pass-only',
+      toyParkAmbientDecorationStyle: 'single-category-donut-decorations-four-times-marble-diameter',
+      toyParkAmbientDecorationOutsideTrack: true,
+      toyParkAmbientDecorationNoPhysics: true,
     };
+    if (!toyParkActive || !this.trackGroup || typeof this.getTrackFrameAt !== 'function') return;
+
+    const raceMarbleRadii = (this.marbleData || [])
+      .map((data) => Number(data?.radius))
+      .filter((radius) => Number.isFinite(radius) && radius > 0);
+    const fallbackRadius = MARBLE_SIZE_STYLES.reduce((sum, style) => sum + style.radius, 0) / MARBLE_SIZE_STYLES.length;
+    const marbleRadius = raceMarbleRadii.length
+      ? raceMarbleRadii.reduce((sum, radius) => sum + radius, 0) / raceMarbleRadii.length
+      : fallbackRadius;
+    const marbleDiameter = marbleRadius * 2;
+    const donutOuterDiameter = marbleDiameter * 4;
+    const donutOuterRadius = donutOuterDiameter / 2;
+    const donutTubeRadius = donutOuterRadius * 0.375;
+    const donutLift = donutTubeRadius + 0.72;
+    const donutMajorRadius = donutOuterRadius - donutTubeRadius;
+    const donutPairCenterSpacing = donutOuterRadius * 0.72;
+    const donutPairDepthSpacing = donutOuterRadius * 0.26;
+    const donutTrackEdgeSafetyClearance = 1.25;
+    const donutSpectatorSafetyClearance = 1.0;
+    const donutStartSpectatorKeepoutProgressRatio = 0.22;
+    const donutInnerDiameter = Math.max(0, (donutMajorRadius - donutTubeRadius) * 2);
+
+    const material = (color, options = {}) => {
+      const mat = new THREE.MeshPhysicalMaterial({
+        color,
+        roughness: options.roughness ?? 0.82,
+        metalness: 0,
+        clearcoat: options.clearcoat ?? 0.08,
+        clearcoatRoughness: options.clearcoatRoughness ?? 0.72,
+      });
+      mat.userData = {
+        role: 'toy-park-donut-decoration-material',
+        opaqueClay: true,
+        transparentTexture: false,
+        materialStyle: options.materialStyle || 'soft-cartoon-donut-clay-plastic',
+      };
+      return mat;
+    };
+
+    const doughMats = [
+      material(0xd99b5f, { materialStyle: 'warm-tan-soft-donut-dough' }),
+      material(0xc9834a, { materialStyle: 'golden-brown-soft-donut-dough' }),
+      material(0xe2aa72, { materialStyle: 'light-baked-soft-donut-dough' }),
+    ];
+    const icingMats = [
+      material(0xff78b7, { roughness: 0.58, clearcoat: 0.16, materialStyle: 'strawberry-pink-glossy-icing' }),
+      material(0x7fdcff, { roughness: 0.6, clearcoat: 0.14, materialStyle: 'blueberry-sky-glossy-icing' }),
+      material(0x9be7c1, { roughness: 0.62, clearcoat: 0.12, materialStyle: 'mint-sugar-glossy-icing' }),
+      material(0xfff0d2, { roughness: 0.64, clearcoat: 0.1, materialStyle: 'vanilla-cream-glossy-icing' }),
+      material(0x7a4a32, { roughness: 0.66, clearcoat: 0.1, materialStyle: 'chocolate-glossy-icing' }),
+    ];
+    const sprinkleMats = [0xffdf5d, 0x61d56b, 0x58c7ff, 0xc99cff, 0xff8ac5, 0xff9d4f].map((color) => material(color, {
+      roughness: 0.5,
+      clearcoat: 0.18,
+      materialStyle: 'small-hard-candy-sprinkle',
+    }));
+
+    const donutGroup = new THREE.Group();
+    donutGroup.name = 'TOY_PARK_DONUT_DECORATIONS_FOUR_TIMES_MARBLE_DIAMETER';
+    donutGroup.userData = {
+      type: 'toy-park-donut-decorations',
+      style: 'cartoon-pink-icing-donut-reference-visual-only',
+      visualOnly: true,
+      noPhysics: true,
+      outsideTrack: true,
+      scopedToToyPark: true,
+      donutDiameterPolicy: 'outer-diameter-four-times-live-average-marble-diameter',
+      marbleRadius,
+      marbleDiameter,
+      donutOuterDiameter,
+      donutOuterRadius,
+      donutTubeRadius,
+      donutInnerDiameter,
+    };
+    this.trackGroup.add(donutGroup);
+
+    const poseAt = (ratio, side = 1, extraOffset = 7.8, along = 0) => {
+      const safeRatio = Math.max(ratio, donutStartSpectatorKeepoutProgressRatio);
+      const safeOffset = Math.max(extraOffset, donutOuterRadius + donutTrackEdgeSafetyClearance);
+      const d = clamp((this.trackLength || 1) * safeRatio, 0, Math.max(0, (this.trackLength || 1) - 0.01));
+      const frame = this.getTrackFrameAt(d);
+      const tangent = frame.tangent.clone().normalize();
+      const right = frame.right.clone().normalize();
+      const inwardToTrack = right.clone().multiplyScalar(-side).normalize();
+      const pos = new THREE.Vector3(frame.p.x, frame.p.y, frame.p.z)
+        .add(right.clone().multiplyScalar(side * ((this.trackWidth || 6) / 2 + safeOffset)))
+        .add(tangent.clone().multiplyScalar(along));
+      pos.y += donutLift;
+      return {
+        pos,
+        yaw: Math.atan2(tangent.x, tangent.z),
+        inwardYaw: Math.atan2(inwardToTrack.x, inwardToTrack.z),
+        side,
+        tangent,
+        right,
+        inwardToTrack,
+        requestedRatio: ratio,
+        safeRatio,
+        requestedOffset: extraOffset,
+        safeOffset,
+        trackEdgeClearance: Number((safeOffset - donutOuterRadius).toFixed(3)),
+        startSpectatorKeepoutProgressRatio: donutStartSpectatorKeepoutProgressRatio,
+      };
+    };
+
+    const applyDecorationWindmillSafeZone = (group, footprintRadius, label = 'toy-park-decoration') => {
+      const tileKey = TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle?.key;
+      const pieces = Array.isArray(this.trackPieces) && tileKey
+        ? this.trackPieces.filter((piece) => piece.tileKey === tileKey)
+        : [];
+      const decorationRadius = Math.max(0, Number(footprintRadius) || 0);
+      const visualBuffer = 2.6;
+      const checks = [];
+      let adjusted = false;
+      pieces.forEach((piece, index) => {
+        const centerDistance = clamp((piece.startD + piece.endD) / 2, 0, this.trackLength || 1);
+        const frame = this.getTrackFrameAt(centerDistance);
+        const center = new THREE.Vector3(frame.p.x, frame.p.y, frame.p.z);
+        const standardWidth = this.getTrackWidthAt(centerDistance) || this.trackWidth || 6;
+        const windmillRadius = (standardWidth * (TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle?.diameterScaleVsStandardRoadWidth || 1.95)) / 2;
+        const required = decorationRadius + windmillRadius + visualBuffer;
+        const dx = group.position.x - center.x;
+        const dz = group.position.z - center.z;
+        const distance = Math.hypot(dx, dz);
+        let clearance = distance - required;
+        if (clearance < 0) {
+          const direction = distance > 0.001
+            ? new THREE.Vector3(dx / distance, 0, dz / distance)
+            : frame.right.clone().normalize();
+          const push = -clearance + 0.25;
+          group.position.add(direction.multiplyScalar(push));
+          adjusted = true;
+          clearance = 0.25;
+        }
+        checks.push({
+          pieceIndex: piece.index ?? index,
+          centerDistance: Number(centerDistance.toFixed(2)),
+          decorationRadius: Number(decorationRadius.toFixed(3)),
+          windmillRadius: Number(windmillRadius.toFixed(3)),
+          requiredCenterDistance: Number(required.toFixed(3)),
+          finalCenterDistance: Number(Math.hypot(group.position.x - center.x, group.position.z - center.z).toFixed(3)),
+          finalClearance: Number(clearance.toFixed(3)),
+        });
+      });
+      return {
+        label,
+        adjusted,
+        windmillTileCount: pieces.length,
+        policy: 'all-toy-park-decoration-footprints-keep-clear-of-windmill-spinner-circle-tile-footprint',
+        visualBuffer,
+        minClearance: checks.length ? Number(Math.min(...checks.map((check) => check.finalClearance)).toFixed(3)) : null,
+        checks,
+      };
+    };
+
+    const placedDecorationFootprints = [];
+    const decorationOverlapBuffer = 1.25;
+    const applyDecorationOverlapSafeZone = (group, footprintRadius, label = 'toy-park-decoration', registerFootprint = true) => {
+      const decorationRadius = Math.max(0, Number(footprintRadius) || 0);
+      const checks = [];
+      let adjusted = false;
+      placedDecorationFootprints.forEach((placed) => {
+        const dx = group.position.x - placed.x;
+        const dz = group.position.z - placed.z;
+        const distance = Math.hypot(dx, dz);
+        const required = decorationRadius + placed.radius + decorationOverlapBuffer;
+        let clearance = distance - required;
+        if (clearance < 0) {
+          const direction = distance > 0.001
+            ? new THREE.Vector3(dx / distance, 0, dz / distance)
+            : new THREE.Vector3(1, 0, 0);
+          const push = -clearance + 0.25;
+          group.position.add(direction.multiplyScalar(push));
+          adjusted = true;
+          clearance = 0.25;
+        }
+        checks.push({
+          against: placed.label,
+          otherRadius: Number(placed.radius.toFixed(3)),
+          decorationRadius: Number(decorationRadius.toFixed(3)),
+          requiredCenterDistance: Number(required.toFixed(3)),
+          finalCenterDistance: Number(Math.hypot(group.position.x - placed.x, group.position.z - placed.z).toFixed(3)),
+          finalClearance: Number(clearance.toFixed(3)),
+        });
+      });
+      const result = {
+        label,
+        adjusted,
+        policy: 'each-decoration-footprint-keeps-clear-of-other-decoration-footprints',
+        visualBuffer: decorationOverlapBuffer,
+        comparedAgainstCount: placedDecorationFootprints.length,
+        minClearance: checks.length ? Number(Math.min(...checks.map((check) => check.finalClearance)).toFixed(3)) : null,
+        checks,
+      };
+      if (registerFootprint) {
+        placedDecorationFootprints.push({
+          label,
+          x: group.position.x,
+          z: group.position.z,
+          radius: decorationRadius,
+        });
+      }
+      return result;
+    };
+
+    const applyDecorationSafeZones = (group, footprintRadius, label = 'toy-park-decoration') => {
+      applyDecorationOverlapSafeZone(group, footprintRadius, `${label}-pre-windmill`, false);
+      const windmillTrackSafeZone = applyDecorationWindmillSafeZone(group, footprintRadius, label);
+      const decorationOverlapSafeZone = applyDecorationOverlapSafeZone(group, footprintRadius, label, true);
+      return { windmillTrackSafeZone, decorationOverlapSafeZone };
+    };
+
+    const register = (obj, category) => {
+      obj.userData = {
+        ...(obj.userData || {}),
+        type: 'toy-park-donut-decoration',
+        category,
+        visualOnly: true,
+        noPhysics: true,
+        outsideTrack: true,
+        scopedToToyPark: true,
+        donutDiameterPolicy: 'four-times-marble-diameter',
+        outwardTilt: true,
+        outwardTiltDegrees: obj.userData?.outwardTiltDegrees,
+        outwardTiltDirection: obj.userData?.outwardTiltDirection,
+        marbleDiameter,
+        outerDiameter: donutOuterDiameter,
+        innerDiameter: donutInnerDiameter,
+      };
+      obj.traverse?.((child) => {
+        child.castShadow = PERFORMANCE_TUNING.shadows;
+        child.receiveShadow = PERFORMANCE_TUNING.shadows;
+        child.userData = {
+          ...(child.userData || {}),
+          parentDecorationType: 'toy-park-donut-decoration',
+          visualOnly: true,
+          noPhysics: true,
+          outsideTrack: true,
+        };
+      });
+      donutGroup.add(obj);
+    };
+
+    const addDonutParts = (parent, { label, icingIndex, doughIndex, bite = false, role = 'horizontal-base' }) => {
+      const dough = new THREE.Mesh(
+        new THREE.TorusGeometry(donutMajorRadius, donutTubeRadius, 22, 72),
+        doughMats[doughIndex % doughMats.length],
+      );
+      dough.name = `${label}_DOUGH_RING`;
+      dough.rotation.x = Math.PI / 2;
+      dough.userData.component = 'donut-dough-ring';
+      dough.userData.donutRole = role;
+
+      const icing = new THREE.Mesh(
+        new THREE.TorusGeometry(donutMajorRadius * 0.985, donutTubeRadius * 0.58, 18, 72),
+        icingMats[icingIndex % icingMats.length],
+      );
+      icing.name = `${label}_WAVY_ICING_RING`;
+      icing.rotation.x = Math.PI / 2;
+      icing.position.y = donutTubeRadius * 0.62;
+      icing.scale.set(1.02, 1, 0.9 + (icingIndex % 2) * 0.08);
+      icing.userData.component = 'wavy-icing-ring';
+      icing.userData.donutRole = role;
+
+      const drizzleCount = 9;
+      for (let i = 0; i < drizzleCount; i += 1) {
+        const angle = (i / drizzleCount) * Math.PI * 2 + icingIndex * 0.17;
+        const radius = donutMajorRadius + Math.sin(i * 1.7) * donutTubeRadius * 0.22;
+        const drop = new THREE.Mesh(new THREE.SphereGeometry(donutTubeRadius * (0.22 + (i % 3) * 0.035), 12, 8), icingMats[icingIndex % icingMats.length]);
+        drop.name = `${label}_ICING_WAVY_DROP_${i}`;
+        drop.position.set(Math.cos(angle) * radius, donutTubeRadius * 0.55, Math.sin(angle) * radius);
+        drop.scale.set(1.15, 0.34, 0.72);
+        drop.userData.component = 'wavy-icing-edge-drop';
+        drop.userData.donutRole = role;
+        parent.add(drop);
+      }
+
+      const sprinkleCount = 14;
+      for (let i = 0; i < sprinkleCount; i += 1) {
+        const angle = (i / sprinkleCount) * Math.PI * 2 + (i % 3) * 0.21;
+        const radial = donutMajorRadius + ((i % 5) - 2) * donutTubeRadius * 0.18;
+        const sprinkle = new THREE.Mesh(
+          new THREE.BoxGeometry(donutTubeRadius * 0.45, donutTubeRadius * 0.075, donutTubeRadius * 0.13),
+          sprinkleMats[(i + icingIndex) % sprinkleMats.length],
+        );
+        sprinkle.name = `${label}_SPRINKLE_${i}`;
+        sprinkle.position.set(Math.cos(angle) * radial, donutTubeRadius * 1.02, Math.sin(angle) * radial);
+        sprinkle.rotation.y = -angle + (i % 4) * 0.45;
+        sprinkle.rotation.z = (i % 2 ? 0.18 : -0.16);
+        sprinkle.userData.component = 'raised-candy-sprinkle';
+        sprinkle.userData.donutRole = role;
+        parent.add(sprinkle);
+      }
+
+      if (bite) {
+        const biteAngle = -0.75;
+        for (let i = 0; i < 3; i += 1) {
+          const crumb = new THREE.Mesh(new THREE.SphereGeometry(donutTubeRadius * (0.18 + i * 0.03), 10, 8), doughMats[doughIndex % doughMats.length]);
+          crumb.name = `${label}_BITE_CRUMB_${i}`;
+          crumb.position.set(
+            Math.cos(biteAngle + i * 0.2) * (donutMajorRadius + donutTubeRadius * 0.92),
+            donutTubeRadius * (0.35 + i * 0.12),
+            Math.sin(biteAngle + i * 0.2) * (donutMajorRadius + donutTubeRadius * 0.92),
+          );
+          crumb.scale.set(1.05, 0.72, 0.9);
+          crumb.userData.component = 'bite-mark-crumb';
+          crumb.userData.donutRole = role;
+          parent.add(crumb);
+        }
+        parent.userData.biteStyle = 'suggested-by-three-crumbs-on-edge-not-boolean-cutout';
+      }
+
+      parent.add(dough, icing);
+    };
+
+    const createDonutPair = ({ ratio, side, offset, along, icingIndex, doughIndex, category, bite = false, tilt = 0 }) => {
+      const pose = poseAt(ratio, side, offset, along);
+      const { pos, yaw } = pose;
+      const group = new THREE.Group();
+      group.name = `TOY_PARK_DONUT_PAIR_DECORATION_${category.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+      group.position.copy(pos);
+      group.rotation.y = yaw + side * 0.28 + tilt;
+      const donutSafeZones = applyDecorationSafeZones(group, donutOuterDiameter, category);
+      group.userData.groupStyle = 'two-donuts-one-horizontal-one-thirty-degree-leaning';
+      group.userData.donutsPerGroup = 2;
+      group.userData.leanAngleDegrees = 30;
+      group.userData.donutPairCenterSpacing = Number(donutPairCenterSpacing.toFixed(3));
+      group.userData.donutPairDepthSpacing = Number(donutPairDepthSpacing.toFixed(3));
+      group.userData.spacingPolicy = 'wider-pair-spacing-to-reduce-leaning-donut-overlap';
+      group.userData.trackEdgeSafetyClearance = pose.trackEdgeClearance;
+      group.userData.trackEdgeSafetyClearanceRequired = donutTrackEdgeSafetyClearance;
+      group.userData.spectatorSafetyClearance = donutSpectatorSafetyClearance;
+      group.userData.startSpectatorKeepoutProgressRatio = pose.startSpectatorKeepoutProgressRatio;
+      group.userData.requestedProgressRatio = pose.requestedRatio;
+      group.userData.safeProgressRatio = pose.safeRatio;
+      group.userData.requestedTrackOffset = pose.requestedOffset;
+      group.userData.safeTrackOffset = pose.safeOffset;
+      group.userData.placementSafetyPolicy = 'all-decorations-keep-clear-of-track-edge-start-board-spectator-stands-windmill-spinner-circle-and-other-decorations';
+      group.userData.decorationFootprintRadius = Number(donutOuterDiameter.toFixed(3));
+      group.userData.windmillTrackSafeZone = donutSafeZones.windmillTrackSafeZone;
+      group.userData.decorationOverlapSafeZone = donutSafeZones.decorationOverlapSafeZone;
+
+      const base = new THREE.Group();
+      base.name = `${group.name}_HORIZONTAL_DONUT`;
+      base.userData = { type: 'toy-park-donut-individual', role: 'horizontal-base-donut' };
+      addDonutParts(base, { label: base.name, icingIndex, doughIndex, bite: false, role: 'horizontal-base' });
+      group.add(base);
+
+      const lean = new THREE.Group();
+      lean.name = `${group.name}_LEANING_30_DEGREE_DONUT`;
+      lean.position.set(side * donutPairCenterSpacing, donutTubeRadius * 1.22, -donutPairDepthSpacing);
+      lean.rotation.z = -side * THREE.MathUtils.degToRad(30);
+      lean.rotation.y = side * 0.1;
+      lean.userData = {
+        type: 'toy-park-donut-individual',
+        role: 'thirty-degree-leaning-donut-resting-on-horizontal-donut',
+        leanAngleDegrees: 30,
+        supportedBy: 'horizontal-base-donut',
+      };
+      addDonutParts(lean, {
+        label: lean.name,
+        icingIndex: (icingIndex + 1) % icingMats.length,
+        doughIndex: (doughIndex + 1) % doughMats.length,
+        bite,
+        role: 'thirty-degree-leaning',
+      });
+      group.add(lean);
+
+      register(group, category);
+    };
+
+    const donutSpecs = [
+      { ratio: 0.24, side: 1, offset: 10.8, along: -0.8, icingIndex: 0, doughIndex: 0, category: 'strawberry-pink-sprinkle-donut', tilt: 0.08 },
+      { ratio: 0.39, side: -1, offset: 9.8, along: 0.9, icingIndex: 4, doughIndex: 1, category: 'chocolate-sprinkle-donut', tilt: -0.12 },
+      { ratio: 0.55, side: 1, offset: 10.2, along: -0.9, icingIndex: 1, doughIndex: 2, category: 'blueberry-sky-sprinkle-donut', tilt: 0.16 },
+      { ratio: 0.72, side: -1, offset: 9.7, along: 0.8, icingIndex: 2, doughIndex: 0, category: 'mint-sugar-sprinkle-donut', tilt: -0.18 },
+      { ratio: 0.88, side: 1, offset: 10.4, along: 0.3, icingIndex: 3, doughIndex: 1, category: 'vanilla-bite-sprinkle-donut', bite: true, tilt: 0.12 },
+    ];
+    donutSpecs.forEach(createDonutPair);
+
+    const lollipopMarkerPosts = 0;
+    const lollipopMarkerPostStyle = 'removed-user-request-replaced-by-two-additional-macaron-plates';
+
+    const cakeSliceLength = donutOuterDiameter * 1.18;
+    const cakeSliceWidth = donutOuterDiameter * 0.86;
+    const cakeSliceHeight = donutOuterDiameter * 0.62;
+    const cakeLayerColors = [0xff91b8, 0xffdf73, 0x94e6b6, 0x80d9f7, 0xb99cff];
+    const cakeLayerHeight = cakeSliceHeight / (cakeLayerColors.length + 1.55);
+    const frostingHeight = cakeLayerHeight * 0.28;
+    const cakeOutlineThickness = 0.055;
+    const cakePose = poseAt(0.61, 1, 5.8, 0.2);
+    cakePose.pos.y = Math.max(cakePose.pos.y - donutLift + cakeSliceHeight * 0.52 + 0.2, cakeSliceHeight * 0.52 + 0.2);
+
+    const createCakePrismGeometry = (length, width, height) => {
+      const halfLength = length / 2;
+      const halfWidth = width / 2;
+      const vertices = new Float32Array([
+        -halfLength, 0, -halfWidth,
+         halfLength, 0, 0,
+        -halfLength, 0,  halfWidth,
+        -halfLength, height, -halfWidth,
+         halfLength, height, 0,
+        -halfLength, height,  halfWidth,
+      ]);
+      const indices = [
+        0, 2, 1,
+        3, 4, 5,
+        0, 1, 4, 0, 4, 3,
+        1, 2, 5, 1, 5, 4,
+        2, 0, 3, 2, 3, 5,
+      ];
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    };
+
+    const cakeGroup = new THREE.Group();
+    cakeGroup.name = 'TOY_PARK_RAINBOW_CAKE_SLICE_DECORATION_DONUT_SCALE';
+    cakeGroup.position.copy(cakePose.pos);
+    cakeGroup.rotation.y = cakePose.inwardYaw;
+    const cakeFootprintRadius = Math.max(cakeSliceLength, cakeSliceWidth) * 0.76;
+    const cakeSafeZones = applyDecorationSafeZones(cakeGroup, cakeFootprintRadius, 'rainbow-cake-slice-primary');
+    cakeGroup.userData = {
+      type: 'toy-park-rainbow-cake-slice-decoration',
+      category: 'rainbow-cake-slice',
+      visualOnly: true,
+      noPhysics: true,
+      outsideTrack: true,
+      scopedToToyPark: true,
+      cakeStyle: 'reference-style-pastel-rainbow-layer-cake-dark-cartoon-outline',
+      referenceStyle: 'pastel-five-layer-cake-slice-with-dark-icing-outline-cream-dollops-cherry-serving-base',
+      cakeScalePolicy: 'similar-visible-scale-to-four-times-marble-diameter-donut',
+      referenceDonutOuterDiameter: Number(donutOuterDiameter.toFixed(3)),
+      cakeSliceLength: Number(cakeSliceLength.toFixed(3)),
+      cakeSliceWidth: Number(cakeSliceWidth.toFixed(3)),
+      cakeSliceHeight: Number(cakeSliceHeight.toFixed(3)),
+      cakeLengthToDonutOuterDiameterRatio: Number((cakeSliceLength / donutOuterDiameter).toFixed(3)),
+      rainbowLayerCount: cakeLayerColors.length,
+      frostingLayerCount: cakeLayerColors.length + 1,
+      darkOutline: true,
+      servingBase: true,
+      creamDollops: 8,
+      cherryTopper: true,
+      rainbowSideFacingTrack: true,
+      orientationPolicy: 'local-positive-z-rainbow-side-faces-inward-to-track',
+      trackEdgeSafetyClearance: cakePose.trackEdgeClearance,
+      trackEdgeSafetyClearanceRequired: donutTrackEdgeSafetyClearance,
+      spectatorSafetyClearance: donutSpectatorSafetyClearance,
+      startSpectatorKeepoutProgressRatio: cakePose.startSpectatorKeepoutProgressRatio,
+      placementSafetyPolicy: 'all-decorations-keep-clear-of-track-edge-start-board-spectator-stands-windmill-spinner-circle-and-other-decorations',
+      windmillTrackSafeZone: cakeSafeZones.windmillTrackSafeZone,
+      decorationOverlapSafeZone: cakeSafeZones.decorationOverlapSafeZone,
+      decorationFootprintRadius: Number(cakeFootprintRadius.toFixed(3)),
+      side: cakePose.side,
+      safeProgressRatio: cakePose.safeRatio,
+      safeTrackOffset: cakePose.safeOffset,
+    };
+
+    const frostingMat = material(0xfff5df, { roughness: 0.68, clearcoat: 0.08, materialStyle: 'soft-pale-cream-frosting-rainbow-cake' });
+    const sideFrostingMat = material(0xffecd5, { roughness: 0.72, clearcoat: 0.06, materialStyle: 'side-pale-cream-frosting-rainbow-cake-slice' });
+    const cakeOutlineMat = material(0x5b382a, { roughness: 0.74, clearcoat: 0.04, materialStyle: 'dark-chocolate-cartoon-outline-icing' });
+    const cakeBoardMat = material(0xc9c7bd, { metalness: 0.18, roughness: 0.42, clearcoat: 0.14, materialStyle: 'silver-round-cake-board' });
+    const cakePlateMat = material(0xf8f7f1, { roughness: 0.58, clearcoat: 0.12, materialStyle: 'white-round-serving-plate' });
+
+    const servingPlate = new THREE.Mesh(new THREE.CylinderGeometry(cakeSliceLength * 0.72, cakeSliceLength * 0.76, 0.09, 40), cakePlateMat);
+    servingPlate.name = 'TOY_PARK_RAINBOW_CAKE_SLICE_WHITE_ROUND_SERVING_PLATE';
+    servingPlate.position.y = -cakeSliceHeight * 0.55 - 0.12;
+    servingPlate.scale.z = 0.72;
+    servingPlate.userData = { component: 'rainbow-cake-white-round-serving-plate', visualOnly: true, noPhysics: true, outsideTrack: true };
+    cakeGroup.add(servingPlate);
+
+    const cakeBoard = new THREE.Mesh(new THREE.CylinderGeometry(cakeSliceLength * 0.56, cakeSliceLength * 0.58, 0.08, 40), cakeBoardMat);
+    cakeBoard.name = 'TOY_PARK_RAINBOW_CAKE_SLICE_SILVER_CAKE_BOARD';
+    cakeBoard.position.y = -cakeSliceHeight * 0.51 - 0.035;
+    cakeBoard.scale.z = 0.58;
+    cakeBoard.userData = { component: 'rainbow-cake-silver-cake-board', visualOnly: true, noPhysics: true, outsideTrack: true };
+    cakeGroup.add(cakeBoard);
+    let yCursor = -cakeSliceHeight / 2;
+    cakeLayerColors.forEach((color, index) => {
+      const layer = new THREE.Mesh(
+        createCakePrismGeometry(cakeSliceLength, cakeSliceWidth, cakeLayerHeight),
+        material(color, { roughness: 0.62, clearcoat: 0.1, materialStyle: `rainbow-cake-layer-${index}` }),
+      );
+      layer.name = `TOY_PARK_RAINBOW_CAKE_SLICE_LAYER_${index}`;
+      layer.position.y = yCursor;
+      layer.userData = { component: 'rainbow-cake-colored-layer', layerIndex: index, visualOnly: true, noPhysics: true, outsideTrack: true };
+      cakeGroup.add(layer);
+      yCursor += cakeLayerHeight;
+
+      const outline = new THREE.Mesh(createCakePrismGeometry(cakeSliceLength * 1.025, cakeSliceWidth * 1.025, cakeOutlineThickness), cakeOutlineMat);
+      outline.name = `TOY_PARK_RAINBOW_CAKE_SLICE_DARK_LAYER_OUTLINE_${index}`;
+      outline.position.y = yCursor - cakeOutlineThickness * 0.5;
+      outline.userData = { component: 'rainbow-cake-dark-cartoon-outline', layerIndex: index, visualOnly: true, noPhysics: true, outsideTrack: true };
+      cakeGroup.add(outline);
+
+      const frosting = new THREE.Mesh(createCakePrismGeometry(cakeSliceLength * 1.01, cakeSliceWidth * 1.01, frostingHeight), frostingMat);
+      frosting.name = `TOY_PARK_RAINBOW_CAKE_SLICE_FROSTING_STRIP_${index}`;
+      frosting.position.y = yCursor;
+      frosting.userData = { component: 'rainbow-cake-frosting-strip', layerIndex: index, visualOnly: true, noPhysics: true, outsideTrack: true };
+      cakeGroup.add(frosting);
+      yCursor += frostingHeight;
+    });
+
+    const backFrosting = new THREE.Mesh(new THREE.BoxGeometry(0.22, cakeSliceHeight * 1.08, cakeSliceWidth * 1.08), sideFrostingMat);
+    backFrosting.name = 'TOY_PARK_RAINBOW_CAKE_SLICE_BACK_CREAM_FROSTING';
+    backFrosting.position.set(-cakeSliceLength / 2 - 0.07, 0, 0);
+    backFrosting.userData = { component: 'rainbow-cake-back-frosting', visualOnly: true, noPhysics: true, outsideTrack: true };
+    cakeGroup.add(backFrosting);
+
+    const backOutline = new THREE.Mesh(new THREE.BoxGeometry(0.08, cakeSliceHeight * 1.12, cakeSliceWidth * 1.12), cakeOutlineMat);
+    backOutline.name = 'TOY_PARK_RAINBOW_CAKE_SLICE_DARK_BACK_EDGE_OUTLINE';
+    backOutline.position.set(-cakeSliceLength / 2 - 0.205, 0, 0);
+    backOutline.userData = { component: 'rainbow-cake-dark-back-edge-outline', visualOnly: true, noPhysics: true, outsideTrack: true };
+    cakeGroup.add(backOutline);
+
+    const topCream = new THREE.Mesh(createCakePrismGeometry(cakeSliceLength * 1.03, cakeSliceWidth * 1.03, frostingHeight * 1.35), frostingMat);
+    topCream.name = 'TOY_PARK_RAINBOW_CAKE_SLICE_TOP_CREAM';
+    topCream.position.y = yCursor;
+    topCream.userData = { component: 'rainbow-cake-top-frosting', visualOnly: true, noPhysics: true, outsideTrack: true };
+    cakeGroup.add(topCream);
+
+    const topOutline = new THREE.Mesh(createCakePrismGeometry(cakeSliceLength * 1.04, cakeSliceWidth * 1.04, cakeOutlineThickness), cakeOutlineMat);
+    topOutline.name = 'TOY_PARK_RAINBOW_CAKE_SLICE_DARK_TOP_PERIMETER_OUTLINE';
+    topOutline.position.y = yCursor + frostingHeight * 1.35 + cakeOutlineThickness * 0.35;
+    topOutline.userData = { component: 'rainbow-cake-dark-top-outline', visualOnly: true, noPhysics: true, outsideTrack: true };
+    cakeGroup.add(topOutline);
+
+    const dollopMat = frostingMat;
+    const buildCreamDollop = (name, x, z, scale = 1) => {
+      const dollop = new THREE.Mesh(new THREE.SphereGeometry(0.16 * scale, 14, 8), dollopMat);
+      dollop.name = name;
+      dollop.position.set(x, yCursor + frostingHeight * 1.58 + 0.06 * scale, z);
+      dollop.scale.set(1.15, 0.72, 1.15);
+      dollop.userData = { component: 'rainbow-cake-piped-cream-dollop', visualOnly: true, noPhysics: true, outsideTrack: true };
+      cakeGroup.add(dollop);
+      return dollop;
+    };
+    for (let i = 0; i < 6; i += 1) {
+      buildCreamDollop(`TOY_PARK_RAINBOW_CAKE_SLICE_TOP_EDGE_CREAM_DOLLOP_${i}`, -cakeSliceLength * 0.25 + i * cakeSliceLength * 0.105, cakeSliceWidth * 0.36, 0.9);
+    }
+    buildCreamDollop('TOY_PARK_RAINBOW_CAKE_SLICE_CHERRY_BASE_CREAM_DOLLOP_LOWER', cakeSliceLength * 0.02, 0, 1.35);
+    buildCreamDollop('TOY_PARK_RAINBOW_CAKE_SLICE_CHERRY_BASE_CREAM_DOLLOP_UPPER', cakeSliceLength * 0.02, 0, 1.02).position.y += 0.18;
+
+    const cherryMat = material(0xff1f3f, { roughness: 0.36, clearcoat: 0.32, materialStyle: 'glossy-red-cherry-on-rainbow-cake' });
+    const cherry = new THREE.Mesh(new THREE.SphereGeometry(0.32, 18, 12), cherryMat);
+    cherry.name = 'TOY_PARK_RAINBOW_CAKE_SLICE_CHERRY_TOPPER';
+    cherry.position.set(cakeSliceLength * 0.02, yCursor + frostingHeight * 1.35 + 0.42, 0);
+    cherry.scale.set(1, 0.82, 1);
+    cherry.userData = { component: 'rainbow-cake-cherry-topper', visualOnly: true, noPhysics: true, outsideTrack: true };
+    cakeGroup.add(cherry);
+
+    for (let i = 0; i < 9; i += 1) {
+      const sprinkle = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.035, 0.06), sprinkleMats[i % sprinkleMats.length]);
+      sprinkle.name = `TOY_PARK_RAINBOW_CAKE_SLICE_TOP_SPRINKLE_${i}`;
+      sprinkle.position.set(-cakeSliceLength * 0.28 + i * cakeSliceLength * 0.07, yCursor + frostingHeight * 1.38 + 0.035, ((i % 3) - 1) * cakeSliceWidth * 0.16);
+      sprinkle.rotation.y = i * 0.37;
+      sprinkle.userData = { component: 'rainbow-cake-top-sprinkle', visualOnly: true, noPhysics: true, outsideTrack: true };
+      cakeGroup.add(sprinkle);
+    }
+
+    cakeGroup.traverse((child) => {
+      child.castShadow = PERFORMANCE_TUNING.shadows;
+      child.receiveShadow = PERFORMANCE_TUNING.shadows;
+    });
+    donutGroup.add(cakeGroup);
+
+    const extraCakeSliceSpecs = [
+      { ratio: 0.43, side: -1, offset: 6.35, yawAdjust: 0, heightOffset: 0.18, scale: 0.96 },
+      { ratio: 0.79, side: -1, offset: 6.15, yawAdjust: 0, heightOffset: 0.16, scale: 0.9 },
+    ];
+    const rainbowCakeSliceDecorations = 1 + extraCakeSliceSpecs.length;
+    extraCakeSliceSpecs.forEach((spec, index) => {
+      const extraPose = poseAt(spec.ratio, spec.side, spec.offset, spec.heightOffset);
+      extraPose.pos.y = Math.max(extraPose.pos.y - donutLift + cakeSliceHeight * 0.52 + spec.heightOffset, cakeSliceHeight * 0.52 + spec.heightOffset);
+      const clone = cakeGroup.clone(true);
+      clone.name = `TOY_PARK_RAINBOW_CAKE_SLICE_DECORATION_DONUT_SCALE_COPY_${index + 2}`;
+      clone.position.copy(extraPose.pos);
+      clone.rotation.y = extraPose.inwardYaw + spec.yawAdjust;
+      clone.scale.setScalar(spec.scale);
+      const cloneCakeFootprintRadius = Math.max(cakeSliceLength, cakeSliceWidth) * 0.76 * spec.scale;
+      const cloneCakeSafeZones = applyDecorationSafeZones(clone, cloneCakeFootprintRadius, `rainbow-cake-slice-copy-${index + 2}`);
+      clone.userData = {
+        ...cakeGroup.userData,
+        copyIndex: index + 2,
+        cakeSliceScale: spec.scale,
+        rainbowSideFacingTrack: true,
+        orientationPolicy: 'local-positive-z-rainbow-side-faces-inward-to-track',
+        trackEdgeSafetyClearance: extraPose.trackEdgeClearance,
+        side: extraPose.side,
+        safeProgressRatio: extraPose.safeRatio,
+        safeTrackOffset: extraPose.safeOffset,
+        placementSafetyPolicy: 'all-decorations-keep-clear-of-track-edge-start-board-spectator-stands-windmill-spinner-circle-and-other-decorations',
+        windmillTrackSafeZone: cloneCakeSafeZones.windmillTrackSafeZone,
+        decorationOverlapSafeZone: cloneCakeSafeZones.decorationOverlapSafeZone,
+        decorationFootprintRadius: Number(cloneCakeFootprintRadius.toFixed(3)),
+      };
+      clone.traverse((child) => {
+        child.castShadow = PERFORMANCE_TUNING.shadows;
+        child.receiveShadow = PERFORMANCE_TUNING.shadows;
+      });
+      donutGroup.add(clone);
+    });
+
+    const macaronPose = poseAt(0.91, -1, 14.5, 4);
+    macaronPose.pos.y = Math.max(macaronPose.pos.y - donutLift + marbleDiameter * 0.18, marbleDiameter * 0.18);
+    const macaronGroup = new THREE.Group();
+    macaronGroup.name = 'TOY_PARK_MACARON_PLATE_DECORATION_PASTEL_STACK';
+    macaronGroup.position.copy(macaronPose.pos);
+    macaronGroup.position.set(-21, 1.2, 9.5);
+    macaronGroup.rotation.y = macaronPose.yaw - 0.16;
+    macaronGroup.scale.setScalar(2.56);
+    const macaronFootprintRadius = donutOuterDiameter * 0.92 * 2.56;
+    const macaronSafeZones = applyDecorationSafeZones(macaronGroup, macaronFootprintRadius, 'primary-macaron-plate');
+    macaronGroup.userData = {
+      type: 'toy-park-macaron-plate-decoration',
+      category: 'pastel-french-macarons-on-white-ornate-plate',
+      visualOnly: true,
+      noPhysics: true,
+      outsideTrack: true,
+      scopedToToyPark: true,
+      referenceStyle: 'multicolor-macaron-pile-domed-shells-thin-filling-speckles-sprinkles',
+      macaronCount: 7,
+      macaronScale: 2.56,
+      scaleAdjustment: 'shrunk-30-percent-from-3.65',
+      visibilityPass: 'moved-farther-from-start-spectator-rectangle-footprint-readable-multicolor-domed-macarons',
+      spectatorRectangleFootprintPolicy: 'measure-clearance-against-full-start-board-grandstand-rectangle-not-nearest-marble',
+      plateStyle: 'glossy-white-round-plate-with-smooth-raised-rim-no-beads',
+      macaronShellStyle: 'round-only-domed-double-shells-thin-visible-filling-crinkled-feet',
+      colorPalette: 'mixed-pastel-shells-thin-matched-contrast-fillings',
+      trackEdgeSafetyClearance: macaronPose.trackEdgeClearance,
+      trackEdgeSafetyClearanceRequired: donutTrackEdgeSafetyClearance,
+      spectatorSafetyClearance: donutSpectatorSafetyClearance,
+      startSpectatorKeepoutProgressRatio: macaronPose.startSpectatorKeepoutProgressRatio,
+      placementSafetyPolicy: 'all-decorations-keep-clear-of-track-edge-start-board-spectator-stands-windmill-spinner-circle-and-other-decorations',
+      windmillTrackSafeZone: macaronSafeZones.windmillTrackSafeZone,
+      decorationOverlapSafeZone: macaronSafeZones.decorationOverlapSafeZone,
+      decorationFootprintRadius: Number(macaronFootprintRadius.toFixed(3)),
+      safeProgressRatio: macaronPose.safeRatio,
+      safeTrackOffset: macaronPose.safeOffset,
+    };
+
+    const macaronPlateMat = material(0xffffff, { roughness: 0.42, clearcoat: 0.28, materialStyle: 'glossy-bright-white-ornate-macaron-serving-plate' });
+    const macaronRimMat = material(0xe6dacb, { roughness: 0.48, clearcoat: 0.18, materialStyle: 'raised-shadowed-smooth-plate-rim-no-beads' });
+    const macaronFillingMats = [
+      material(0xf7d66a, { roughness: 0.68, clearcoat: 0.04, materialStyle: 'thin-lemon-cream-macaron-filling' }),
+      material(0xffb6c9, { roughness: 0.68, clearcoat: 0.04, materialStyle: 'thin-pink-cream-macaron-filling' }),
+      material(0xd9b7ff, { roughness: 0.68, clearcoat: 0.04, materialStyle: 'thin-lavender-cream-macaron-filling' }),
+      material(0x8debd2, { roughness: 0.68, clearcoat: 0.04, materialStyle: 'thin-mint-cream-macaron-filling' }),
+      material(0xffc087, { roughness: 0.68, clearcoat: 0.04, materialStyle: 'thin-peach-cream-macaron-filling' }),
+      material(0xf7efe2, { roughness: 0.7, clearcoat: 0.03, materialStyle: 'thin-vanilla-cream-macaron-filling' }),
+      material(0x86dfff, { roughness: 0.68, clearcoat: 0.04, materialStyle: 'thin-aqua-cream-macaron-filling' }),
+    ];
+    const macaronSpeckleMats = [
+      material(0x6b3b2a, { roughness: 0.86, clearcoat: 0.01, materialStyle: 'natural-brown-cocoa-speckles' }),
+      material(0xb8852f, { roughness: 0.82, clearcoat: 0.02, materialStyle: 'warm-gold-sugar-speckles' }),
+      material(0xffffff, { roughness: 0.8, clearcoat: 0.02, materialStyle: 'white-sugar-dusted-speckles' }),
+    ];
+    const macaronSprinkleMats = [
+      material(0xff5aa5, { roughness: 0.62, clearcoat: 0.08, materialStyle: 'tiny-candy-sprinkle-pink' }),
+      material(0x4ec7ff, { roughness: 0.62, clearcoat: 0.08, materialStyle: 'tiny-candy-sprinkle-blue' }),
+      material(0xffe56c, { roughness: 0.62, clearcoat: 0.08, materialStyle: 'tiny-candy-sprinkle-yellow' }),
+      material(0x8ff08a, { roughness: 0.62, clearcoat: 0.08, materialStyle: 'tiny-candy-sprinkle-green' }),
+    ];
+    const macaronDrizzleMat = material(0x5a2a23, { roughness: 0.55, clearcoat: 0.08, materialStyle: 'thin-chocolate-drizzle-lines' });
+
+    const macaronPlate = new THREE.Mesh(new THREE.CylinderGeometry(donutOuterDiameter * 0.86, donutOuterDiameter * 0.92, 0.1, 48), macaronPlateMat);
+    macaronPlate.name = 'TOY_PARK_MACARON_WHITE_ORNATE_PLATE_BASE';
+    macaronPlate.position.y = -0.2;
+    macaronPlate.scale.z = 0.74;
+    macaronPlate.userData = { component: 'macaron-white-serving-plate', visualOnly: true, noPhysics: true, outsideTrack: true };
+    macaronGroup.add(macaronPlate);
+
+    const macaronRim = new THREE.Mesh(new THREE.TorusGeometry(donutOuterDiameter * 0.84, 0.055, 8, 48), macaronRimMat);
+    macaronRim.name = 'TOY_PARK_MACARON_WHITE_PLATE_RAISED_RIM';
+    macaronRim.rotation.x = Math.PI / 2;
+    macaronRim.position.y = -0.125;
+    macaronRim.scale.z = 0.74;
+    macaronRim.userData = { component: 'macaron-white-plate-raised-rim', visualOnly: true, noPhysics: true, outsideTrack: true };
+    macaronGroup.add(macaronRim);
+
+    const beadCount = 0;
+    // User requested removing the white/beige dotted beaded rim; keep only the smooth raised rim.
+
+    const macaronSpecs = [
+      { color: 0xf49ac1, foot: 0xe4779d, fill: 0, x: -0.68, z: 0.16, y: 0.08, yaw: -0.45, scale: 1.02, speckles: 5, sprinkles: 3, drizzle: false },
+      { color: 0x8debd2, foot: 0x61d6bd, fill: 1, x: 0.02, z: -0.1, y: 0.16, yaw: 0.18, scale: 1.04, speckles: 4, sprinkles: 5, drizzle: false },
+      { color: 0x8fdfff, foot: 0x66c5e8, fill: 2, x: 0.62, z: 0.22, y: 0.08, yaw: 0.52, scale: 1, speckles: 3, sprinkles: 0, drizzle: false },
+      { color: 0xc8a7ff, foot: 0xa987e8, fill: 3, x: -0.06, z: 0.56, y: 0.34, yaw: -0.78, scale: 0.96, speckles: 6, sprinkles: 4, drizzle: false },
+      { color: 0xffda72, foot: 0xe8be4f, fill: 4, x: 0.58, z: -0.34, y: 0.25, yaw: 0.82, scale: 0.91, speckles: 5, sprinkles: 0, drizzle: false },
+      { color: 0xffb36f, foot: 0xe89152, fill: 5, x: -0.54, z: -0.43, y: 0.22, yaw: 0.36, scale: 0.9, speckles: 4, sprinkles: 0, drizzle: true },
+      { color: 0xf6efe0, foot: 0xd8c9b8, fill: 6, x: 0.08, z: 0.02, y: 0.52, yaw: -0.22, scale: 0.82, speckles: 5, sprinkles: 6, drizzle: true }
+    ];
+    const buildMacaron = (spec, index) => {
+      const shellMat = material(spec.color, { roughness: 0.76, clearcoat: 0.035, materialStyle: `pastel-domed-macaron-shell-${index}` });
+      const footMat = material(spec.foot, { roughness: 0.84, clearcoat: 0.02, materialStyle: `matching-rough-crinkled-foot-${index}` });
+      const macaron = new THREE.Group();
+      macaron.name = `TOY_PARK_MACARON_STACK_COOKIE_${index}`;
+      macaron.position.set(spec.x, spec.y, spec.z);
+      macaron.rotation.set(0, spec.yaw, 0);
+      macaron.scale.setScalar(spec.scale);
+      macaron.userData = { component: 'pastel-stacked-macaron', referenceComponent: 'multicolor-domed-thin-filling-macaron-pile', shape: 'round-only', sandwichLayers: 3, shellColorFamily: 'mixed-pastel', fillingColorFamily: 'thin-matched-or-contrast-pastel', shellProfile: 'rounded-domed-meringue-shells', fillingThickness: 'thin-visible-band', visualOnly: true, noPhysics: true, outsideTrack: true };
+      const topShell = new THREE.Mesh(new THREE.SphereGeometry(0.44, 40, 16, 0, Math.PI * 2, 0, Math.PI * 0.72), shellMat);
+      topShell.name = `TOY_PARK_MACARON_TOP_SHELL_${index}`;
+      topShell.position.y = 0.115;
+      topShell.scale.set(1, 0.36, 1);
+      topShell.userData = { component: 'macaron-rounded-top-shell', shape: 'domed-round-shell-xz-circular-no-oval', sandwichLayer: 'top-shell', visualOnly: true, noPhysics: true, outsideTrack: true };
+      macaron.add(topShell);
+      const filling = new THREE.Mesh(new THREE.CylinderGeometry(0.445, 0.445, 0.065, 40), macaronFillingMats[spec.fill % macaronFillingMats.length]);
+      filling.name = `TOY_PARK_MACARON_VISIBLE_FILLING_${index}`;
+      filling.position.y = 0;
+      filling.userData = { component: 'macaron-visible-filling-layer', shape: 'round-exposed-thin-filling-band-no-oval-scale', sandwichLayer: 'center-filling', fillingThicknessRatio: 0.18, visualOnly: true, noPhysics: true, outsideTrack: true };
+      macaron.add(filling);
+      const bottomShell = new THREE.Mesh(new THREE.SphereGeometry(0.44, 40, 16, 0, Math.PI * 2, Math.PI * 0.28, Math.PI * 0.72), shellMat);
+      bottomShell.name = `TOY_PARK_MACARON_BOTTOM_SHELL_${index}`;
+      bottomShell.position.y = -0.115;
+      bottomShell.scale.set(1, 0.36, 1);
+      bottomShell.userData = { component: 'macaron-rounded-bottom-shell', shape: 'domed-round-shell-xz-circular-no-oval', sandwichLayer: 'bottom-shell', visualOnly: true, noPhysics: true, outsideTrack: true };
+      macaron.add(bottomShell);
+      for (let j = 0; j < 16; j += 1) {
+        const angle = (j / 16) * Math.PI * 2;
+        const upperFoot = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 5), footMat);
+        upperFoot.name = `TOY_PARK_MACARON_RUFFLED_UPPER_FOOT_${index}_${j}`;
+        upperFoot.position.set(Math.cos(angle) * 0.425, 0.042, Math.sin(angle) * 0.425);
+        upperFoot.scale.set(1, 0.42, 1);
+        upperFoot.userData = { component: 'macaron-ruffled-foot-edge', shape: 'circular-foot-ring', footRing: 'upper-shell-edge', visualOnly: true, noPhysics: true, outsideTrack: true };
+        macaron.add(upperFoot);
+        const lowerFoot = new THREE.Mesh(new THREE.SphereGeometry(0.032, 6, 5), footMat);
+        lowerFoot.name = `TOY_PARK_MACARON_RUFFLED_LOWER_FOOT_${index}_${j}`;
+        lowerFoot.position.set(Math.cos(angle) * 0.425, -0.042, Math.sin(angle) * 0.425);
+        lowerFoot.scale.set(1, 0.42, 1);
+        lowerFoot.userData = { component: 'macaron-ruffled-foot-edge', shape: 'circular-foot-ring', footRing: 'lower-shell-edge', visualOnly: true, noPhysics: true, outsideTrack: true };
+        macaron.add(lowerFoot);
+      }
+      for (let j = 0; j < spec.speckles; j += 1) {
+        const sx = ((j * 37 + index * 11) % 17) / 16 - 0.5;
+        const sz = ((j * 23 + index * 7) % 13) / 12 - 0.5;
+        const speckleMat = macaronSpeckleMats[(j + index) % macaronSpeckleMats.length];
+        const speckle = new THREE.Mesh(new THREE.SphereGeometry(0.022, 6, 4), speckleMat);
+        speckle.name = `TOY_PARK_MACARON_COCOA_SHELL_SPECKLE_${index}_${j}`;
+        speckle.position.set(sx * 0.5, 0.265, sz * 0.5);
+        speckle.scale.set(1, 0.2, 1);
+        speckle.userData = { component: 'macaron-brown-top-speckle', referenceComponent: 'natural-cocoa-gold-sugar-shell-speckle', visualOnly: true, noPhysics: true, outsideTrack: true };
+        macaron.add(speckle);
+      }
+      for (let j = 0; j < (spec.sprinkles || 0); j += 1) {
+        const sx = ((j * 19 + index * 5) % 15) / 14 - 0.5;
+        const sz = ((j * 31 + index * 3) % 11) / 10 - 0.5;
+        const sprinkle = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.018, 0.024), macaronSprinkleMats[(j + index) % macaronSprinkleMats.length]);
+        sprinkle.name = `TOY_PARK_MACARON_CANDY_SPRINKLE_${index}_${j}`;
+        sprinkle.position.set(sx * 0.46, 0.285, sz * 0.46);
+        sprinkle.rotation.set(0.08, spec.yaw + j * 0.7, 0.04);
+        sprinkle.userData = { component: 'macaron-colored-sprinkle', visualOnly: true, noPhysics: true, outsideTrack: true };
+        macaron.add(sprinkle);
+      }
+      if (spec.drizzle) {
+        for (let j = 0; j < 3; j += 1) {
+          const drizzle = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.014, 0.026), macaronDrizzleMat);
+          drizzle.name = `TOY_PARK_MACARON_THIN_DRIZZLE_${index}_${j}`;
+          drizzle.position.set(0, 0.292, (j - 1) * 0.15);
+          drizzle.rotation.set(0.08, -0.34, 0.03);
+          drizzle.userData = { component: 'macaron-thin-chocolate-drizzle', visualOnly: true, noPhysics: true, outsideTrack: true };
+          macaron.add(drizzle);
+        }
+      }
+      macaronGroup.add(macaron);
+    };
+    macaronSpecs.forEach(buildMacaron);
+    macaronGroup.traverse((child) => {
+      child.castShadow = PERFORMANCE_TUNING.shadows;
+      child.receiveShadow = PERFORMANCE_TUNING.shadows;
+    });
+    donutGroup.add(macaronGroup);
+
+    const extraMacaronPlateSpecs = [
+      { ratio: 0.36, side: -1, offset: 16.2, along: 2.2, scale: 0.92, yawAdjust: 0.24, nameSuffix: 'LEFT_MID_SAFE_RECTANGLE_CLEARANCE' },
+      { ratio: 0.76, side: 1, offset: 16.8, along: -1.4, scale: 0.88, yawAdjust: -0.28, nameSuffix: 'RIGHT_LATE_SAFE_RECTANGLE_CLEARANCE' },
+    ];
+    extraMacaronPlateSpecs.forEach((spec, index) => {
+      const extraPose = poseAt(spec.ratio, spec.side, spec.offset, spec.along);
+      const clone = macaronGroup.clone(true);
+      clone.name = `TOY_PARK_MACARON_PLATE_DECORATION_PASTEL_STACK_${spec.nameSuffix}`;
+      clone.position.copy(extraPose.pos);
+      clone.position.y = Math.max(extraPose.pos.y - donutLift + marbleDiameter * 0.18, marbleDiameter * 0.18);
+      clone.rotation.y = extraPose.yaw + spec.yawAdjust;
+      const cloneScale = 2.56 * spec.scale;
+      clone.scale.setScalar(cloneScale);
+      const cloneMacaronFootprintRadius = donutOuterDiameter * 0.92 * cloneScale;
+      const cloneMacaronSafeZones = applyDecorationSafeZones(clone, cloneMacaronFootprintRadius, spec.nameSuffix);
+      clone.userData = {
+        ...macaronGroup.userData,
+        copyIndex: index + 2,
+        macaronScale: Number((2.56 * spec.scale).toFixed(3)),
+        additionalMacaronPlate: true,
+        visibilityPass: 'additional-macaron-plate-sideline-placement-with-start-spectator-rectangle-footprint-clearance',
+        spectatorRectangleFootprintPolicy: 'measure-clearance-against-full-start-board-grandstand-rectangle-not-nearest-marble',
+        trackEdgeSafetyClearance: extraPose.trackEdgeClearance,
+        startSpectatorKeepoutProgressRatio: extraPose.startSpectatorKeepoutProgressRatio,
+        side: extraPose.side,
+        safeProgressRatio: extraPose.safeRatio,
+        safeTrackOffset: extraPose.safeOffset,
+        windmillTrackSafeZone: cloneMacaronSafeZones.windmillTrackSafeZone,
+        decorationOverlapSafeZone: cloneMacaronSafeZones.decorationOverlapSafeZone,
+        decorationFootprintRadius: Number(cloneMacaronFootprintRadius.toFixed(3)),
+      };
+      clone.traverse((child) => {
+        child.castShadow = PERFORMANCE_TUNING.shadows;
+        child.receiveShadow = PERFORMANCE_TUNING.shadows;
+      });
+      donutGroup.add(clone);
+    });
+    const macaronPlateDecorations = 1 + extraMacaronPlateSpecs.length;
+    const macaronCookieDecorations = macaronSpecs.length * macaronPlateDecorations;
+    const macaronPlateBeadDetails = beadCount * macaronPlateDecorations;
+    const macaronSpeckleDetails = macaronSpecs.reduce((sum, spec) => sum + spec.speckles, 0) * macaronPlateDecorations;
+
+    const carouselDecorations = 1;
+    const carouselFootprintRadius = Math.max(5.7, donutOuterDiameter * 1.55);
+    const carouselScale = (donutOuterDiameter / 3.68) * 0.92;
+    const carouselPose = poseAt(0.56, 1, 16.0, -6.0);
+    const carouselGroup = new THREE.Group();
+    carouselGroup.name = 'TOY_PARK_CAROUSEL_LARGE_DECORATION_CARTOON_TOY';
+    carouselGroup.position.copy(carouselPose.pos);
+    carouselGroup.position.y = Math.max(0.18, carouselScale * 0.18);
+    carouselGroup.rotation.y = carouselPose.inwardYaw + Math.PI;
+    carouselGroup.scale.setScalar(carouselScale);
+    const carouselSafeZones = applyDecorationSafeZones(carouselGroup, carouselFootprintRadius, 'large-cartoon-toy-carousel');
+
+    const carouselBrownOutlineMat = material(0x8b5e34, { roughness: 0.74, clearcoat: 0.08, materialStyle: 'warm-brown-raised-cartoon-outline' });
+    const carouselPinkMat = material(0xff9fc7, { roughness: 0.62, clearcoat: 0.14, materialStyle: 'pastel-pink-soft-toy-plastic' });
+    const carouselPalePinkMat = material(0xffc8dc, { roughness: 0.66, clearcoat: 0.12, materialStyle: 'pale-pink-canopy-panel' });
+    const carouselCreamMat = material(0xfff4d8, { roughness: 0.7, clearcoat: 0.1, materialStyle: 'warm-cream-carousel-base-and-panel' });
+    const carouselWhiteMat = material(0xfffbf0, { roughness: 0.72, clearcoat: 0.1, materialStyle: 'soft-white-carousel-horse' });
+    const carouselBlueMat = material(0x84d8ff, { roughness: 0.64, clearcoat: 0.14, materialStyle: 'aqua-blue-spotted-saddle' });
+    const carouselDarkBlueMat = material(0x3aa5d8, { roughness: 0.58, clearcoat: 0.14, materialStyle: 'darker-aqua-saddle-spots' });
+    const carouselTanMat = material(0xc98a54, { roughness: 0.7, clearcoat: 0.08, materialStyle: 'tan-brown-horse-mane-tail' });
+    const carouselCandyHorseBodyMats = [
+      material(0xff8fca, { roughness: 0.58, clearcoat: 0.22, materialStyle: 'candy-pink-gloss-carousel-horse-body' }),
+      material(0x8ee8ff, { roughness: 0.56, clearcoat: 0.24, materialStyle: 'cotton-candy-blue-gloss-carousel-horse-body' }),
+      material(0xc7ff8e, { roughness: 0.58, clearcoat: 0.22, materialStyle: 'mint-lime-candy-gloss-carousel-horse-body' }),
+    ];
+    const carouselCandyHorseHeadMats = [
+      material(0xffd1ea, { roughness: 0.6, clearcoat: 0.2, materialStyle: 'pale-strawberry-cream-carousel-horse-head' }),
+      material(0xd3fbff, { roughness: 0.6, clearcoat: 0.2, materialStyle: 'pale-blue-cream-carousel-horse-head' }),
+      material(0xf0ffd0, { roughness: 0.6, clearcoat: 0.2, materialStyle: 'pale-mint-cream-carousel-horse-head' }),
+    ];
+    const carouselCandyHorseManeMats = [
+      material(0xffd23f, { roughness: 0.5, clearcoat: 0.2, materialStyle: 'lemon-drop-yellow-carousel-horse-mane-tail' }),
+      material(0xb27cff, { roughness: 0.5, clearcoat: 0.22, materialStyle: 'grape-candy-purple-carousel-horse-mane-tail' }),
+      material(0xff8a4c, { roughness: 0.52, clearcoat: 0.2, materialStyle: 'orange-sherbet-carousel-horse-mane-tail' }),
+    ];
+    const carouselCandySaddleMats = [
+      material(0x55e6ff, { roughness: 0.5, clearcoat: 0.28, materialStyle: 'bright-blue-lollipop-carousel-saddle' }),
+      material(0xff73d2, { roughness: 0.5, clearcoat: 0.28, materialStyle: 'bubblegum-pink-carousel-saddle' }),
+      material(0xffe761, { roughness: 0.5, clearcoat: 0.28, materialStyle: 'lemon-candy-carousel-saddle' }),
+    ];
+    const carouselCandySaddleSpotMats = [
+      material(0xff4fa3, { roughness: 0.48, clearcoat: 0.3, materialStyle: 'hot-pink-candy-saddle-dots' }),
+      material(0x36d399, { roughness: 0.48, clearcoat: 0.3, materialStyle: 'mint-candy-saddle-dots' }),
+      material(0x7c5cff, { roughness: 0.48, clearcoat: 0.3, materialStyle: 'violet-candy-saddle-dots' }),
+    ];
+    const carouselStarMat = material(0xffffff, { roughness: 0.6, clearcoat: 0.16, materialStyle: 'raised-white-star-on-pink-band' });
+
+    const addCarouselMesh = (parent, mesh, component, extraUserData = {}) => {
+      mesh.castShadow = PERFORMANCE_TUNING.shadows;
+      mesh.receiveShadow = PERFORMANCE_TUNING.shadows;
+      mesh.userData = {
+        ...(mesh.userData || {}),
+        component,
+        parentDecorationType: 'toy-park-carousel-decoration',
+        visualOnly: true,
+        noPhysics: true,
+        outsideTrack: true,
+        scopedToToyPark: true,
+        ...extraUserData,
+      };
+      parent.add(mesh);
+      return mesh;
+    };
+
+    const createStarShape = (outer = 0.48, inner = 0.22, points = 5) => {
+      const shape = new THREE.Shape();
+      for (let i = 0; i < points * 2; i += 1) {
+        const angle = -Math.PI / 2 + (i / (points * 2)) * Math.PI * 2;
+        const radius = i % 2 === 0 ? outer : inner;
+        const x = Math.cos(angle) * radius;
+        const y = Math.sin(angle) * radius;
+        if (i === 0) shape.moveTo(x, y);
+        else shape.lineTo(x, y);
+      }
+      shape.closePath();
+      return shape;
+    };
+
+    const carouselDeckY = 1.62;
+    const carouselHorseOrbitRadius = 3.25;
+    const carouselHorsePoleBottomY = carouselDeckY + 0.1;
+    const carouselHorsePoleTopY = 4.76;
+    const carouselHorsePoleHeight = carouselHorsePoleTopY - carouselHorsePoleBottomY;
+    const carouselHorsePoleCenterY = (carouselHorsePoleTopY + carouselHorsePoleBottomY) / 2;
+    const baseOutline = new THREE.Mesh(new THREE.CylinderGeometry(6.45, 6.75, 0.82, 72), carouselBrownOutlineMat);
+    baseOutline.name = 'TOY_PARK_CAROUSEL_BASE_BROWN_OVAL_OUTLINE_TALL_VISIBLE_PLATFORM';
+    baseOutline.scale.z = 0.62;
+    baseOutline.position.y = 0.48;
+    addCarouselMesh(carouselGroup, baseOutline, 'carousel-layered-oval-base-brown-outline-tall-visible-platform');
+    const basePinkStripe = new THREE.Mesh(new THREE.CylinderGeometry(6.16, 6.34, 0.52, 72), carouselPinkMat);
+    basePinkStripe.name = 'TOY_PARK_CAROUSEL_BASE_PINK_TALL_VISIBLE_STRIPE';
+    basePinkStripe.scale.z = 0.6;
+    basePinkStripe.position.y = 0.94;
+    addCarouselMesh(carouselGroup, basePinkStripe, 'carousel-layered-oval-base-pink-tall-visible-stripe');
+    const baseTop = new THREE.Mesh(new THREE.CylinderGeometry(5.86, 6.08, 0.42, 72), carouselCreamMat);
+    baseTop.name = 'TOY_PARK_CAROUSEL_BASE_CREAM_TOP_RAISED_VISIBLE_RIDE_FLOOR';
+    baseTop.scale.z = 0.58;
+    baseTop.position.y = 1.32;
+    addCarouselMesh(carouselGroup, baseTop, 'carousel-layered-oval-base-cream-raised-visible-ride-floor');
+    const baseFloorRing = new THREE.Mesh(new THREE.TorusGeometry(5.16, 0.16, 12, 96), carouselBrownOutlineMat);
+    baseFloorRing.name = 'TOY_PARK_CAROUSEL_BASE_VISIBLE_RIDE_FLOOR_THICK_OUTER_RING';
+    baseFloorRing.rotation.x = Math.PI / 2;
+    baseFloorRing.scale.z = 0.58;
+    baseFloorRing.position.y = carouselDeckY;
+    addCarouselMesh(carouselGroup, baseFloorRing, 'carousel-base-visible-ride-floor-thick-outer-ring');
+    const horseOrbitFloorRing = new THREE.Mesh(new THREE.TorusGeometry(carouselHorseOrbitRadius, 0.13, 12, 96), carouselBrownOutlineMat);
+    horseOrbitFloorRing.name = 'TOY_PARK_CAROUSEL_HORSE_ORBIT_RING_ON_VISIBLE_BASE_CONNECTING_ALL_HORSES';
+    horseOrbitFloorRing.rotation.x = Math.PI / 2;
+    horseOrbitFloorRing.scale.z = 0.58;
+    horseOrbitFloorRing.position.y = carouselDeckY + 0.035;
+    addCarouselMesh(carouselGroup, horseOrbitFloorRing, 'carousel-horse-orbit-ring-on-visible-base-connects-horses');
+    const centerRoundTile = new THREE.Mesh(new THREE.CylinderGeometry(1.28, 1.42, 0.22, 40), carouselCreamMat);
+    centerRoundTile.name = 'TOY_PARK_CAROUSEL_CENTER_ROUND_TILE_RAISED_VISIBLE_PIVOT';
+    centerRoundTile.position.y = carouselDeckY + 0.08;
+    addCarouselMesh(carouselGroup, centerRoundTile, 'carousel-center-round-tile-raised-visible-pivot');
+
+    const centerPole = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.42, 5.5, 24), carouselPinkMat);
+    centerPole.name = 'TOY_PARK_CAROUSEL_PINK_CENTER_COLUMN';
+    centerPole.position.y = 3.36;
+    addCarouselMesh(carouselGroup, centerPole, 'carousel-pink-center-column');
+    const centerPoleOutline = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.48, 5.55, 24), carouselBrownOutlineMat);
+    centerPoleOutline.name = 'TOY_PARK_CAROUSEL_CENTER_COLUMN_BROWN_RIM';
+    centerPoleOutline.position.y = 3.34;
+    centerPoleOutline.renderOrder = -1;
+    addCarouselMesh(carouselGroup, centerPoleOutline, 'carousel-center-column-raised-brown-outline');
+
+    const canopyPanelCount = 12;
+    for (let i = 0; i < canopyPanelCount; i += 1) {
+      const thetaStart = (i / canopyPanelCount) * Math.PI * 2;
+      const thetaLength = (Math.PI * 2) / canopyPanelCount + 0.012;
+      const panel = new THREE.Mesh(
+        new THREE.ConeGeometry(5.05, 2.05, 1, 1, false, thetaStart, thetaLength),
+        i % 2 === 0 ? carouselPalePinkMat : carouselCreamMat,
+      );
+      panel.name = `TOY_PARK_CAROUSEL_CANOPY_ALTERNATING_PANEL_${i}`;
+      panel.position.y = 6.36;
+      panel.rotation.y = 0;
+      addCarouselMesh(panel === carouselGroup ? carouselGroup : carouselGroup, panel, 'carousel-alternating-pink-white-canopy-panel', { panelIndex: i });
+    }
+    const canopyRim = new THREE.Mesh(new THREE.TorusGeometry(5.08, 0.13, 12, 96), carouselBrownOutlineMat);
+    canopyRim.name = 'TOY_PARK_CAROUSEL_CANOPY_BROWN_RAISED_RIM';
+    canopyRim.position.y = 5.34;
+    canopyRim.rotation.x = Math.PI / 2;
+    addCarouselMesh(carouselGroup, canopyRim, 'carousel-canopy-brown-raised-rim');
+    const pinkBand = new THREE.Mesh(new THREE.CylinderGeometry(5.04, 5.04, 0.55, 64, 1, true), carouselPinkMat);
+    pinkBand.name = 'TOY_PARK_CAROUSEL_PINK_STAR_BAND';
+    pinkBand.position.y = 5.12;
+    addCarouselMesh(carouselGroup, pinkBand, 'carousel-pink-star-band');
+    for (let i = 0; i < 8; i += 1) {
+      const angle = (i / 8) * Math.PI * 2;
+      const star = new THREE.Mesh(new THREE.ShapeGeometry(createStarShape(0.32, 0.14)), carouselStarMat);
+      star.name = `TOY_PARK_CAROUSEL_WHITE_STAR_ON_BAND_${i}`;
+      star.position.set(Math.cos(angle) * 5.08, 5.13, Math.sin(angle) * 5.08);
+      star.rotation.y = -angle + Math.PI / 2;
+      star.rotation.z = 0;
+      addCarouselMesh(carouselGroup, star, 'carousel-raised-white-star-on-pink-band', { starIndex: i });
+    }
+    for (let i = 0; i < 14; i += 1) {
+      const angle = (i / 14) * Math.PI * 2;
+      const scallop = new THREE.Mesh(new THREE.SphereGeometry(0.28, 14, 8), i % 2 ? carouselPinkMat : carouselCreamMat);
+      scallop.name = `TOY_PARK_CAROUSEL_SCALLOPED_CANOPY_EDGE_${i}`;
+      scallop.position.set(Math.cos(angle) * 4.8, 4.78, Math.sin(angle) * 4.8);
+      scallop.scale.set(1.05, 0.42, 0.72);
+      addCarouselMesh(carouselGroup, scallop, 'carousel-rounded-scalloped-canopy-edge', { scallopIndex: i });
+    }
+    const topBallOutline = new THREE.Mesh(new THREE.SphereGeometry(0.72, 24, 16), carouselBrownOutlineMat);
+    topBallOutline.name = 'TOY_PARK_CAROUSEL_TOP_BALL_BROWN_OUTLINE';
+    topBallOutline.position.y = 7.74;
+    addCarouselMesh(carouselGroup, topBallOutline, 'carousel-top-ball-brown-outline');
+    const topBall = new THREE.Mesh(new THREE.SphereGeometry(0.58, 24, 16), carouselPinkMat);
+    topBall.name = 'TOY_PARK_CAROUSEL_TOP_PINK_BALL';
+    topBall.position.y = 7.78;
+    addCarouselMesh(carouselGroup, topBall, 'carousel-top-pink-ball');
+    const topHighlight = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 8), carouselCreamMat);
+    topHighlight.name = 'TOY_PARK_CAROUSEL_TOP_BALL_SOFT_HIGHLIGHT';
+    topHighlight.position.set(-0.18, 8.05, 0.36);
+    topHighlight.scale.set(1.25, 0.72, 0.48);
+    addCarouselMesh(carouselGroup, topHighlight, 'carousel-top-ball-painted-highlight');
+
+    const createCarouselHorse = (index, angle, bob = 0) => {
+      const horse = new THREE.Group();
+      horse.name = `TOY_PARK_CAROUSEL_CANDY_HORSE_${index}`;
+      const paletteIndex = (index - 1) % carouselCandyHorseBodyMats.length;
+      const horseBodyMat = carouselCandyHorseBodyMats[paletteIndex];
+      const horseHeadMat = carouselCandyHorseHeadMats[paletteIndex];
+      const horseManeMat = carouselCandyHorseManeMats[paletteIndex];
+      const horseSaddleMat = carouselCandySaddleMats[paletteIndex];
+      const horseSaddleSpotMat = carouselCandySaddleSpotMats[paletteIndex];
+      const candyPaletteNames = ['strawberry-pink-lemon', 'cotton-candy-blue-grape', 'mint-lime-orange-sherbet'];
+      const horseOrbitRadius = carouselHorseOrbitRadius;
+      const horseYaw = Math.PI / 2 - angle;
+      const horseDeckY = carouselDeckY;
+      const horseBodyCenterY = 2.22 + bob * 0.12;
+      horse.position.set(Math.cos(angle) * horseOrbitRadius, horseBodyCenterY, Math.sin(angle) * horseOrbitRadius);
+      horse.rotation.y = horseYaw;
+      const horseDeckLocalY = horseDeckY - horseBodyCenterY;
+      horse.userData = {
+        type: 'toy-park-carousel-horse',
+        component: 'carousel-candy-colored-horse-with-bright-saddle',
+        candyColorPalette: candyPaletteNames[paletteIndex],
+        candyColorBody: horseBodyMat.userData?.materialStyle || null,
+        candyColorHead: horseHeadMat.userData?.materialStyle || null,
+        candyColorManeTail: horseManeMat.userData?.materialStyle || null,
+        candyColorSaddle: horseSaddleMat.userData?.materialStyle || null,
+        horseOrbitRadius,
+        horseOrbitAngle: angle,
+        horseOrbitDegrees: Number((angle * 180 / Math.PI).toFixed(3)),
+        horseYaw,
+        horseYawDegrees: Number((horseYaw * 180 / Math.PI).toFixed(3)),
+        horseDeckY,
+        horseBodyCenterY: Number(horseBodyCenterY.toFixed(3)),
+        horseDeckLocalY: Number(horseDeckLocalY.toFixed(3)),
+        horseHoofContactY: Number((horseDeckLocalY + 0.05).toFixed(3)),
+        horseConnectedToRideFloor: true,
+        verticalPoleConnectsCanopyUndersideToBase: true,
+        verticalPoleClippedBelowCanopy: true,
+        poleDoesNotPierceCanopyRoof: true,
+        orbitCenteredOnCarouselPivot: true,
+        evenlySpacedAroundCarouselCenter: true,
+        orbitSpacingDegrees: 120,
+        facesTangentialCarouselDirection: true,
+        visualOnly: true,
+        noPhysics: true,
+        outsideTrack: true,
+        scopedToToyPark: true,
+      };
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, carouselHorsePoleHeight, 16), carouselBrownOutlineMat);
+      pole.name = `${horse.name}_POLE_STOPS_BELOW_CANOPY_UNDERSIDE_AND_TOUCHES_RAISED_BASE`;
+      pole.position.y = carouselHorsePoleCenterY - horseBodyCenterY;
+      addCarouselMesh(horse, pole, 'carousel-horse-pole-clipped-below-canopy-no-roof-pierce', {
+        horseIndex: index,
+        touchesVisibleBase: true,
+        touchesCanopyUnderside: true,
+        doesNotPierceCanopyRoof: true,
+        poleBottomY: Number(carouselHorsePoleBottomY.toFixed(3)),
+        poleTopY: Number(carouselHorsePoleTopY.toFixed(3)),
+      });
+      const bodyOutline = new THREE.Mesh(new THREE.SphereGeometry(0.72, 18, 12), carouselBrownOutlineMat);
+      bodyOutline.name = `${horse.name}_BODY_BROWN_OUTLINE`;
+      bodyOutline.position.set(0, 0.15, 0);
+      bodyOutline.scale.set(1.45, 0.72, 0.56);
+      addCarouselMesh(horse, bodyOutline, 'carousel-horse-body-brown-outline', { horseIndex: index });
+      const body = new THREE.Mesh(new THREE.SphereGeometry(0.62, 18, 12), horseBodyMat);
+      body.name = `${horse.name}_ROUNDED_CANDY_COLORED_BODY`;
+      body.position.set(0, 0.18, 0.02);
+      body.scale.set(1.42, 0.66, 0.5);
+      addCarouselMesh(horse, body, 'carousel-horse-rounded-candy-colored-body', { horseIndex: index, candyPalette: candyPaletteNames[paletteIndex] });
+      const headOutline = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 10), carouselBrownOutlineMat);
+      headOutline.name = `${horse.name}_HEAD_BROWN_OUTLINE`;
+      headOutline.position.set(-0.82, 0.52, 0.03);
+      headOutline.scale.set(0.72, 0.92, 0.52);
+      addCarouselMesh(horse, headOutline, 'carousel-horse-head-brown-outline', { horseIndex: index });
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.36, 16, 10), horseHeadMat);
+      head.name = `${horse.name}_ROUNDED_CANDY_CREAM_HEAD`;
+      head.position.set(-0.86, 0.53, 0.06);
+      head.scale.set(0.72, 0.9, 0.5);
+      addCarouselMesh(horse, head, 'carousel-horse-rounded-candy-cream-head', { horseIndex: index, candyPalette: candyPaletteNames[paletteIndex] });
+      const mane = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 8), horseManeMat);
+      mane.name = `${horse.name}_BRIGHT_CANDY_MANE`; mane.position.set(-0.5, 0.68, -0.02); mane.scale.set(0.7, 1.35, 0.32);
+      addCarouselMesh(horse, mane, 'carousel-horse-bright-candy-mane', { horseIndex: index, candyPalette: candyPaletteNames[paletteIndex] });
+      const tail = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8), horseManeMat);
+      tail.name = `${horse.name}_BRIGHT_CANDY_TAIL`; tail.position.set(0.92, 0.24, 0); tail.scale.set(0.45, 1.0, 0.34); tail.rotation.z = -0.55;
+      addCarouselMesh(horse, tail, 'carousel-horse-bright-candy-tail', { horseIndex: index, candyPalette: candyPaletteNames[paletteIndex] });
+      const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.12, 0.58), horseSaddleMat);
+      saddle.name = `${horse.name}_BRIGHT_CANDY_SADDLE`; saddle.position.set(0.08, 0.66, 0.04); saddle.rotation.z = 0.04;
+      addCarouselMesh(horse, saddle, 'carousel-horse-bright-candy-saddle', { horseIndex: index, candyPalette: candyPaletteNames[paletteIndex] });
+      for (let s = 0; s < 3; s += 1) {
+        const spot = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 6), horseSaddleSpotMat);
+        spot.name = `${horse.name}_CONTRAST_CANDY_SADDLE_SPOT_${s}`;
+        spot.position.set(-0.18 + s * 0.18, 0.74, 0.34);
+        spot.scale.set(1, 0.2, 1);
+        addCarouselMesh(horse, spot, 'carousel-horse-contrast-candy-saddle-spot', { horseIndex: index, spotIndex: s, candyPalette: candyPaletteNames[paletteIndex] });
+      }
+      const legPositions = [
+        [-0.48, -0.44, 0.22, -0.42],
+        [-0.18, -0.43, -0.2, 0.38],
+        [0.34, -0.43, 0.22, 0.42],
+        [0.62, -0.44, -0.2, -0.34],
+      ];
+      legPositions.forEach(([x, y, z, rot], legIndex) => {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 0.74, 10), horseHeadMat);
+        leg.name = `${horse.name}_ROUNDED_CANDY_CREAM_PRANCING_LEG_${legIndex}`;
+        leg.position.set(x, y, z);
+        leg.rotation.z = rot;
+        addCarouselMesh(horse, leg, 'carousel-horse-rounded-candy-cream-prancing-leg', { horseIndex: index, legIndex, candyPalette: candyPaletteNames[paletteIndex] });
+      });
+      const hoofPositions = [
+        [-0.56, horseDeckLocalY + 0.075, 0.25],
+        [-0.22, horseDeckLocalY + 0.075, -0.23],
+        [0.38, horseDeckLocalY + 0.075, 0.24],
+        [0.72, horseDeckLocalY + 0.075, -0.22],
+      ];
+      hoofPositions.forEach(([x, y, z], hoofIndex) => {
+        const hoof = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 8), carouselBrownOutlineMat);
+        hoof.name = `${horse.name}_BROWN_HOOF_TOUCHING_CAROUSEL_RIDE_FLOOR_${hoofIndex}`;
+        hoof.position.set(x, y, z);
+        hoof.scale.set(1.12, 0.34, 0.82);
+        addCarouselMesh(horse, hoof, 'carousel-horse-hoof-touching-visible-ride-floor', { horseIndex: index, hoofIndex, touchesVisibleBase: true });
+      });
+      const horseFloorPad = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.76, 0.08, 28), carouselBrownOutlineMat);
+      horseFloorPad.name = `${horse.name}_ROUND_MOUNT_PAD_ON_RAISED_VISIBLE_RIDE_FLOOR`;
+      horseFloorPad.position.y = horseDeckLocalY + 0.035;
+      horseFloorPad.scale.z = 0.72;
+      addCarouselMesh(horse, horseFloorPad, 'carousel-horse-round-mount-pad-on-visible-ride-floor', { horseIndex: index, touchesVisibleBase: true });
+      return horse;
+    };
+    const carouselHorseRig = new THREE.Group();
+    carouselHorseRig.name = 'TOY_PARK_CAROUSEL_HORSE_ORBIT_RIG_ROTATES_AROUND_CENTER_AXIS';
+    carouselHorseRig.userData = {
+      type: 'toy-park-carousel-horse-orbit-rig',
+      component: 'carousel-horses-orbiting-central-axis',
+      visualOnly: true,
+      noPhysics: true,
+      outsideTrack: true,
+      scopedToToyPark: true,
+      rotatesAroundCarouselCenterAxis: true,
+      idleRotationEnabled: true,
+      idleRotationSpeedRadiansPerSecond: 0.38,
+      horseCount: 3,
+      orbitRadius: carouselHorseOrbitRadius,
+    };
+    carouselGroup.add(carouselHorseRig);
+    const carouselHorseAngles = [-Math.PI / 2, Math.PI / 6, (5 * Math.PI) / 6];
+    carouselHorseAngles.forEach((angle, index) => {
+      carouselHorseRig.add(createCarouselHorse(index + 1, angle, [0.18, -0.08, 0.08][index]));
+    });
+    this.toyParkAnimatedDecorations.push({
+      type: 'carousel-horse-orbit-rig',
+      group: carouselHorseRig,
+      speed: carouselHorseRig.userData.idleRotationSpeedRadiansPerSecond,
+    });
+
+    carouselGroup.userData = {
+      type: 'toy-park-carousel-decoration',
+      category: 'large-cartoon-toy-carousel',
+      visualOnly: true,
+      noPhysics: true,
+      outsideTrack: true,
+      scopedToToyPark: true,
+      carouselStyle: 'reference-image-pastel-cartoon-toy-carousel-thick-warm-brown-outline',
+      referenceStyle: 'pink-white-scalloped-canopy-star-band-top-pink-ball-three-white-horses-aqua-spotted-saddles-layered-oval-base',
+      closerMobilePreview: true,
+      movedCloserForUserScreenshotReview: true,
+      carouselScaleFactor: Number(carouselScale.toFixed(3)),
+      mobileReadablePose: 'poseAt-0.56-side-right-inside-track-loop-offset-16-along-minus-6',
+      placedInsideTrackLoop: true,
+      placementSide: 'inside-track-loop',
+      horseCount: 3,
+      horseColorStyle: 'bright-candy-pastel-horses-not-plain-white',
+      horseCandyPaletteNames: ['strawberry-pink-lemon', 'cotton-candy-blue-grape', 'mint-lime-orange-sherbet'],
+      horseCandyBodyColors: ['#ff8fca', '#8ee8ff', '#c7ff8e'],
+      horseCandyAccentColors: ['#ffd23f', '#b27cff', '#ff8a4c'],
+      horseCandySaddleColors: ['#55e6ff', '#ff73d2', '#ffe761'],
+      horseOrbitRadius: 3.25,
+      horseOrbitAnglesDegrees: carouselHorseAngles.map((angle) => Number((angle * 180 / Math.PI).toFixed(3))),
+      horseOrbitSpacingDegrees: 120,
+      horsesEvenlySpacedAroundCenter: true,
+      horsesFaceTangentialCarouselDirection: true,
+      horsesConnectedToVisibleBase: true,
+      horsePoleTouchesBaseAndCanopy: true,
+      horsePolesStopBelowCanopyUndersideNoRoofPierce: true,
+      horsePoleTopY: Number(carouselHorsePoleTopY.toFixed(3)),
+      horsePoleBottomY: Number(carouselHorsePoleBottomY.toFixed(3)),
+      horseHoovesTouchVisibleRideFloor: true,
+      visibleLayeredBaseRestored: true,
+      raisedTallBaseForMobileVisibility: true,
+      visibleHorseOrbitRingOnBase: true,
+      visibleRideFloorRing: true,
+      visibleCenterRoundTile: true,
+      canopyPanelCount,
+      canopyStars: 8,
+      scallopedCanopyEdgeCount: 14,
+      staticPreviewOnly: false,
+      idleRotationEnabled: true,
+      horseOrbitRigRotatesAroundCenterAxis: true,
+      horseOrbitRotationSpeedRadiansPerSecond: 0.38,
+      trackEdgeSafetyClearance: carouselPose.trackEdgeClearance,
+      trackEdgeSafetyClearanceRequired: donutTrackEdgeSafetyClearance,
+      spectatorSafetyClearance: donutSpectatorSafetyClearance,
+      startSpectatorKeepoutProgressRatio: carouselPose.startSpectatorKeepoutProgressRatio,
+      placementSafetyPolicy: 'all-decorations-keep-clear-of-track-edge-start-board-spectator-stands-windmill-spinner-circle-and-other-decorations',
+      requestedProgressRatio: carouselPose.requestedRatio,
+      safeProgressRatio: carouselPose.safeRatio,
+      requestedTrackOffset: carouselPose.requestedOffset,
+      safeTrackOffset: carouselPose.safeOffset,
+      decorationFootprintRadius: Number(carouselFootprintRadius.toFixed(3)),
+      windmillTrackSafeZone: carouselSafeZones.windmillTrackSafeZone,
+      decorationOverlapSafeZone: carouselSafeZones.decorationOverlapSafeZone,
+    };
+    carouselGroup.traverse((child) => {
+      child.userData = {
+        ...(child.userData || {}),
+        parentDecorationType: child === carouselGroup ? undefined : 'toy-park-carousel-decoration',
+        visualOnly: true,
+        noPhysics: true,
+        outsideTrack: true,
+        scopedToToyPark: true,
+      };
+    });
+    donutGroup.add(carouselGroup);
+
+    const dynamicDecorationSafetyBuffer = 1.25;
+    const dynamicTrackSafetySampleStep = 1.2;
+    const dynamicTrackSafetySamples = [];
+    const trackLengthForSafety = Math.max(0.01, Number(this.trackLength) || 0.01);
+    const trackSafetySampleCount = Math.max(2, Math.ceil(trackLengthForSafety / dynamicTrackSafetySampleStep));
+    for (let index = 0; index <= trackSafetySampleCount; index += 1) {
+      const distance = clamp((index / trackSafetySampleCount) * trackLengthForSafety, 0, trackLengthForSafety);
+      const frame = this.getTrackFrameAt(distance);
+      const width = this.getTrackWidthAt(distance) || this.trackWidth || 6;
+      dynamicTrackSafetySamples.push({
+        index,
+        distance,
+        x: frame.p.x,
+        z: frame.p.z,
+        width,
+        radius: width / 2,
+      });
+    }
+    const dynamicDecorationFootprints = [];
+    const measuredDecorationGroups = donutGroup.children.filter((child) => child?.isObject3D);
+    const getDecorationPlacementPriority = (group) => (
+      group?.userData?.type === 'toy-park-carousel-decoration' || group?.name === 'TOY_PARK_CAROUSEL_LARGE_DECORATION_CARTOON_TOY'
+        ? -100
+        : 0
+    );
+    const orderedDecorationGroups = [...measuredDecorationGroups].sort((left, right) => {
+      const priorityDelta = getDecorationPlacementPriority(left) - getDecorationPlacementPriority(right);
+      if (priorityDelta !== 0) return priorityDelta;
+      return measuredDecorationGroups.indexOf(left) - measuredDecorationGroups.indexOf(right);
+    });
+    const placeCarouselAtInnerMiddle = (group, footprintRadius = 0) => {
+      if (!group || !dynamicTrackSafetySamples.length) return null;
+      const centroid = dynamicTrackSafetySamples.reduce((sum, sample) => {
+        sum.x += sample.x;
+        sum.z += sample.z;
+        return sum;
+      }, { x: 0, z: 0 });
+      centroid.x /= dynamicTrackSafetySamples.length;
+      centroid.z /= dynamicTrackSafetySamples.length;
+      const nearest = dynamicTrackSafetySamples
+        .map((sample) => ({
+          sample,
+          dx: centroid.x - sample.x,
+          dz: centroid.z - sample.z,
+          distance: Math.hypot(centroid.x - sample.x, centroid.z - sample.z),
+        }))
+        .sort((left, right) => left.distance - right.distance)[0];
+      const required = Math.max(0, footprintRadius) + (nearest?.sample?.radius || 0) + dynamicDecorationSafetyBuffer;
+      let x = centroid.x;
+      let z = centroid.z;
+      let clearance = nearest ? nearest.distance - required : null;
+      if (nearest && clearance < 0) {
+        const fallbackFrame = this.getTrackFrameAt(nearest.sample.distance);
+        const direction = nearest.distance > 0.001
+          ? new THREE.Vector3(nearest.dx / nearest.distance, 0, nearest.dz / nearest.distance)
+          : fallbackFrame.right.clone().normalize();
+        x += direction.x * (-clearance + 0.25);
+        z += direction.z * (-clearance + 0.25);
+        clearance = 0.25;
+      }
+      group.position.x = x;
+      group.position.z = z;
+      const nearestFrame = nearest ? this.getTrackFrameAt(nearest.sample.distance) : null;
+      if (nearestFrame) group.rotation.y = Math.atan2(nearestFrame.tangent.x, nearestFrame.tangent.z) + Math.PI;
+      group.userData = {
+        ...(group.userData || {}),
+        placedFirstDecoration: true,
+        placementOrder: 0,
+        placementRole: 'primary-inner-middle-carousel-before-other-decorations',
+        placementPolicy: 'track-safe-zone-recalculated-after-generated-track-before-decoration-placement-carousel-first-then-other-decorations-avoid-track-safe-zone-and-existing-decoration-footprints',
+        innerMiddlePlacement: {
+          source: 'dynamic-track-safety-sample-centroid-after-track-generation',
+          centroidX: Number(centroid.x.toFixed(3)),
+          centroidZ: Number(centroid.z.toFixed(3)),
+          finalX: Number(group.position.x.toFixed(3)),
+          finalZ: Number(group.position.z.toFixed(3)),
+          nearestTrackDistance: nearest ? Number(nearest.sample.distance.toFixed(2)) : null,
+          requiredTrackCenterDistance: nearest ? Number(required.toFixed(3)) : null,
+          finalTrackClearance: clearance == null ? null : Number(clearance.toFixed(3)),
+        },
+      };
+      return group.userData.innerMiddlePlacement;
+    };
+    const measureDecorationFootprint = (group, label) => {
+      group.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(group);
+      const size = new THREE.Vector3();
+      const center = new THREE.Vector3();
+      box.getSize(size);
+      box.getCenter(center);
+      const radius = Math.max(0.001, Math.hypot(size.x, size.z) / 2);
+      const footprint = {
+        label,
+        type: group.userData?.type || group.name || 'toy-park-decoration',
+        x: group.position.x,
+        z: group.position.z,
+        centerX: center.x,
+        centerZ: center.z,
+        width: size.x,
+        depth: size.z,
+        height: size.y,
+        radius,
+      };
+      group.userData = {
+        ...(group.userData || {}),
+        dynamicDecorationFootprint: {
+          policy: 'measured-from-live-world-bounding-box-after-geometry-is-built-and-scaled',
+          width: Number(size.x.toFixed(3)),
+          depth: Number(size.z.toFixed(3)),
+          height: Number(size.y.toFixed(3)),
+          radius: Number(radius.toFixed(3)),
+          centerX: Number(center.x.toFixed(3)),
+          centerZ: Number(center.z.toFixed(3)),
+        },
+        decorationFootprintRadius: Number(radius.toFixed(3)),
+        decorationFootprintPolicy: 'dynamic-world-bounds-not-hardcoded-authoring-radius',
+      };
+      return footprint;
+    };
+    const applyDynamicTrackSafeZone = (group, footprint, label) => {
+      const checks = [];
+      let adjusted = false;
+      for (let pass = 0; pass < 4; pass += 1) {
+        let worst = null;
+        dynamicTrackSafetySamples.forEach((sample) => {
+          const dx = group.position.x - sample.x;
+          const dz = group.position.z - sample.z;
+          const distance = Math.hypot(dx, dz);
+          const required = footprint.radius + sample.radius + dynamicDecorationSafetyBuffer;
+          const clearance = distance - required;
+          if (!worst || clearance < worst.clearance) {
+            worst = { sample, dx, dz, distance, required, clearance };
+          }
+        });
+        if (!worst || worst.clearance >= 0) break;
+        const fallbackFrame = this.getTrackFrameAt(worst.sample.distance);
+        const direction = worst.distance > 0.001
+          ? new THREE.Vector3(worst.dx / worst.distance, 0, worst.dz / worst.distance)
+          : fallbackFrame.right.clone().normalize();
+        group.position.add(direction.multiplyScalar(-worst.clearance + 0.25));
+        adjusted = true;
+      }
+      const nearest = dynamicTrackSafetySamples
+        .map((sample) => {
+          const dx = group.position.x - sample.x;
+          const dz = group.position.z - sample.z;
+          const distance = Math.hypot(dx, dz);
+          const required = footprint.radius + sample.radius + dynamicDecorationSafetyBuffer;
+          return {
+            sampleIndex: sample.index,
+            distanceOnTrack: Number(sample.distance.toFixed(2)),
+            trackSafeRadius: Number(sample.radius.toFixed(3)),
+            decorationRadius: Number(footprint.radius.toFixed(3)),
+            requiredCenterDistance: Number(required.toFixed(3)),
+            finalCenterDistance: Number(distance.toFixed(3)),
+            finalClearance: Number((distance - required).toFixed(3)),
+          };
+        })
+        .sort((left, right) => left.finalClearance - right.finalClearance)
+        .slice(0, 3);
+      const result = {
+        label,
+        adjusted,
+        policy: 'each-decoration-world-footprint-keeps-clear-of-every-dynamic-track-centerline-safe-zone-sample',
+        sampleStep: dynamicTrackSafetySampleStep,
+        sampleCount: dynamicTrackSafetySamples.length,
+        visualBuffer: dynamicDecorationSafetyBuffer,
+        minClearance: nearest.length ? nearest[0].finalClearance : null,
+        nearest,
+      };
+      group.userData.dynamicTrackSafeZone = result;
+      return result;
+    };
+    const applyDynamicDecorationSafeZone = (group, footprint, label) => {
+      const checks = [];
+      let adjusted = false;
+      dynamicDecorationFootprints.forEach((placed) => {
+        const dx = group.position.x - placed.x;
+        const dz = group.position.z - placed.z;
+        const distance = Math.hypot(dx, dz);
+        const required = footprint.radius + placed.radius + dynamicDecorationSafetyBuffer;
+        let clearance = distance - required;
+        if (clearance < 0) {
+          const direction = distance > 0.001
+            ? new THREE.Vector3(dx / distance, 0, dz / distance)
+            : new THREE.Vector3(1, 0, 0);
+          group.position.add(direction.multiplyScalar(-clearance + 0.25));
+          adjusted = true;
+          clearance = 0.25;
+        }
+        checks.push({
+          against: placed.label,
+          otherRadius: Number(placed.radius.toFixed(3)),
+          decorationRadius: Number(footprint.radius.toFixed(3)),
+          requiredCenterDistance: Number(required.toFixed(3)),
+          finalCenterDistance: Number(Math.hypot(group.position.x - placed.x, group.position.z - placed.z).toFixed(3)),
+          finalClearance: Number(clearance.toFixed(3)),
+        });
+      });
+      const result = {
+        label,
+        adjusted,
+        policy: 'each-decoration-world-footprint-keeps-clear-of-other-measured-decoration-footprints',
+        visualBuffer: dynamicDecorationSafetyBuffer,
+        comparedAgainstCount: dynamicDecorationFootprints.length,
+        minClearance: checks.length ? Number(Math.min(...checks.map((check) => check.finalClearance)).toFixed(3)) : null,
+        checks,
+      };
+      group.userData.dynamicDecorationOverlapSafeZone = result;
+      return result;
+    };
+    const dynamicDecorationSafeZoneResults = orderedDecorationGroups.map((group, index) => {
+      const label = group.userData?.category || group.name || `toy-park-decoration-${index}`;
+      const initialFootprint = measureDecorationFootprint(group, label);
+      if (index === 0 && (group.userData?.type === 'toy-park-carousel-decoration' || group.name === 'TOY_PARK_CAROUSEL_LARGE_DECORATION_CARTOON_TOY')) {
+        placeCarouselAtInnerMiddle(group, initialFootprint.radius);
+      }
+      const footprintAfterPriorityPlacement = measureDecorationFootprint(group, label);
+      const trackSafeZone = applyDynamicTrackSafeZone(group, footprintAfterPriorityPlacement, label);
+      const overlapSafeZone = applyDynamicDecorationSafeZone(group, footprintAfterPriorityPlacement, label);
+      const finalFootprint = measureDecorationFootprint(group, label);
+      dynamicDecorationFootprints.push({
+        ...finalFootprint,
+        label,
+        radius: finalFootprint.radius,
+        x: group.position.x,
+        z: group.position.z,
+      });
+      group.userData.dynamicSafeZoneStored = true;
+      group.userData.dynamicSafeZoneStoragePolicy = 'stored-on-decoration-userData-and-trackStats-toyParkAmbientDecorations';
+      group.userData.placementOrder = index;
+      group.userData.placementSequencePolicy = index === 0
+        ? 'carousel-is-placed-first-at-inner-middle-after-track-safe-zone-recalculation'
+        : 'placed-after-carousel-avoiding-recalculated-track-safe-zone-and-existing-decoration-footprints';
+      return {
+        label,
+        type: finalFootprint.type,
+        placementOrder: index,
+        placedFirstDecoration: index === 0,
+        adjustedForTrack: trackSafeZone.adjusted,
+        adjustedForDecorations: overlapSafeZone.adjusted,
+        width: Number(finalFootprint.width.toFixed(3)),
+        depth: Number(finalFootprint.depth.toFixed(3)),
+        height: Number(finalFootprint.height.toFixed(3)),
+        radius: Number(finalFootprint.radius.toFixed(3)),
+        finalX: Number(group.position.x.toFixed(3)),
+        finalZ: Number(group.position.z.toFixed(3)),
+        trackMinClearance: trackSafeZone.minClearance,
+        decorationMinClearance: overlapSafeZone.minClearance,
+      };
+    });
+    const dynamicSafeZoneSummary = {
+      enabled: true,
+      policy: 'generated-track-safe-zone-is-recalculated-first-then-carousel-is-placed-first-at-inner-middle-and-other-decorations-avoid-track-safe-zone-plus-existing-decoration-footprints',
+      generationSequence: [
+        'build-generated-toy-park-track',
+        'recalculate-dynamic-track-safe-zone-samples',
+        'build-decoration-geometry-for-footprint-measurement',
+        'place-large-carousel-first-at-inner-middle',
+        'place-remaining-decorations-after-carousel-avoiding-track-safe-zone-and-existing-decoration-footprints',
+      ],
+      firstDecorationLabel: dynamicDecorationSafeZoneResults[0]?.label || null,
+      firstDecorationType: dynamicDecorationSafeZoneResults[0]?.type || null,
+      carouselFirst: dynamicDecorationSafeZoneResults[0]?.type === 'toy-park-carousel-decoration',
+      trackSampleStep: dynamicTrackSafetySampleStep,
+      trackSampleCount: dynamicTrackSafetySamples.length,
+      buffer: dynamicDecorationSafetyBuffer,
+      decorationCount: dynamicDecorationSafeZoneResults.length,
+      trackAdjustedCount: dynamicDecorationSafeZoneResults.filter((item) => item.adjustedForTrack).length,
+      decorationAdjustedCount: dynamicDecorationSafeZoneResults.filter((item) => item.adjustedForDecorations).length,
+      minTrackClearance: dynamicDecorationSafeZoneResults.length
+        ? Number(Math.min(...dynamicDecorationSafeZoneResults.map((item) => item.trackMinClearance ?? Infinity)).toFixed(3))
+        : null,
+      minDecorationClearance: dynamicDecorationSafeZoneResults.filter((item) => item.decorationMinClearance != null).length
+        ? Number(Math.min(...dynamicDecorationSafeZoneResults.filter((item) => item.decorationMinClearance != null).map((item) => item.decorationMinClearance)).toFixed(3))
+        : null,
+      decorations: dynamicDecorationSafeZoneResults,
+    };
+    donutGroup.userData.dynamicDecorationSafeZones = dynamicSafeZoneSummary;
+
+    this.decorationSummary = {
+      ...this.decorationSummary,
+      toyParkDonutDecorationGroups: donutSpecs.length,
+      toyParkDonutDecorations: donutSpecs.length * 2,
+      toyParkDonutSprinkles: donutSpecs.length * 28,
+      toyParkDonutIcingDrops: donutSpecs.length * 18,
+      toyParkDonutDiameterPolicy: 'outer-diameter-four-times-live-average-marble-diameter',
+      toyParkDonutAverageMarbleRadius: Number(marbleRadius.toFixed(3)),
+      toyParkDonutAverageMarbleDiameter: Number(marbleDiameter.toFixed(3)),
+      toyParkDonutOuterDiameter: Number(donutOuterDiameter.toFixed(3)),
+      toyParkDonutInnerDiameter: Number(donutInnerDiameter.toFixed(3)),
+      toyParkDonutInnerDiameterToMarbleDiameterRatio: Number((donutInnerDiameter / marbleDiameter).toFixed(3)),
+      toyParkDonutPairStyle: 'two-donuts-one-horizontal-one-thirty-degree-leaning',
+      toyParkDonutLeanAngleDegrees: 30,
+      toyParkDonutPairCenterSpacing: Number(donutPairCenterSpacing.toFixed(3)),
+      toyParkDonutPairDepthSpacing: Number(donutPairDepthSpacing.toFixed(3)),
+      toyParkDonutSpacingPolicy: 'wider-pair-spacing-to-reduce-leaning-donut-overlap',
+      toyParkDonutTrackEdgeSafetyClearanceRequired: donutTrackEdgeSafetyClearance,
+      toyParkDonutSpectatorSafetyClearance: donutSpectatorSafetyClearance,
+      toyParkDonutStartSpectatorKeepoutProgressRatio: donutStartSpectatorKeepoutProgressRatio,
+      toyParkDonutPlacementSafetyPolicy: 'all-decorations-keep-clear-of-track-edge-start-board-spectator-stands-windmill-spinner-circle-and-other-decorations',
+      toyParkDonutOutsideTrack: true,
+      toyParkDonutNoPhysics: true,
+      toyParkRainbowCakeSliceDecorations: rainbowCakeSliceDecorations,
+      toyParkMacaronPlateDecorations: macaronPlateDecorations,
+      toyParkMacaronCookieDecorations: macaronCookieDecorations,
+      toyParkMacaronPlateStyle: 'pastel-french-macarons-on-white-smooth-rim-plate-no-beads',
+      toyParkMacaronCookieStyle: 'multicolor-domed-round-double-shell-thin-filling-sandwich-macarons',
+      toyParkMacaronShapePolicy: 'circular-only-no-oval-no-tilt',
+      toyParkMacaronColorPalette: 'mixed-pastel-shells-thin-matched-contrast-fillings',
+      toyParkRainbowCakeSliceScalePolicy: 'similar-visible-scale-to-four-times-marble-diameter-donut',
+      toyParkRainbowCakeSliceSafetyPolicy: 'all-decorations-keep-clear-of-track-edge-start-board-spectator-stands-windmill-spinner-circle-and-other-decorations',
+      toyParkRainbowCakeSliceReferenceStyle: 'pastel-five-layer-dark-outline-cream-dollops-cherry-serving-base',
+      toyParkCarouselDecorations: carouselDecorations,
+      toyParkCarouselStyle: 'reference-image-pastel-cartoon-toy-carousel-thick-warm-brown-outline',
+      toyParkCarouselCloserMobilePreview: true,
+      toyParkCarouselMovedCloserForUserScreenshotReview: true,
+      toyParkCarouselScaleFactor: Number(carouselScale.toFixed(3)),
+      toyParkCarouselMobileReadablePose: 'poseAt-0.56-side-right-inside-track-loop-offset-16-along-minus-6',
+      toyParkCarouselPlacedInsideTrackLoop: true,
+      toyParkCarouselPlacementSide: 'inside-track-loop',
+      toyParkCarouselHorseCount: 3,
+      toyParkCarouselHorseColorStyle: 'bright-candy-pastel-horses-not-plain-white',
+      toyParkCarouselHorseCandyPaletteNames: ['strawberry-pink-lemon', 'cotton-candy-blue-grape', 'mint-lime-orange-sherbet'],
+      toyParkCarouselHorseCandyBodyColors: ['#ff8fca', '#8ee8ff', '#c7ff8e'],
+      toyParkCarouselHorseCandyAccentColors: ['#ffd23f', '#b27cff', '#ff8a4c'],
+      toyParkCarouselHorseCandySaddleColors: ['#55e6ff', '#ff73d2', '#ffe761'],
+      toyParkCarouselHorseOrbitSpacingDegrees: 120,
+      toyParkCarouselHorsesEvenlySpacedAroundCenter: true,
+      toyParkCarouselHorsesFaceTangentialCarouselDirection: true,
+      toyParkCarouselHorsesConnectedToVisibleBase: true,
+      toyParkCarouselHorsePoleTouchesBaseAndCanopy: true,
+      toyParkCarouselHorsePolesStopBelowCanopyUndersideNoRoofPierce: true,
+      toyParkCarouselHorsePoleTopY: Number(carouselHorsePoleTopY.toFixed(3)),
+      toyParkCarouselHorsePoleBottomY: Number(carouselHorsePoleBottomY.toFixed(3)),
+      toyParkCarouselHorseHoovesTouchVisibleRideFloor: true,
+      toyParkCarouselVisibleLayeredBaseRestored: true,
+      toyParkCarouselRaisedTallBaseForMobileVisibility: true,
+      toyParkCarouselVisibleHorseOrbitRingOnBase: true,
+      toyParkCarouselVisibleCenterRoundTile: true,
+      toyParkCarouselStaticPreviewOnly: false,
+      toyParkCarouselIdleRotationEnabled: true,
+      toyParkCarouselHorseOrbitRigRotatesAroundCenterAxis: true,
+      toyParkCarouselHorseOrbitRotationSpeedRadiansPerSecond: 0.38,
+      toyParkCarouselFootprintRadius: Number(carouselFootprintRadius.toFixed(3)),
+      toyParkDynamicDecorationSafeZones: dynamicSafeZoneSummary,
+      toyParkDynamicDecorationFootprintPolicy: dynamicSafeZoneSummary.policy,
+      toyParkDynamicDecorationSafeZoneTrackAdjustedCount: dynamicSafeZoneSummary.trackAdjustedCount,
+      toyParkDynamicDecorationSafeZoneDecorationAdjustedCount: dynamicSafeZoneSummary.decorationAdjustedCount,
+      toyParkDynamicDecorationSafeZoneMinTrackClearance: dynamicSafeZoneSummary.minTrackClearance,
+      toyParkDynamicDecorationSafeZoneMinDecorationClearance: dynamicSafeZoneSummary.minDecorationClearance,
+      toyParkAmbientDecorationDensity: 'donut-rainbow-cake-three-macaron-plates-plus-one-large-carousel-decoration',
+      toyParkAmbientDecorationStyle: 'cartoon-toy-park-dessert-props-plus-large-pastel-carousel-landmark',
+    };
+    if (this.trackStats) {
+      this.trackStats.toyParkAmbientDecorations = {
+        total: donutSpecs.length + lollipopMarkerPosts + rainbowCakeSliceDecorations + macaronPlateDecorations + carouselDecorations,
+        donutPairGroups: donutSpecs.length,
+        donutDecorations: donutSpecs.length * 2,
+        donutsPerGroup: 2,
+        donutSprinkles: donutSpecs.length * 28,
+        donutIcingDrops: donutSpecs.length * 18,
+        ambientClayDecorations: 0,
+        sidelineAccessoryCount: 0,
+        outsideTrack: true,
+        noPhysics: true,
+        density: 'donut-rainbow-cake-three-macaron-plates-plus-one-large-carousel-decoration-twelve-decoration-groups',
+        style: 'cartoon-toy-park-dessert-props-plus-large-pastel-carousel-landmark',
+        donutDiameterPolicy: 'outer-diameter-four-times-live-average-marble-diameter',
+        averageMarbleRadius: Number(marbleRadius.toFixed(3)),
+        averageMarbleDiameter: Number(marbleDiameter.toFixed(3)),
+        donutOuterDiameter: Number(donutOuterDiameter.toFixed(3)),
+        donutInnerDiameter: Number(donutInnerDiameter.toFixed(3)),
+        donutInnerDiameterToMarbleDiameterRatio: Number((donutInnerDiameter / marbleDiameter).toFixed(3)),
+        donutPairStyle: 'two-donuts-one-horizontal-one-thirty-degree-leaning',
+        leanAngleDegrees: 30,
+        donutPairCenterSpacing: Number(donutPairCenterSpacing.toFixed(3)),
+        donutPairDepthSpacing: Number(donutPairDepthSpacing.toFixed(3)),
+        spacingPolicy: 'wider-pair-spacing-to-reduce-leaning-donut-overlap',
+        trackEdgeSafetyClearanceRequired: donutTrackEdgeSafetyClearance,
+        spectatorSafetyClearance: donutSpectatorSafetyClearance,
+        startSpectatorKeepoutProgressRatio: donutStartSpectatorKeepoutProgressRatio,
+        placementSafetyPolicy: 'all-decorations-keep-clear-of-track-edge-start-board-spectator-stands-windmill-spinner-circle-and-other-decorations',
+        donutOuterDiameterToMarbleDiameterRatio: Number((donutOuterDiameter / marbleDiameter).toFixed(3)),
+        lollipopMarkerPosts: lollipopMarkerPosts,
+        lollipopMarkerPostStyle: lollipopMarkerPostStyle,
+        lollipopMarkerPostSafetyPolicy: 'removed-no-lollipop-decoration-footprints-to-place',
+        rainbowCakeSliceDecorations: rainbowCakeSliceDecorations,
+        macaronPlateDecorations: macaronPlateDecorations,
+        carouselDecorations: carouselDecorations,
+        carouselStyle: 'reference-image-pastel-cartoon-toy-carousel-thick-warm-brown-outline',
+        carouselCloserMobilePreview: true,
+        carouselMovedCloserForUserScreenshotReview: true,
+        carouselScaleFactor: Number(carouselScale.toFixed(3)),
+        carouselMobileReadablePose: 'poseAt-0.56-side-right-inside-track-loop-offset-16-along-minus-6',
+        carouselPlacedInsideTrackLoop: true,
+        carouselPlacementSide: 'inside-track-loop',
+        carouselReferenceStyle: 'pink-white-scalloped-canopy-star-band-top-pink-ball-three-bright-candy-colored-horses-layered-oval-base',
+        carouselHorseCount: 3,
+        carouselHorseColorStyle: 'bright-candy-pastel-horses-not-plain-white',
+        carouselHorseCandyPaletteNames: ['strawberry-pink-lemon', 'cotton-candy-blue-grape', 'mint-lime-orange-sherbet'],
+        carouselHorseCandyBodyColors: ['#ff8fca', '#8ee8ff', '#c7ff8e'],
+        carouselHorseCandyAccentColors: ['#ffd23f', '#b27cff', '#ff8a4c'],
+        carouselHorseCandySaddleColors: ['#55e6ff', '#ff73d2', '#ffe761'],
+        carouselHorseOrbitSpacingDegrees: 120,
+        carouselHorsesEvenlySpacedAroundCenter: true,
+        carouselHorsesFaceTangentialCarouselDirection: true,
+        carouselHorsesConnectedToVisibleBase: true,
+        carouselHorsePoleTouchesBaseAndCanopy: true,
+        carouselHorsePolesStopBelowCanopyUndersideNoRoofPierce: true,
+        carouselHorsePoleTopY: Number(carouselHorsePoleTopY.toFixed(3)),
+        carouselHorsePoleBottomY: Number(carouselHorsePoleBottomY.toFixed(3)),
+        carouselHorseHoovesTouchVisibleRideFloor: true,
+        carouselVisibleLayeredBaseRestored: true,
+        carouselRaisedTallBaseForMobileVisibility: true,
+        carouselVisibleHorseOrbitRingOnBase: true,
+        carouselVisibleRideFloorRing: true,
+        carouselVisibleCenterRoundTile: true,
+        carouselCanopyStars: 8,
+        carouselScallopedCanopyEdgeCount: 14,
+        carouselFootprintRadius: Number(carouselFootprintRadius.toFixed(3)),
+        dynamicDecorationSafeZones: dynamicSafeZoneSummary,
+        dynamicDecorationFootprintPolicy: dynamicSafeZoneSummary.policy,
+        dynamicDecorationSafeZoneTrackAdjustedCount: dynamicSafeZoneSummary.trackAdjustedCount,
+        dynamicDecorationSafeZoneDecorationAdjustedCount: dynamicSafeZoneSummary.decorationAdjustedCount,
+        dynamicDecorationSafeZoneMinTrackClearance: dynamicSafeZoneSummary.minTrackClearance,
+        dynamicDecorationSafeZoneMinDecorationClearance: dynamicSafeZoneSummary.minDecorationClearance,
+        carouselStaticPreviewOnly: false,
+        carouselIdleRotationEnabled: true,
+        carouselHorseOrbitRigRotatesAroundCenterAxis: true,
+        carouselHorseOrbitRotationSpeedRadiansPerSecond: 0.38,
+        macaronCookieDecorations: macaronCookieDecorations,
+        macaronPlateBeadDetails: macaronPlateBeadDetails,
+        macaronSpeckleDetails: macaronSpeckleDetails,
+        macaronPlateStyle: 'pastel-french-macarons-on-white-smooth-rim-plate-no-beads',
+        macaronCookieStyle: 'multicolor-domed-round-double-shell-thin-filling-sandwich-macarons',
+        macaronShapePolicy: 'circular-only-no-oval-no-tilt',
+        macaronSandwichLayers: 3,
+        macaronReferenceStyle: 'multicolor-macaron-pile-domed-shells-thin-filling-speckles-sprinkles',
+        macaronColorPalette: 'mixed-pastel-shells-thin-matched-contrast-fillings',
+        macaronSafetyPolicy: 'all-decorations-keep-clear-of-track-edge-start-board-spectator-stands-windmill-spinner-circle-and-other-decorations',
+        rainbowCakeSliceStyle: 'reference-style-pastel-five-layer-dark-outline-cake-slice',
+        rainbowCakeSliceScalePolicy: 'similar-visible-scale-to-four-times-marble-diameter-donut',
+        rainbowCakeSliceLength: Number(cakeSliceLength.toFixed(3)),
+        rainbowCakeSliceWidth: Number(cakeSliceWidth.toFixed(3)),
+        rainbowCakeSliceHeight: Number(cakeSliceHeight.toFixed(3)),
+        rainbowCakeSliceLengthToDonutOuterDiameterRatio: Number((cakeSliceLength / donutOuterDiameter).toFixed(3)),
+        rainbowCakeSliceSafetyPolicy: 'all-decorations-keep-clear-of-track-edge-start-board-spectator-stands-windmill-spinner-circle-and-other-decorations',
+        rainbowCakeSliceReferenceStyle: 'pastel-five-layer-dark-outline-cream-dollops-cherry-serving-base',
+        rainbowCakeSliceDarkOutline: true,
+        rainbowCakeSliceServingBase: true,
+        rainbowCakeSliceCreamDollops: 8,
+        rainbowCakeSliceCherryTopper: true,
+        rainbowCakeSliceFacingPolicy: 'rainbow-side-facing-track',
+        allDecorationSafeZonePolicy: 'track-edge-start-board-spectator-rectangle-windmill-spinner-circle-and-decoration-footprint-overlap-for-donuts-rainbow-cakes-macaron-plates-and-large-carousel',
+        allDecorationWindmillSafeZoneApplied: true,
+        allDecorationOverlapSafeZoneApplied: true,
+        decorationOverlapSafeZoneVisualBuffer: decorationOverlapBuffer,
+        decorationFootprintRegistryCount: placedDecorationFootprints.length,
+        decorationWindmillSafeZoneVisualBuffer: 2.6,
+        decorationWindmillSafeZoneFamilies: ['donut-pairs', 'rainbow-cake-slices', 'macaron-plates', 'large-carousel'],
+        rainbowCakeSliceRainbowSideFacingTrack: true,
+      };
+    }
   }
 
   createBroadcastMarkerTexture(label) {
@@ -12115,6 +14043,19 @@ class MarbleRace {
       }
     });
     this.trackStats.broadcastStageMarkers = sectors.length;
+  }
+
+  updateToyParkAnimatedDecorations(delta) {
+    if (!Array.isArray(this.toyParkAnimatedDecorations) || !this.toyParkAnimatedDecorations.length) return;
+    const safeDelta = Number.isFinite(delta) ? Math.min(Math.max(delta, 0), 0.05) : 0;
+    this.toyParkAnimatedDecorations.forEach((decor) => {
+      if (!decor?.group || !decor.group.parent) return;
+      if (decor.type === 'carousel-horse-orbit-rig') {
+        const speed = Number.isFinite(decor.speed) ? decor.speed : 0.38;
+        decor.group.rotation.y = (decor.group.rotation.y + safeDelta * speed) % (Math.PI * 2);
+        decor.group.userData.lastRotationY = Number(decor.group.rotation.y.toFixed(4));
+      }
+    });
   }
 
   createMarbleTrail(color, radius) {
@@ -12309,7 +14250,8 @@ class MarbleRace {
     const labelsAllowed = !MARBLE_LABEL_POLICY.showOnlyAfterRaceStart
       || this.state === 'running'
       || this.state === 'finished';
-    const topLabelIds = labelsAllowed ? this.refreshMarbleNameLabelSet(now, forceRanking) : new Set();
+    const renderAllLabels = MARBLE_LABEL_POLICY.alwaysShowAllLabels === true;
+    const topLabelIds = labelsAllowed && !renderAllLabels ? this.refreshMarbleNameLabelSet(now, forceRanking) : new Set();
     const scaleTargetUpdateMs = Math.max(0, this.performanceProfile?.nameLabelScaleTargetUpdateMs ?? PERFORMANCE_TUNING.nameLabelScaleTargetUpdateMs ?? 120);
     const refreshScaleTargets = forceScaleTarget || !scaleTargetUpdateMs || now - (this.lastNameLabelScaleTargetUpdate || 0) >= scaleTargetUpdateMs;
     if (refreshScaleTargets) {
@@ -12319,7 +14261,6 @@ class MarbleRace {
     const smoothing = clamp(this.performanceProfile?.nameLabelScaleSmoothing ?? PERFORMANCE_TUNING.nameLabelScaleSmoothing ?? 0.18, 0, 1);
     const positionThresholdSq = Math.max(0, this.performanceProfile?.nameLabelPositionWriteThresholdSq ?? PERFORMANCE_TUNING.nameLabelPositionWriteThresholdSq ?? 0.0004);
     const scaleWriteThreshold = Math.max(0, this.performanceProfile?.nameLabelScaleWriteThreshold ?? PERFORMANCE_TUNING.nameLabelScaleWriteThreshold ?? 0.005);
-    const renderAllLabels = false;
     let visibleCount = 0;
     this.uiThrottleCounters.labelTransformPasses += 1;
     this.marbleData.forEach((data) => {
@@ -12903,11 +14844,11 @@ class MarbleRace {
     const progressSuffix = pct != null && pct > 0 ? ` at ${pct}%` : '';
     switch (event.kind) {
       case 'overtake':
-        return primary && secondary ? `${primary} passes ${secondary}${progressSuffix}` : `${primary || 'Racer'} gains position${progressSuffix}`;
+        return primary && secondary ? `${primary} blasts past ${secondary}${progressSuffix}` : `${primary || 'Racer'} is charging up the order${progressSuffix}`;
       case 'leader':
-        return `${primary || 'Leader'} takes P1${progressSuffix}`;
+        return `${primary || 'Leader'} just grabbed first${progressSuffix}`;
       case 'battle':
-        return primary && secondary ? `${primary} battles ${secondary}${progressSuffix}` : `Close battle${progressSuffix}`;
+        return primary && secondary ? `${primary} and ${secondary} are way too close${progressSuffix}` : `This battle is getting spicy${progressSuffix}`;
       case 'obstacle':
         return `${primary || 'Racer'} hits trouble${progressSuffix}`;
       case 'finish':
@@ -12929,9 +14870,9 @@ class MarbleRace {
     const pct = Number.isFinite(progressValue) ? Math.round(clamp(progressValue, 0, 1) * 100) : null;
     const at = pct != null && pct > 0 ? ` at ${pct}%` : '';
     const templates = {
-      overtake: [base, `${primary} clears ${secondary}`, `${primary} moves up${at}`, `${primary} makes the pass`],
-      leader: [base, `${primary} grabs P1`, `${primary} leads${at}`, `${primary} sets the pace`],
-      battle: [base, `${primary} versus ${secondary}`, `${secondary} stays close`, `Pressure on ${primary}`],
+      overtake: [base, `${primary} blasts past ${secondary}`, `${primary} is flying now${at}`, `${primary} makes a massive move`],
+      leader: [base, `${primary} just grabbed first`, `${primary} is out front now${at}`, `${primary} has the pressure on`],
+      battle: [base, `${primary} and ${secondary} are way too close`, `${secondary} is right there`, `This battle is getting spicy`],
       obstacle: [base, `${primary} bounces wide`, `${primary} recovers${at}`, `${primary} takes contact`],
       finish: [base, `${primary} closes in`, `${primary} final push`, `${primary} near the line`],
       winner: [base, `${primary} takes the flag`, `${primary} wins it`, `${primary} seals the race`],
@@ -12973,8 +14914,8 @@ class MarbleRace {
     selected.sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
     const ranking = this.getRanking({ force: true }).slice(0, maxEvents);
     const fallbackEvents = ranking.map((data, index) => ({
-      title: index === 0 ? 'Winner' : `P${index + 1}`,
-      detail: index === 0 ? `${data.name} wins` : `${data.name} P${index + 1}`,
+      title: index === 0 ? 'Winner' : this.getSpokenPosition(index + 1),
+      detail: index === 0 ? `${data.name} wins` : `${data.name} ${this.getSpokenPosition(index + 1)}`,
       kind: index === 0 ? 'winner' : 'complete',
       time: this.elapsed,
       distance: clamp(data.distance || this.trackLength * (0.72 + index * 0.06), 0, this.trackLength),
@@ -13073,11 +15014,17 @@ class MarbleRace {
     return cleanLines[Math.abs(Math.round(rawSeed * 997)) % cleanLines.length];
   }
 
+  getSpokenPosition(rank = 1) {
+    const numeric = Math.max(1, Math.round(Number(rank) || 1));
+    const words = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+    return words[numeric - 1] || `${numeric}th`;
+  }
+
   buildPodiumResultLine(ranking = this.getPodiumRanking({ force: true })) {
     const podium = (ranking || []).filter((data) => data).slice(0, 3);
     if (!podium.length) return 'Final positions locked in';
     return podium
-      .map((data, index) => `${['1st', '2nd', '3rd'][index] || `#${index + 1}`} ${data.name || `Marble ${data.id + 1}`}`)
+      .map((data, index) => `${this.getSpokenPosition(index + 1)} ${data.name || `Marble ${data.id + 1}`}`)
       .join(', ');
   }
 
@@ -13282,9 +15229,9 @@ class MarbleRace {
     if (event.lines?.length) return this.pickShortActionLine(event.lines, detail || event.title, event.time || performance.now());
     const templates = {
       start: this.countdownStarterLines || ['The field is set', 'Ready for the rush', 'All eyes on the gate'],
-      leader: [detail || event.title || 'New leader', detail || 'Lead changes', detail || 'New P1'],
-      overtake: [detail || 'Overtake', detail || 'Move made', detail || 'Position gained'],
-      battle: [detail || 'Side by side', detail || 'Close fight', detail || 'Tight gap'],
+      leader: [detail || event.title || 'New leader', detail || 'Lead change, this race is heating up', detail || 'New first place, pressure is on'],
+      overtake: [detail || 'What a move', detail || 'Massive pass', detail || 'Position gained'],
+      battle: [detail || 'Way too close', detail || 'This battle is getting spicy', detail || 'No room at all'],
       obstacle: [detail || event.title || 'Contact', detail || 'Big bounce', detail || 'Track hit'],
       progress: [detail || 'Race progress', detail || 'Progress update', detail || 'Distance check'],
       speed: [detail || 'Speed check', detail || 'Pace shift', detail || 'Momentum change'],
@@ -13645,30 +15592,31 @@ class MarbleRace {
       if (frontOvertake && this.elapsed - (this.lastOvertakeAt || -Infinity) > 3.6) {
         const passed = topFive[frontOvertake.index + 1] || ranking.find((data) => data.id === previousIds[frontOvertake.index]);
         this.lastOvertakeAt = this.elapsed;
-        const position = `P${frontOvertake.index + 1}`;
+        const positionRank = frontOvertake.index + 1;
+        const position = this.getSpokenPosition(positionRank);
         const racerName = frontOvertake.data.name;
         const rivalName = passed?.name || '';
         const detail = passed && passed.id !== frontOvertake.data.id
-          ? `${racerName} slips into ${position}`
-          : `${racerName} climbs to ${position}`;
+          ? `${racerName} just blasted past ${rivalName} into ${position}`
+          : `${racerName} is charging up to ${position}`;
         const lines = passed && passed.id !== frontOvertake.data.id
           ? [
-              `${racerName} slips into ${position}`,
-              `${racerName} edges past ${rivalName}`,
-              `${racerName} steals ${position}`,
-              `${racerName} gets the run on ${rivalName}`,
-              `${racerName} jumps ahead`,
-              `${racerName} wins that duel`,
-              `${racerName} noses in front`,
-              `${racerName} finds a lane`,
+              `${racerName} just blasted past ${rivalName} into ${position}`,
+              `${racerName} finds the gap, what a move into ${position}`,
+              `${racerName} squeezes through, that is a massive pass`,
+              `${racerName} takes the lane and jumps to ${position}`,
+              `${racerName} has comeback energy and clears ${rivalName}`,
+              `${racerName} says excuse me and takes ${position}`,
+              `${racerName} slips through, unbelievable timing`,
+              `${racerName} is flying now and leaves ${rivalName} behind`,
             ]
           : [
-              `${racerName} climbs to ${position}`,
-              `${racerName} gains ground`,
-              `${racerName} moves up`,
-              `${racerName} into ${position}`,
-              `${racerName} makes progress`,
-              `${racerName} advances`,
+              `${racerName} is charging up to ${position}`,
+              `${racerName} gains a place, this race is heating up`,
+              `${racerName} climbs the order, do not blink`,
+              `${racerName} is now ${position}, pressure rising`,
+              `${racerName} keeps moving forward, huge momentum`,
+              `${racerName} is on the charge now`,
             ];
         this.pushBroadcastEvent('Overtake!', detail, { kind: 'overtake', force: true, marbleId: frontOvertake.data.id, rivalId: passed?.id ?? null, distance: frontOvertake.data.distance, progress: frontOvertake.data.progress, lines });
       }
@@ -13710,16 +15658,16 @@ class MarbleRace {
     if (!leader) return;
     if (leader.id !== this.lastBroadcastLeaderId && this.elapsed > 2.0) {
       this.lastBroadcastLeaderId = leader.id;
-      this.pushBroadcastEvent('New Leader', `${leader.name} leads`, { kind: 'leader', marbleId: leader.id, distance: leader.distance, progress: leader.progress, lines: [`${leader.name} leads`, `${leader.name} grabs P1`, `${leader.name} out front`, `${leader.name} sets the pace`, `${leader.name} owns the lead`] });
+      this.pushBroadcastEvent('New Leader', `${leader.name} just grabbed first`, { kind: 'leader', marbleId: leader.id, distance: leader.distance, progress: leader.progress, lines: [`${leader.name} just grabbed first`, `${leader.name} takes first, this race is heating up`, `${leader.name} is out front now, pressure is on`, `${leader.name} turns it around and leads`, `${leader.name} owns the lead, what a move`] });
     }
     const second = ranking.find((data) => !data.finished && data.id !== leader.id);
     if (second && !leader.finished && leader.distance - second.distance < 5 && this.elapsed - this.lastCloseBattleAt > 5) {
       this.lastCloseBattleAt = this.elapsed;
-      this.pushBroadcastEvent('Close Battle', `${leader.name} vs ${second.name}`, { kind: 'battle', marbleId: leader.id, rivalId: second.id, distance: leader.distance, progress: leader.progress, lines: [`${leader.name} vs ${second.name}`, `${second.name} closes in`, `${leader.name} holds on`] });
+      this.pushBroadcastEvent('Close Battle', `${leader.name} vs ${second.name}`, { kind: 'battle', marbleId: leader.id, rivalId: second.id, distance: leader.distance, progress: leader.progress, lines: [`${leader.name} and ${second.name} are way too close`, `${second.name} is right there, do not blink`, `${leader.name} has pressure all over them`, `One tiny mistake and this flips`] });
     }
     if (!leader.finished && leader.progress > 0.82 && this.elapsed - this.lastFinalStretchAt > 8) {
       this.lastFinalStretchAt = this.elapsed;
-      this.pushBroadcastEvent('Final Stretch', `${leader.name} closing`, { kind: 'finish', marbleId: leader.id, distance: leader.distance, progress: leader.progress, lines: [`${leader.name} closing`, `${leader.name} near finish`, `${leader.name} final push`] });
+      this.pushBroadcastEvent('Final Stretch', `${leader.name} closing`, { kind: 'finish', marbleId: leader.id, distance: leader.distance, progress: leader.progress, lines: [`Final stretch now, do not blink`, `${leader.name} can see the line, but the pack is coming`, `This could still flip at the finish`, `Last few meters, this is chaos`] });
     }
   }
 
@@ -13785,12 +15733,16 @@ class MarbleRace {
 
   updatePreFinishSlowMotionTrigger() {
     if (!FINISH_SLOW_MOTION.enabled || this.finishSlowMotion?.triggered || this.state !== 'running') return;
+    if (this.isToyParkViewerOverlayActive()) return;
     if (this.finishers.length > 0 || !this.marbleData.length) return;
     const finishThreshold = FINISH_LINE_RULE.threshold ?? 0.08;
     const triggerDistance = Math.max(finishThreshold + 0.4, FINISH_SLOW_MOTION.preFinishDistance ?? 8);
     const leader = this.getRanking({ force: false }).find((data) => !data.finished);
     if (!leader) return;
     const remaining = this.trackLength - (leader.distance || 0);
+    const totalLaps = Math.max(1, this.raceTotalLaps || 1);
+    const isFinalLapLeader = ((leader.completedLaps || 0) + 1) >= totalLaps;
+    if (!isFinalLapLeader) return;
     if (remaining <= triggerDistance && remaining > finishThreshold) {
       const slowMotionCameraHold = Math.max(
         FINISH_SLOW_MOTION.duration || 0,
@@ -14292,6 +16244,7 @@ class MarbleRace {
         labelSprite,
         body,
         finished: false, finishTime: null, defeated: false, defeatTime: null, defeatReason: null, progress: 0, distance: 0,
+        completedLaps: 0, currentLap: 1, raceDistance: 0,
         lastDistance: 0, lastMovementTime: 0, stuckResets: 0, lastResetTime: -Infinity,
         lastDriveMovementDistance: 0, lastDriveMovementTime: 0,
         lastForwardProgressPercent: 0, lastForwardProgressPercentTime: 0, lastProgressCheckDistance: 0,
@@ -16128,6 +18081,7 @@ class MarbleRace {
     const obstacleStartedAt = performance.now();
     this.updatePinballObstacles(delta);
     this.updateDropTargetBoostAuras(delta);
+    this.updateToyParkAnimatedDecorations(rawDelta);
     const obstacleMs = performance.now() - obstacleStartedAt;
     if (!this.performanceProfile?.renderSkipSpectacleEffects) this.updateSpectacleEffects(rawDelta);
     this.updatePodiumCeremony(rawDelta);
@@ -17119,6 +19073,11 @@ class MarbleRace {
       const velocity = new THREE.Vector3(data.body.velocity.x, data.body.velocity.y, data.body.velocity.z);
       const speedPresetMax = this.speedPreset.maxSpeed;
       const progress = clamp(driveDistance / Math.max(this.trackLength, 0.001), 0, 1);
+      const totalLaps = this.getToyParkOverlayTotalLaps?.() || this.raceTotalLaps || 1;
+      data.currentLap = this.getMarbleCurrentLap(data, totalLaps);
+      data.raceDistance = (data.completedLaps || 0) * (this.trackLapLength || this.trackLength || 0) + driveDistance;
+      data.raceProgress = clamp(data.raceDistance / Math.max(this.raceDistanceLength || this.trackLength, 0.001), 0, 1);
+      data.lapProgress = clamp(driveDistance / Math.max(this.trackLapLength || this.trackLength, 0.001), 0, 1);
       const distanceToFinish = Math.max(0, this.trackLength - driveDistance);
       const slopeTopSpeed = speedPresetMax * (this.slopeDrive?.maxSpeedRatio ?? 1);
       const baseMaxSpeed = progress > 0.88 ? slopeTopSpeed * (this.finalApproachAssist?.maxSpeedRatio || 1.02) : slopeTopSpeed;
@@ -17235,7 +19194,22 @@ class MarbleRace {
       }
 
       const beforeStartChuteHandoff = this.isMarbleBeforeStartChuteHandoff(data);
-      if (!beforeStartChuteHandoff && (data.body.position.y < frame.p.y - 5 || closest.lateralSq > (this.trackWidth * this.trackWidth * 3.2))) {
+      const localWidth = this.getTrackWidthAt(closest.distance);
+      const lateralDistance = Math.sqrt(Math.max(0, closest.lateralSq || 0));
+      const lateralFallLimit = localWidth / 2 + (FALL_RESPAWN_POLICY.trackEdgeMarginMeters ?? 0.85);
+      const verticalDropLimit = FALL_RESPAWN_POLICY.verticalDropMeters ?? 5;
+      const belowTrack = data.body.position.y < frame.p.y - verticalDropLimit;
+      const laterallyOffTrack = lateralDistance > lateralFallLimit;
+      data.offTrackDetection = {
+        belowTrack,
+        laterallyOffTrack,
+        lateralDistance: Number(lateralDistance.toFixed(3)),
+        lateralFallLimit: Number(lateralFallLimit.toFixed(3)),
+        localTrackWidth: Number(localWidth.toFixed(3)),
+        verticalDropLimit,
+        closestDistance: Number(closest.distance.toFixed(3)),
+      };
+      if (!beforeStartChuteHandoff && (belowTrack || laterallyOffTrack)) {
         this.scheduleFallRespawn(data, closest.distance);
         return;
       }
@@ -17281,6 +19255,7 @@ class MarbleRace {
     if (!data || data.pendingFallRespawn || data.finished || data.defeated || !data.body) return null;
     const progress = closest || this.findClosestProgress(data.body.position);
     if (!progress || !Number.isFinite(progress.distance)) return null;
+    if (this.shouldSuppressPostIntermediateLapFinishBand(data, progress.distance)) return null;
     const frame = this.getTrackFrameAt(progress.distance);
     const localWidth = this.getTrackWidthAt(progress.distance);
     const dx = data.body.position.x - frame.p.x;
@@ -17318,10 +19293,35 @@ class MarbleRace {
     return false;
   }
 
+  shouldSuppressPostIntermediateLapFinishBand(data, distance) {
+    if (!data || !Number.isFinite(distance) || !this.trackLength) return false;
+    if ((data.completedLaps || 0) <= 0) return false;
+    const sinceTransition = this.elapsed - (data.lastLapCompletedAt ?? -Infinity);
+    const holdSeconds = TOY_PARK_RACE_LAPS.postCrossingFinishBandHoldSeconds ?? 1.2;
+    if (sinceTransition > holdSeconds) return false;
+    const remaining = this.trackLength - distance;
+    const wrapBand = Math.max(
+      FINISH_LINE_RULE.threshold ?? 0.08,
+      TOY_PARK_RACE_LAPS.postCrossingWrapDistanceMeters ?? 8,
+    );
+    const suppress = remaining <= wrapBand;
+    if (suppress) {
+      data.postIntermediateLapFinishBandSuppressed = {
+        at: Number(this.elapsed.toFixed(3)),
+        distance: Number(distance.toFixed(3)),
+        remaining: Number(remaining.toFixed(3)),
+        completedLaps: data.completedLaps,
+        reason: 'preserve-live-physics-after-lap-crossing-without-re-snapping-distance-to-finish',
+      };
+    }
+    return suppress;
+  }
+
   getConfirmedFinishDistance(data, closest = null) {
     if (!data || data.pendingFallRespawn || data.finished || data.defeated || !data.body) return null;
     const progress = closest || this.findClosestProgress(data.body.position);
     if (!progress || !Number.isFinite(progress.distance)) return null;
+    if (this.shouldSuppressPostIntermediateLapFinishBand(data, progress.distance)) return null;
     const finishThreshold = FINISH_LINE_RULE.threshold ?? 0.08;
     if (progress.distance < this.trackLength - finishThreshold) return null;
     const frame = this.getTrackFrameAt(this.trackLength);
@@ -17519,7 +19519,12 @@ class MarbleRace {
         data.lastSafeDistanceBeforeFall = Math.max(data.lastSafeDistanceBeforeFall || 0, trackDistanceForSafety);
         data.distance = Math.max(data.distance || 0, trackDistanceForSafety);
       }
-      data.progress = clamp(data.distance / this.trackLength, 0, 1);
+      const raceDistance = (data.completedLaps || 0) * (this.trackLapLength || this.trackLength || 0) + (data.distance || 0);
+      data.raceDistance = raceDistance;
+      const totalLaps = this.getToyParkOverlayTotalLaps?.() || this.raceTotalLaps || 1;
+      data.currentLap = this.getMarbleCurrentLap(data, totalLaps);
+      data.lapProgress = clamp((data.distance || 0) / Math.max(this.trackLapLength || this.trackLength, 0.001), 0, 1);
+      data.progress = clamp(raceDistance / Math.max(this.raceDistanceLength || this.trackLength, 0.001), 0, 1);
       if (!data.finished && Number.isFinite(trackDistanceForSafety) && trackDistanceForSafety > (data.lastDistance || 0) + 0.45) {
         data.lastDistance = trackDistanceForSafety;
         data.lastMovementTime = this.elapsed;
@@ -17553,6 +19558,71 @@ class MarbleRace {
     this.marbleData.forEach((data) => {
       const finishThreshold = FINISH_LINE_RULE.threshold ?? 0.08;
       if (!data.finished && !data.defeated && !data.pendingFallRespawn && data.distance >= this.trackLength - finishThreshold) {
+        const totalLaps = Math.max(1, this.raceTotalLaps || 1);
+        const nextCompletedLaps = (data.completedLaps || 0) + 1;
+        const lapDistance = this.trackLapLength || this.trackLength || 0;
+        if (nextCompletedLaps < totalLaps) {
+          data.completedLaps = nextCompletedLaps;
+          data.currentLap = nextCompletedLaps + 1;
+          const crossingDistance = Math.max(data.distance || 0, this.trackLength);
+          const overflowDistance = Math.max(0, crossingDistance - this.trackLength);
+          const wrappedDistance = clamp(
+            overflowDistance,
+            0,
+            Math.max(0, TOY_PARK_RACE_LAPS.postCrossingWrapDistanceMeters ?? 8),
+          );
+          data.distance = wrappedDistance;
+          data.driveDistance = wrappedDistance;
+          data.lastDistance = wrappedDistance;
+          data.lastSafeDistanceBeforeFall = wrappedDistance;
+          data.lastDriveMovementDistance = wrappedDistance;
+          data.lastMovementTime = this.elapsed;
+          data.lastDriveMovementTime = this.elapsed;
+          data.raceDistance = nextCompletedLaps * lapDistance + wrappedDistance;
+          data.progress = clamp(data.raceDistance / Math.max(this.raceDistanceLength || this.trackLength, 0.001), 0, 1);
+          data.lapProgress = clamp(wrappedDistance / Math.max(lapDistance || this.trackLength, 0.001), 0, 1);
+          data.body.wakeUp();
+          data.lastLapCompletedAt = this.elapsed;
+          data.lastLapRestartReason = 'closed-course-lap-finish-line-crossing-preserve-live-physics';
+          data.lastLapTransitionPhysics = {
+            preservedBodyPosition: true,
+            preservedLinearVelocity: true,
+            preservedAngularVelocity: true,
+            preservedVisualQuaternion: true,
+            crossingDistance: Number(crossingDistance.toFixed(3)),
+            wrappedDistance: Number(wrappedDistance.toFixed(3)),
+            velocity: {
+              x: Number((data.body.velocity.x || 0).toFixed(3)),
+              y: Number((data.body.velocity.y || 0).toFixed(3)),
+              z: Number((data.body.velocity.z || 0).toFixed(3)),
+            },
+            angularVelocity: {
+              x: Number((data.body.angularVelocity.x || 0).toFixed(3)),
+              y: Number((data.body.angularVelocity.y || 0).toFixed(3)),
+              z: Number((data.body.angularVelocity.z || 0).toFixed(3)),
+            },
+            policy: TOY_PARK_RACE_LAPS.label,
+          };
+          this.defaultCameraPhaseUntil = 0;
+          this.lapTransitionCameraUntil = this.elapsed + (BROADCAST_CAMERA.lapTransitionCamera?.snapFollowSeconds ?? 1.2);
+          this.lapTransitionCameraFocusId = data.id;
+          this.lapTransitionCameraSnapState = {
+            active: true,
+            marbleId: data.id,
+            marbleName: data.name,
+            completedLaps: data.completedLaps,
+            currentLap: data.currentLap,
+            until: Number(this.lapTransitionCameraUntil.toFixed(2)),
+            reason: 'intermediate-lap-crossing-reset-to-cinematic-follow',
+            label: BROADCAST_CAMERA.lapTransitionCamera?.label,
+          };
+          return;
+        }
+        data.completedLaps = totalLaps;
+        data.currentLap = totalLaps;
+        data.distance = this.trackLength;
+        data.raceDistance = totalLaps * lapDistance;
+        data.progress = 1;
         data.finishTime = this.elapsed + (data.timePenalty || 0);
         data.body.linearDamping = 0.72;
         data.body.angularDamping = 0.78;
@@ -18070,6 +20140,11 @@ class MarbleRace {
         id: d.id,
         name: d.name,
         active: Boolean(d.forwardAccelerationActive),
+        completedLaps: d.completedLaps || 0,
+        currentLap: d.currentLap || 1,
+        raceDistance: d.raceDistance || d.distance || 0,
+        raceProgress: d.raceProgress ?? d.progress ?? 0,
+        lapProgress: d.lapProgress ?? null,
         closestProgressDistance: d.closestProgressDistance || 0,
         driveDistance: d.driveDistance || 0,
         guideDistance: d.guideDistance || 0,
@@ -18614,9 +20689,12 @@ class MarbleRace {
       canvasStartHook: this.startHookLastSummary || this.getStartHookState() || { active: false },
       postFirstFinishCamera: {
         config: BROADCAST_CAMERA.postFirstFinish,
+        lapTransitionConfig: BROADCAST_CAMERA.lapTransitionCamera,
         firstFinishTime: this.firstFinishTime || 0,
         defaultCameraPhaseUntil: this.defaultCameraPhaseUntil || 0,
+        lapTransitionCameraUntil: this.lapTransitionCameraUntil || 0,
         snapState: this.postFirstFinishCameraSnapState || null,
+        lapTransitionSnapState: this.lapTransitionCameraSnapState || null,
       },
       autoCameraDirector: BROADCAST_CAMERA.angleStyle,
       autoCameraOutOfBoundsIgnoreAfterSeconds: BROADCAST_CAMERA.outOfBoundsIgnoreAfterSeconds,
@@ -19273,6 +21351,13 @@ class MarbleRace {
     const leader = this.getAutoCameraRanking({ includeFinished: false })[0]
       || this.getAutoCameraRanking({ includeFinished: true })[0]
       || this.getRanking({ force: false })[0];
+    const lapTransitionActive = Boolean(
+      this.lapTransitionCameraUntil
+      && (this.elapsed || 0) < this.lapTransitionCameraUntil
+      && this.state === 'running'
+      && this.finishers.length === 0
+    );
+    if (lapTransitionActive) return 'cinematicLeader';
     if (this.finishSlowMotion?.active) return 'finish';
     if (this.state === 'finished') return this.isToyParkViewerOverlayActive()
       ? 'finish'
@@ -19287,10 +21372,6 @@ class MarbleRace {
     if (BROADCAST_CAMERA.highAngleBattleEnabled && this.getLeadBattleTarget()) return 'leadBattle';
     const leaderProgress = this.trackLength && leader ? clamp((leader.distance || 0) / this.trackLength, 0, 1) : 0;
     if (this.isToyParkViewerOverlayActive()) {
-      const remainingToFinish = this.trackLength && leader ? Math.max(0, this.trackLength - (leader.distance || 0)) : Infinity;
-      const finalProgress = BROADCAST_CAMERA.toyParkFinalApproachProgress ?? 0.94;
-      const finalDistance = BROADCAST_CAMERA.toyParkFinalApproachDistance ?? 15;
-      if (leaderProgress >= finalProgress || remainingToFinish <= finalDistance) return 'finish';
       const phaseSize = Math.max(0.01, BROADCAST_CAMERA.toyParkDefaultAlternatingPhaseSize || 0.2);
       const sequence = Array.isArray(BROADCAST_CAMERA.toyParkDefaultAlternatingSequence) && BROADCAST_CAMERA.toyParkDefaultAlternatingSequence.length
         ? BROADCAST_CAMERA.toyParkDefaultAlternatingSequence
@@ -19324,6 +21405,14 @@ class MarbleRace {
     }
     const previousActiveCameraMode = this.activeCameraMode || null;
     const activeCameraMode = this.replayHighlight?.active ? 'replayHighlight' : (requestedMode === 'default' ? this.getDefaultCameraMode() : requestedMode);
+    const shouldSnapLapTransitionCamera = Boolean(
+      this.lapTransitionCameraSnapState?.active
+      && this.lapTransitionCameraUntil
+      && (this.elapsed || 0) < this.lapTransitionCameraUntil
+      && previousActiveCameraMode === 'finish'
+      && activeCameraMode === 'cinematicLeader'
+      && this.state === 'running'
+    );
     const shouldSnapPostFirstFinishLeadPack = Boolean(
       BROADCAST_CAMERA.postFirstFinish?.snapOnLeadPackSwitch
       && previousActiveCameraMode === 'finish'
@@ -19759,25 +21848,43 @@ class MarbleRace {
             ? (BROADCAST_CAMERA.leadPack.targetSmoothing || 0.08)
             : (isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 4.2 : 2.8)) : 1 - Math.pow(0.001, delta)))));
     const cameraBlend = activeCameraMode === 'replayHighlight' ? 1 : (activeCameraMode === 'leadBattle' ? 0.78 : isToyParkBroadcast ? 1 : isCinematicLeadPack ? 0.84 : isCinematicLeader ? 0.82 : 0.72);
-    if (shouldSnapPostFirstFinishLeadPack || shouldSnapToyParkFinalApproachFinish) {
+    if (shouldSnapLapTransitionCamera || shouldSnapPostFirstFinishLeadPack || shouldSnapToyParkFinalApproachFinish) {
       this.camera.position.copy(desired);
       this.controls.target.copy(target);
-      this.postFirstFinishCameraSnapState = shouldSnapPostFirstFinishLeadPack ? {
-        active: true,
-        from: previousActiveCameraMode,
-        to: activeCameraMode,
-        elapsed: Number((this.elapsed || 0).toFixed(2)),
-        firstFinishTime: Number((this.firstFinishTime || 0).toFixed(2)),
-        delaySeconds: BROADCAST_CAMERA.postFirstFinish?.finishHoldSeconds ?? 4,
-        label: BROADCAST_CAMERA.postFirstFinish?.label,
-      } : {
-        active: true,
-        from: previousActiveCameraMode,
-        to: activeCameraMode,
-        elapsed: Number((this.elapsed || 0).toFixed(2)),
-        reason: 'toy-park-final-approach-finish-snap',
-        label: BROADCAST_CAMERA.toyParkFinalApproachLabel,
-      };
+      if (shouldSnapLapTransitionCamera) {
+        this.lapTransitionCameraSnapState = {
+          ...this.lapTransitionCameraSnapState,
+          active: false,
+          snappedAt: Number((this.elapsed || 0).toFixed(2)),
+          from: previousActiveCameraMode,
+          to: activeCameraMode,
+        };
+        this.postFirstFinishCameraSnapState = {
+          active: true,
+          from: previousActiveCameraMode,
+          to: activeCameraMode,
+          elapsed: Number((this.elapsed || 0).toFixed(2)),
+          reason: 'toy-park-lap-transition-camera-snap',
+          label: BROADCAST_CAMERA.lapTransitionCamera?.label,
+        };
+      } else {
+        this.postFirstFinishCameraSnapState = shouldSnapPostFirstFinishLeadPack ? {
+          active: true,
+          from: previousActiveCameraMode,
+          to: activeCameraMode,
+          elapsed: Number((this.elapsed || 0).toFixed(2)),
+          firstFinishTime: Number((this.firstFinishTime || 0).toFixed(2)),
+          delaySeconds: BROADCAST_CAMERA.postFirstFinish?.finishHoldSeconds ?? 4,
+          label: BROADCAST_CAMERA.postFirstFinish?.label,
+        } : {
+          active: true,
+          from: previousActiveCameraMode,
+          to: activeCameraMode,
+          elapsed: Number((this.elapsed || 0).toFixed(2)),
+          reason: 'toy-park-final-approach-finish-snap',
+          label: BROADCAST_CAMERA.toyParkFinalApproachLabel,
+        };
+      }
     } else {
       this.postFirstFinishCameraSnapState = this.postFirstFinishCameraSnapState ? { ...this.postFirstFinishCameraSnapState, active: false } : null;
       this.camera.position.lerp(desired, positionSmooth * cameraBlend);

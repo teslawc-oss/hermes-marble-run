@@ -131,8 +131,8 @@ export const TOY_PARK_START_GATE_OVERRIDES = {
 };
 
 export const TOY_PARK_SOLID_BACKGROUND = {
-  color: '#f3eadb',
-  label: 'solid-warm-cream-background',
+  color: '#f7e8c8',
+  label: 'solid-vanilla-cream-background',
 };
 
 export const TOY_PARK_SOFT_GUIDE_PHYSICS = {
