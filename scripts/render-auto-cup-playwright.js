@@ -28,39 +28,61 @@ const estimateNonRaceSeconds = (mode, raceCount) => {
 
 const rawVideoCapture = String(args.get('video-capture') || process.env.MARBLE_RENDER_VIDEO_CAPTURE || '').toLowerCase();
 const MARBLE_VISUAL_THEME_KEYS = ['mixed', 'neon', 'luxe', 'candy', 'natural'];
+const rawRenderUrl = args.get('url') || process.env.MARBLE_RENDER_URL || 'http://127.0.0.1:4173';
+const isToyParkRenderUrl = /\/toypark(?:[/?#]|$)/i.test(rawRenderUrl);
+const hasExplicitForceDefaultCamera = args.has('force-default-camera') || process.env.MARBLE_RENDER_FORCE_DEFAULT_CAMERA != null;
+const hasExplicitDisableMouseOrbit = args.has('disable-mouse-orbit') || process.env.MARBLE_RENDER_DISABLE_MOUSE_ORBIT != null;
+const shouldForceDefaultCamera = hasExplicitForceDefaultCamera
+  ? args.get('force-default-camera') !== 'false' && process.env.MARBLE_RENDER_FORCE_DEFAULT_CAMERA !== 'false'
+  : !isToyParkRenderUrl;
+const toyParkRenderDefaults = isToyParkRenderUrl ? {
+  cupSize: 8,
+  targetSeconds: 180,
+  maxRaceSeconds: 180,
+  width: 720,
+  height: 1280,
+  videoCanvasLayout: 'vertical',
+  renderPerformanceProfile: 'turbo60',
+  headful: true,
+  disableMouseOrbit: false,
+  multipleRaceCount: 1,
+} : {};
 const config = {
-  url: args.get('url') || process.env.MARBLE_RENDER_URL || 'http://127.0.0.1:4173',
+  url: rawRenderUrl,
   port: Number(args.get('port') || process.env.MARBLE_RENDER_PORT || 4173),
   output: path.resolve(args.get('output') || process.env.MARBLE_RENDER_OUTPUT || path.join(recordingsDir, `auto-cup-${defaultStamp}.webm`)),
-  cupSize: Number(args.get('cup-size') || process.env.MARBLE_RENDER_CUP_SIZE || 12),
+  cupSize: Number(args.get('cup-size') || process.env.MARBLE_RENDER_CUP_SIZE || toyParkRenderDefaults.cupSize || 12),
   trackLength: Number(args.get('track-length') || process.env.MARBLE_RENDER_TRACK_LENGTH || 600),
-  targetSeconds: Number(args.get('target-seconds') || process.env.MARBLE_RENDER_TARGET_SECONDS || 600),
+  targetSeconds: Number(args.get('target-seconds') || process.env.MARBLE_RENDER_TARGET_SECONDS || toyParkRenderDefaults.targetSeconds || 600),
   lengthMode: args.get('length-mode') || process.env.MARBLE_RENDER_LENGTH_MODE || 'target-duration',
-  width: Number(args.get('width') || process.env.MARBLE_RENDER_WIDTH || 1280),
-  height: Number(args.get('height') || process.env.MARBLE_RENDER_HEIGHT || 720),
+  width: Number(args.get('width') || process.env.MARBLE_RENDER_WIDTH || toyParkRenderDefaults.width || 1280),
+  height: Number(args.get('height') || process.env.MARBLE_RENDER_HEIGHT || toyParkRenderDefaults.height || 720),
   captureScale: Number(args.get('capture-scale') || process.env.MARBLE_RENDER_CAPTURE_SCALE || 1),
   fps: Number(args.get('fps') || process.env.MARBLE_RENDER_FPS || 60),
   videoCrf: Number(args.get('crf') || process.env.MARBLE_RENDER_CRF || 18),
   videoPreset: args.get('video-preset') || process.env.MARBLE_RENDER_VIDEO_PRESET || 'veryfast',
   timeoutSeconds: Number(args.get('timeout') || process.env.MARBLE_RENDER_TIMEOUT || 900),
   smokeSeconds: Number(args.get('smoke-seconds') || process.env.MARBLE_RENDER_SMOKE_SECONDS || 0),
-  maxRaceSeconds: Number(args.get('max-race-seconds') || process.env.MARBLE_RENDER_MAX_RACE_SECONDS || 0),
+  maxRaceSeconds: Number(args.get('max-race-seconds') || process.env.MARBLE_RENDER_MAX_RACE_SECONDS || toyParkRenderDefaults.maxRaceSeconds || 0),
   keepWebm: args.get('keep-webm') === 'true' || process.env.MARBLE_RENDER_KEEP_WEBM === 'true',
   debugLogs: args.get('debug-logs') === 'true' || args.get('verbose') === 'true' || process.env.MARBLE_RENDER_DEBUG_LOGS === 'true' || process.env.MARBLE_RENDER_VERBOSE === 'true',
-  headful: args.get('headful') === 'true' || process.env.MARBLE_RENDER_HEADFUL === 'true',
+  headful: args.get('headful') === 'true' || process.env.MARBLE_RENDER_HEADFUL === 'true' || toyParkRenderDefaults.headful === true,
   browserWindowPosition: args.get('browser-window-position') || process.env.MARBLE_RENDER_BROWSER_WINDOW_POSITION || '',
   noBuild: args.get('no-build') === 'true' || process.env.MARBLE_RENDER_NO_BUILD === 'true',
   noServer: args.get('no-server') === 'true' || process.env.MARBLE_RENDER_NO_SERVER === 'true',
   showLeftUi: args.get('show-left-ui') === 'true' || process.env.MARBLE_RENDER_SHOW_LEFT_UI === 'true',
   showRightUi: args.get('show-right-ui') !== 'false' && process.env.MARBLE_RENDER_SHOW_RIGHT_UI !== 'false',
-  disableMouseOrbit: args.get('disable-mouse-orbit') !== 'false' && process.env.MARBLE_RENDER_DISABLE_MOUSE_ORBIT !== 'false',
+  disableMouseOrbit: hasExplicitDisableMouseOrbit
+    ? args.get('disable-mouse-orbit') !== 'false' && process.env.MARBLE_RENDER_DISABLE_MOUSE_ORBIT !== 'false'
+    : (toyParkRenderDefaults.disableMouseOrbit ?? true),
+  forceDefaultCamera: shouldForceDefaultCamera,
   audio: args.get('audio') !== 'false' && process.env.MARBLE_RENDER_AUDIO !== 'false',
   videoCapture: ['playwright', 'canvas', 'none', 'off', 'false'].includes(rawVideoCapture)
     ? ({ off: 'none', false: 'none' }[rawVideoCapture] || rawVideoCapture)
     : 'canvas',
   canvasTransport: String(args.get('canvas-transport') || process.env.MARBLE_RENDER_CANVAS_TRANSPORT || 'chunk').toLowerCase(),
-  videoCanvasLayout: ['horizontal', 'vertical'].includes(String(args.get('video-canvas') || args.get('video-canvas-layout') || process.env.MARBLE_RENDER_VIDEO_CANVAS || 'horizontal').toLowerCase())
-    ? String(args.get('video-canvas') || args.get('video-canvas-layout') || process.env.MARBLE_RENDER_VIDEO_CANVAS || 'horizontal').toLowerCase()
+  videoCanvasLayout: ['horizontal', 'vertical'].includes(String(args.get('video-canvas') || args.get('video-canvas-layout') || process.env.MARBLE_RENDER_VIDEO_CANVAS || toyParkRenderDefaults.videoCanvasLayout || 'horizontal').toLowerCase())
+    ? String(args.get('video-canvas') || args.get('video-canvas-layout') || process.env.MARBLE_RENDER_VIDEO_CANVAS || toyParkRenderDefaults.videoCanvasLayout || 'horizontal').toLowerCase()
     : 'horizontal',
   outputFormat: (args.get('format') || process.env.MARBLE_RENDER_FORMAT || path.extname(args.get('output') || process.env.MARBLE_RENDER_OUTPUT || '').replace(/^\./, '') || 'webm').toLowerCase(),
   thumbnail: args.get('thumbnail') !== 'false' && process.env.MARBLE_RENDER_THUMBNAIL !== 'false',
@@ -83,10 +105,10 @@ const config = {
   youtubeTitleHistory: args.get('youtube-title-history') || process.env.MARBLE_RENDER_YOUTUBE_TITLE_HISTORY || recordingsDir,
   youtubeTitleHistoryLimit: Number(args.get('youtube-title-history-limit') || process.env.MARBLE_RENDER_YOUTUBE_TITLE_HISTORY_LIMIT || 10),
   renderPerformanceMode: args.get('render-performance-mode') !== 'false' && process.env.MARBLE_RENDER_PERFORMANCE_MODE !== 'false',
-  renderPerformanceProfile: args.get('render-performance-profile') || process.env.MARBLE_RENDER_PERFORMANCE_PROFILE || 'turbo60',
+  renderPerformanceProfile: args.get('render-performance-profile') || process.env.MARBLE_RENDER_PERFORMANCE_PROFILE || toyParkRenderDefaults.renderPerformanceProfile || 'turbo60',
   audioOutput: args.get('audio-output') || process.env.MARBLE_RENDER_AUDIO_OUTPUT || '',
   mode: ['cup', 'continuous', 'single', 'survivor'].includes(args.get('mode') || process.env.MARBLE_RENDER_MODE) ? (args.get('mode') || process.env.MARBLE_RENDER_MODE) : 'continuous',
-  multipleRaceCount: Number(args.get('multiple-race-count') || process.env.MARBLE_RENDER_MULTIPLE_RACE_COUNT || 5),
+  multipleRaceCount: Number(args.get('multiple-race-count') || process.env.MARBLE_RENDER_MULTIPLE_RACE_COUNT || toyParkRenderDefaults.multipleRaceCount || 5),
   cupName: args.get('cup-name') || process.env.MARBLE_RENDER_CUP_NAME || 'Speed X Cup',
   ttsVoice: args.get('tts-voice') || process.env.MARBLE_RENDER_TTS_VOICE || 'Alex',
   obstaclePreset: args.get('obstacle-preset') || process.env.MARBLE_RENDER_OBSTACLE_PRESET || '',
@@ -100,7 +122,7 @@ config.captureScale = Number.isFinite(config.captureScale) && config.captureScal
 config.targetSeconds = Number.isFinite(config.targetSeconds) ? Math.max(60, Math.min(7200, Math.round(config.targetSeconds))) : 600;
 config.lengthMode = config.lengthMode === 'fixed-track' ? 'fixed-track' : 'target-duration';
 config.trackLength = Number.isFinite(config.trackLength) ? Math.max(30, Math.min(3000, Math.round(config.trackLength))) : 600;
-const configuredMaxRaceSeconds = hasExplicitMaxRaceSeconds && Number.isFinite(config.maxRaceSeconds) && config.maxRaceSeconds > 0
+const configuredMaxRaceSeconds = (hasExplicitMaxRaceSeconds || toyParkRenderDefaults.maxRaceSeconds) && Number.isFinite(config.maxRaceSeconds) && config.maxRaceSeconds > 0
   ? Math.max(45, Math.min(1200, Math.round(config.maxRaceSeconds)))
   : 0;
 const timeoutRaceSecondsEstimate = configuredMaxRaceSeconds || estimateMaxRaceSecondsForTrackLength(config.trackLength);
@@ -1347,6 +1369,7 @@ async function main() {
       showLeftUi: config.showLeftUi,
       showRightUi: config.showRightUi,
       disableMouseOrbit: config.disableMouseOrbit,
+      forceDefaultCamera: config.forceDefaultCamera,
       renderPerformanceMode: config.renderPerformanceMode,
       renderPerformanceProfile: config.renderPerformanceProfile,
       audio: config.audio,
@@ -1864,9 +1887,31 @@ async function main() {
     }
 
     progress('app-start', `${config.mode}, races=${config.multipleRaceCount}, marbles=${config.cupSize}`);
-    const started = await page.evaluate(({ mode, multipleRaceCount, cupSize, trackLength, targetSeconds, lengthMode, smokeSeconds, maxRaceSeconds, cupName, ttsVoice, obstaclePreset, obstacleDistribution, obstacleTypes, visualTheme, showLeftUi, showRightUi, disableMouseOrbit, renderPerformanceMode, renderPerformanceProfile, survivorStateInput }) => {
+    const started = await page.evaluate(({ mode, multipleRaceCount, cupSize, trackLength, targetSeconds, lengthMode, smokeSeconds, maxRaceSeconds, finalRaceCompletionBufferSeconds, cupName, ttsVoice, obstaclePreset, obstacleDistribution, obstacleTypes, visualTheme, showLeftUi, showRightUi, disableMouseOrbit, forceDefaultCamera, renderPerformanceMode, renderPerformanceProfile, survivorStateInput }) => {
       const app = window.__MARBLE_RACE_APP__;
       if (!app) return { ok: false, reason: 'app-missing' };
+      const prepareRenderCamera = () => {
+        if (!forceDefaultCamera) {
+          app.playwrightRenderCameraPolicy = {
+            forceDefaultCamera: false,
+            cameraMode: app.cameraMode,
+            activeCameraMode: app.activeCameraMode || null,
+            label: 'render preserves current route/web camera mode; no Default Auto force-reset',
+          };
+          app.updateCamera?.(1 / 60);
+          return;
+        }
+        app.cameraMode = 'default';
+        app.resetDefaultAutoCameraForRace?.();
+        if (app.ui?.cameraMode) app.ui.cameraMode.value = 'default';
+        app.playwrightRenderCameraPolicy = {
+          forceDefaultCamera: true,
+          cameraMode: app.cameraMode,
+          activeCameraMode: app.activeCameraMode || null,
+          label: 'render forces Default Auto camera',
+        };
+        app.updateCamera?.(1 / 60);
+      };
       app.__playwrightRenderTrackLength = trackLength;
       app.__playwrightRenderTargetSeconds = targetSeconds;
       app.__playwrightRenderLengthMode = lengthMode;
@@ -1930,6 +1975,15 @@ async function main() {
       }
       if (showRightUi && app.rightUICollapsed) app.toggleRightUI?.();
       if (!showRightUi && !app.rightUICollapsed) app.toggleRightUI?.();
+      if (disableMouseOrbit) {
+        app.enableAllCameraMouseOrbit = false;
+        app.__playwrightRenderMouseOrbitPolicy = {
+          disabled: true,
+          reason: 'render-stabilize-auto-camera; prevents stale/user orbit offset from blending into Toy Park Default Auto every frame',
+        };
+      } else {
+        app.__playwrightRenderMouseOrbitPolicy = { disabled: false, reason: 'render follows route/web camera flow including normal mouse-orbit setting' };
+      }
       if (renderPerformanceMode) {
         const perfProfile = renderPerformanceProfile || 'turbo60';
         app.setUIThrottleProfile?.(perfProfile, {
@@ -1967,10 +2021,7 @@ async function main() {
         if (app.survivorLeague?.active) app.survivorLeague = { ...app.survivorLeague, active: false, status: 'idle', roster: [], spotlight: null };
         app.newRace?.({ regenerateTrack: true });
       }
-      app.cameraMode = 'default';
-      app.resetDefaultAutoCameraForRace?.();
-      if (app.ui?.cameraMode) app.ui.cameraMode.value = 'default';
-      app.updateCamera?.(1 / 60);
+      prepareRenderCamera();
       const showRenderLiveEventCaption = (title, detail) => {
         app.activeCaption = {
           title,
@@ -2058,7 +2109,7 @@ async function main() {
           nextRaceDelaySeconds: timing.postRaceHoldSeconds ?? 5,
           gateDelaySeconds: timing.nextGateAfterRaceSeconds ?? 5,
           initialGateDelaySeconds: timing.gateDelaySeconds ?? 2,
-          finalStopDelaySeconds: timing.stopAfterFinalSeconds ?? 5,
+          finalStopDelaySeconds: timing.stopAfterFinalSeconds ?? Math.max(5, Number(finalRaceCompletionBufferSeconds || 0) || 0),
           nextActionAt: null,
           pendingTimer: null,
           playwrightRender: true,
@@ -2153,9 +2204,7 @@ async function main() {
           }
         }
         app.scheduleContinuousRecordingAction?.(app.continuousRecording.initialGateDelaySeconds, 'waiting-open-gate', () => {
-          app.cameraMode = 'default';
-          app.resetDefaultAutoCameraForRace?.();
-          app.updateCamera?.(1 / 60);
+          prepareRenderCamera();
           app.startContinuousRecordingRace?.();
         });
       } else if (mode === 'survivor') {
@@ -2235,9 +2284,7 @@ async function main() {
                 scheduleSurvivorRecordingAction(Number(recording.nextRaceDelaySeconds || 0), 'ceremony-hold', () => {
                   app.newRace?.({ regenerateTrack: true });
                   scheduleSurvivorRecordingAction(Number(app.continuousRecording?.gateDelaySeconds || 0), 'waiting-open-gate', () => {
-                    app.cameraMode = 'default';
-                    app.resetDefaultAutoCameraForRace?.();
-                    app.updateCamera?.(1 / 60);
+                    prepareRenderCamera();
                     app.startSurvivorLeagueRaceWithSpotlight?.();
                   });
                 });
@@ -2267,9 +2314,7 @@ async function main() {
           }
         }
         scheduleSurvivorRecordingAction(app.continuousRecording.initialGateDelaySeconds, 'waiting-open-gate', () => {
-          app.cameraMode = 'default';
-          app.resetDefaultAutoCameraForRace?.();
-          app.updateCamera?.(1 / 60);
+          prepareRenderCamera();
           app.startSurvivorLeagueRaceWithSpotlight?.();
         });
       } else {
@@ -2316,9 +2361,7 @@ async function main() {
         }
       }
       app.scheduleAutoCupRecordingAction?.(app.autoCupRecording.gateDelaySeconds, 'waiting-open-gate', () => {
-        app.cameraMode = 'default';
-        app.resetDefaultAutoCameraForRace?.();
-        app.updateCamera?.(1 / 60);
+        prepareRenderCamera();
         app.startAutoCupRace?.();
       });
       }
@@ -2345,6 +2388,8 @@ async function main() {
         cameraMode: app.cameraMode,
         activeDefaultCameraShot: app.getDefaultCameraMode?.(),
         activeCameraMode: app.activeCameraMode,
+        playwrightRenderCameraPolicy: app.playwrightRenderCameraPolicy || null,
+        playwrightRenderMouseOrbitPolicy: app.__playwrightRenderMouseOrbitPolicy || null,
         enableAllCameraMouseOrbit: app.enableAllCameraMouseOrbit,
         leftUICollapsed: app.leftUICollapsed,
         leftUiInstantHidden: document.body.classList.contains('playwright-render-hide-left-ui'),
@@ -2377,6 +2422,7 @@ async function main() {
       lengthMode: config.lengthMode,
       smokeSeconds: config.smokeSeconds,
       maxRaceSeconds: config.maxRaceSeconds,
+      finalRaceCompletionBufferSeconds,
       cupName: config.cupName,
       ttsVoice: config.ttsVoice,
       obstaclePreset: config.obstaclePreset,
@@ -2386,6 +2432,7 @@ async function main() {
       showLeftUi: config.showLeftUi,
       showRightUi: config.showRightUi,
       disableMouseOrbit: config.disableMouseOrbit,
+      forceDefaultCamera: config.forceDefaultCamera,
       renderPerformanceMode: config.renderPerformanceMode,
       renderPerformanceProfile: config.renderPerformanceProfile,
       survivorStateInput,
@@ -2561,6 +2608,7 @@ async function main() {
             if (!app?.continuousRecording?.playwrightRender) return null;
             const recording = app.continuousRecording;
             if (Number(recording.racesCompleted || 0) < Number(recording.totalRaces || 0)) return null;
+            if (recording.phase === 'waiting-final-stop') return null;
             app.clearContinuousRecordingTimer?.();
             app.stopContinuousRecording?.({ stopRecorder: false, reason });
             recording.active = false;

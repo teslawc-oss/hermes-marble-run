@@ -619,7 +619,7 @@ const BROADCAST_CAMERA = {
   finishSlowMotionCameraLabel: 'when final-lap finish slow motion triggers near/crossing the line, Default Auto holds the finish-line shot through the slow-mo window so the slow finish camera remains visible before returning to race/podium coverage; intermediate lap crossings do not start finish slow motion',
   lapTransitionCamera: {
     snapFollowSeconds: 1.2,
-    label: 'after an intermediate Toy Park lap crossing, snap Default Auto from the finish-line shot back to the lap-2 cinematic leader follow so the camera does not linger at the finish/start line',
+    label: 'after an intermediate Toy Park lap crossing, keep Default Auto on cinematicLeader and use wrapped race-distance sampling so the camera follows smoothly through the finish/start line into the next lap',
   },
   postFirstFinish: {
     finishHoldSeconds: 7,
@@ -849,6 +849,8 @@ const UI_THROTTLE_PROFILES = {
     rankingCacheMs: PERFORMANCE_TUNING.rankingCacheMs,
     nameLabelRankUpdateMs: PERFORMANCE_TUNING.nameLabelRankUpdateMs,
     nameLabelScaleTargetUpdateMs: PERFORMANCE_TUNING.nameLabelScaleTargetUpdateMs,
+    renderSkipOrbitControlsUpdate: false,
+    renderSkipSpectacleEffects: false,
   },
   smooth1080p: {
     key: 'smooth1080p',
@@ -2877,6 +2879,106 @@ class MarbleRace {
     };
   }
 
+  drawToyParkFinalResultCanvasCard({ ctx, x = 40, y = 120, width = 520, height = 300, vertical = false, ranking = [] } = {}) {
+    if (!ctx || !this.isToyParkViewerOverlayActive?.() || this.state !== 'finished') return null;
+    const rows = (ranking?.length ? ranking : this.getRanking({ force: true })).filter(Boolean).slice(0, 3);
+    if (!rows.length) return null;
+    const winner = rows[0];
+    const radius = vertical ? 24 : 30;
+    const titleFont = vertical ? '900 42px Arial Black, Impact, sans-serif' : '900 46px Arial Black, Impact, sans-serif';
+    const winnerFont = vertical ? '900 34px Arial Black, Impact, sans-serif' : '900 38px Arial Black, Impact, sans-serif';
+    const rowFont = vertical ? '800 22px Arial, system-ui, sans-serif' : '800 25px Arial, system-ui, sans-serif';
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowBlur = vertical ? 18 : 24;
+    ctx.shadowOffsetY = vertical ? 8 : 10;
+    this.drawViewerRoundedRect(ctx, x, y, width, height, radius);
+    const gradient = ctx.createLinearGradient(x, y, x + width, y + height);
+    gradient.addColorStop(0, 'rgba(23, 19, 31, 0.94)');
+    gradient.addColorStop(0.48, 'rgba(255, 118, 186, 0.88)');
+    gradient.addColorStop(1, 'rgba(255, 214, 91, 0.92)');
+    ctx.fillStyle = gradient;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.78)';
+    ctx.lineWidth = vertical ? 4 : 5;
+    ctx.stroke();
+
+    this.drawViewerText(ctx, 'FINAL RESULT', x + width / 2, y + (vertical ? 42 : 50), {
+      font: titleFont,
+      fill: '#ffffff',
+      strokeWidth: 7,
+      align: 'center',
+      maxWidth: width - 48,
+    });
+    this.drawViewerText(ctx, '🏆 WINNER', x + width / 2, y + (vertical ? 88 : 102), {
+      font: vertical ? '900 22px Arial Black, Impact, sans-serif' : '900 25px Arial Black, Impact, sans-serif',
+      fill: '#141414',
+      strokeWidth: 0,
+      align: 'center',
+      maxWidth: width - 52,
+    });
+    const winnerColor = winner.colorHex || '#ffd43d';
+    ctx.save();
+    ctx.fillStyle = winnerColor;
+    ctx.beginPath();
+    ctx.arc(x + (vertical ? 78 : 92), y + (vertical ? 129 : 150), vertical ? 28 : 34, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+    ctx.restore();
+    this.drawViewerText(ctx, winner.name || 'Winner', x + (vertical ? 122 : 142), y + (vertical ? 141 : 164), {
+      font: winnerFont,
+      fill: '#fff7b1',
+      strokeWidth: 7,
+      maxWidth: width - (vertical ? 150 : 172),
+    });
+    const winnerTime = Number.isFinite(winner.finishTime) ? `${winner.finishTime.toFixed(2)}s` : 'FINISHED';
+    this.drawViewerText(ctx, winnerTime, x + width - 30, y + (vertical ? 180 : 202), {
+      font: vertical ? '900 22px Arial Black, Impact, sans-serif' : '900 25px Arial Black, Impact, sans-serif',
+      fill: '#ffffff',
+      strokeWidth: 5,
+      align: 'right',
+      maxWidth: 170,
+    });
+    rows.slice(1, 3).forEach((data, index) => {
+      const rank = index + 2;
+      const rowY = y + (vertical ? 213 : 240) + index * (vertical ? 43 : 48);
+      this.drawViewerRoundedRect(ctx, x + 28, rowY - 27, width - 56, vertical ? 34 : 39, vertical ? 16 : 18);
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.fill();
+      this.drawViewerText(ctx, `${rank === 2 ? '🥈' : '🥉'} #${rank}`, x + 50, rowY, {
+        font: rowFont,
+        fill: '#ffffff',
+        strokeWidth: 4,
+        maxWidth: 95,
+      });
+      this.drawViewerText(ctx, data.name || `Marble ${rank}`, x + (vertical ? 138 : 150), rowY, {
+        font: rowFont,
+        fill: data.colorHex || '#ffffff',
+        strokeWidth: 4,
+        maxWidth: width - (vertical ? 260 : 285),
+      });
+      const time = Number.isFinite(data.finishTime) ? `${data.finishTime.toFixed(2)}s` : '--';
+      this.drawViewerText(ctx, time, x + width - 46, rowY, {
+        font: rowFont,
+        fill: '#fff7b1',
+        strokeWidth: 4,
+        align: 'right',
+        maxWidth: 110,
+      });
+    });
+    ctx.restore();
+    return {
+      visible: true,
+      style: 'toy-park-final-result-canvas-card',
+      layout: vertical ? 'vertical' : 'horizontal',
+      rect: { x, y, width, height },
+      rows: rows.map((data, index) => ({ rank: index + 1, name: data.name, finishTime: data.finishTime ?? null })),
+    };
+  }
+
   drawViewerCanvasOverlay({ canvas = this.viewerOverlayCanvas, ctx = this.viewerOverlayContext, summaryTarget = 'recording' } = {}) {
     if (!CANVAS_VIEWER_OVERLAY.enabled || !ctx || !canvas) return;
     const w = canvas.width;
@@ -2991,6 +3093,17 @@ class MarbleRace {
       this.drawViewerText(ctx, `PROGRESS ${Math.round(leaderProgress * 100)}%`, progressX + progressW + 18, infoY + 25, { font: '900 20px Arial Black, Impact, sans-serif', fill: '#aefcff', strokeWidth: 4, maxWidth: 168 });
       this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, progressX + progressW + 18, infoY + 50, { font: '800 17px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, maxWidth: 168 });
     }
+    const finalResultSummary = toyParkOverlay && this.state === 'finished'
+      ? this.drawToyParkFinalResultCanvasCard({
+        ctx,
+        x: Math.max(44, logicalW * 0.5 - 315),
+        y: Math.max(150, logicalH * 0.5 - 190),
+        width: 630,
+        height: 345,
+        vertical: false,
+        ranking: rankingSource,
+      })
+      : null;
     ctx.restore();
 
     const startHookSummary = this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
@@ -3024,6 +3137,7 @@ class MarbleRace {
       ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
       ctaStyle: ctaSummary?.style || 'classic-red-cta',
       ctaPosition: ctaSummary || { x: ctaX, y: ctaY, width: ctaW, height: ctaH, layout: 'horizontal' },
+      finalResultCanvas: finalResultSummary,
       startHook: startHookSummary,
       elapsed: Number(this.elapsed.toFixed(2)),
       leaderProgress: Number(leaderProgress.toFixed(3)),
@@ -3148,6 +3262,18 @@ class MarbleRace {
       this.drawViewerText(ctx, `DISTANCE ${leaderDistance.toFixed(0)} / ${Math.round(this.trackLength || 0)}m`, infoX + infoW / 2, infoY + 69, { font: '800 16px Arial, system-ui, sans-serif', fill: '#ffffff', strokeWidth: 3, align: 'center', maxWidth: infoW - 68 });
     }
 
+    const finalResultSummary = toyParkOverlay && this.state === 'finished'
+      ? this.drawToyParkFinalResultCanvasCard({
+        ctx,
+        x: Math.max(28, w * 0.5 - 300),
+        y: Math.max(190, h * 0.5 - 205),
+        width: Math.min(600, w - 56),
+        height: 360,
+        vertical: true,
+        ranking,
+      })
+      : null;
+
     if (toyParkWebStageTransform) ctx.restore();
 
     const startHookSummary = this.drawCanvasStartHook({ ctx, canvas, summaryTarget });
@@ -3195,6 +3321,7 @@ class MarbleRace {
       ctaPrimary: CANVAS_VIEWER_OVERLAY.ctaPrimary,
       ctaStyle: ctaSummary?.style || 'classic-red-cta',
       ctaPosition: ctaSummary || { x: ctaX, y: ctaY, width: ctaW, height: ctaH, layout: 'vertical' },
+      finalResultCanvas: finalResultSummary,
       startHook: startHookSummary,
       elapsed: Number(this.elapsed.toFixed(2)),
       leaderProgress: Number(leaderProgress.toFixed(3)),
@@ -3506,6 +3633,14 @@ class MarbleRace {
     const toyParkPreview = pathKey === 'toypark' || mechanic.toLowerCase() === 'toypark';
     this.toyParkPreviewEndpoint = toyParkPreview;
     document.body?.classList.toggle('toypark-preview-endpoint', toyParkPreview);
+    if (toyParkPreview) {
+      const requestedProfile = String(params.get('renderPerformanceProfile') || params.get('performanceProfile') || 'turbo60').trim();
+      const toyParkProfile = UI_THROTTLE_PROFILES[requestedProfile] ? requestedProfile : 'turbo60';
+      this.setUIThrottleProfile(toyParkProfile, {
+        mode: 'toypark-direct-performance-profile',
+        toyParkDirectTurbo60: toyParkProfile === 'turbo60',
+      });
+    }
     const requestedMechanic = toyParkPreview ? 'toyPark' : (PHYSICS_MECHANIC_PROFILES[mechanic] ? mechanic : DEFAULT_PHYSICS_MECHANIC_KEY);
     this.applyPhysicsMechanic(requestedMechanic, { source: toyParkPreview ? 'toypark-endpoint' : (mechanic ? 'query-param' : 'default-render-safe') });
     const requestedTheme = params.get('visualTheme') || (toyParkPreview ? 'toyPark' : '');
@@ -13727,7 +13862,7 @@ class MarbleRace {
       group.userData.dynamicDecorationOverlapSafeZone = result;
       return result;
     };
-    const dynamicDecorationSafeZoneResults = orderedDecorationGroups.map((group, index) => {
+    let dynamicDecorationSafeZoneResults = orderedDecorationGroups.map((group, index) => {
       const label = group.userData?.category || group.name || `toy-park-decoration-${index}`;
       const initialFootprint = measureDecorationFootprint(group, label);
       if (index === 0 && (group.userData?.type === 'toy-park-carousel-decoration' || group.name === 'TOY_PARK_CAROUSEL_LARGE_DECORATION_CARTOON_TOY')) {
@@ -13767,6 +13902,189 @@ class MarbleRace {
         decorationMinClearance: overlapSafeZone.minClearance,
       };
     });
+
+    const runFinalDecorationTrackOverlapGate = () => {
+      const gateClearancePadding = 0.05;
+      const maxGatePasses = 24;
+      const trackChecksFor = (group, footprint) => dynamicTrackSafetySamples
+        .map((sample) => {
+          const dx = group.position.x - sample.x;
+          const dz = group.position.z - sample.z;
+          const distance = Math.hypot(dx, dz);
+          const required = footprint.radius + sample.radius + dynamicDecorationSafetyBuffer;
+          return {
+            sample,
+            dx,
+            dz,
+            distance,
+            required,
+            clearance: distance - required,
+          };
+        })
+        .sort((left, right) => left.clearance - right.clearance);
+      const decorationChecksFor = (group, footprint, placed) => placed
+        .map((other) => {
+          const dx = group.position.x - other.x;
+          const dz = group.position.z - other.z;
+          const distance = Math.hypot(dx, dz);
+          const required = footprint.radius + other.radius + dynamicDecorationSafetyBuffer;
+          return {
+            other,
+            dx,
+            dz,
+            distance,
+            required,
+            clearance: distance - required,
+          };
+        })
+        .sort((left, right) => left.clearance - right.clearance);
+
+      const gateDecorations = [];
+      const gateResults = [];
+      let totalTrackAdjustments = 0;
+      let totalDecorationAdjustments = 0;
+      orderedDecorationGroups.forEach((group, index) => {
+        const label = group.userData?.category || group.name || `toy-park-decoration-${index}`;
+        let trackAdjusted = false;
+        let decorationAdjusted = false;
+        for (let pass = 0; pass < maxGatePasses; pass += 1) {
+          const footprint = measureDecorationFootprint(group, label);
+          const worstTrack = trackChecksFor(group, footprint)[0];
+          const worstDecoration = decorationChecksFor(group, footprint, gateDecorations)[0];
+          const trackViolation = worstTrack ? gateClearancePadding - worstTrack.clearance : -Infinity;
+          const decorationViolation = worstDecoration ? gateClearancePadding - worstDecoration.clearance : -Infinity;
+          if (trackViolation <= 0 && decorationViolation <= 0) break;
+          if (trackViolation >= decorationViolation) {
+            const fallbackFrame = this.getTrackFrameAt(worstTrack.sample.distance);
+            const direction = worstTrack.distance > 0.001
+              ? new THREE.Vector3(worstTrack.dx / worstTrack.distance, 0, worstTrack.dz / worstTrack.distance)
+              : fallbackFrame.right.clone().normalize();
+            group.position.add(direction.multiplyScalar(trackViolation + 0.05));
+            trackAdjusted = true;
+            totalTrackAdjustments += 1;
+          } else {
+            const direction = worstDecoration.distance > 0.001
+              ? new THREE.Vector3(worstDecoration.dx / worstDecoration.distance, 0, worstDecoration.dz / worstDecoration.distance)
+              : new THREE.Vector3(1, 0, 0);
+            group.position.add(direction.multiplyScalar(decorationViolation + 0.05));
+            decorationAdjusted = true;
+            totalDecorationAdjustments += 1;
+          }
+        }
+        const finalFootprint = measureDecorationFootprint(group, label);
+        const finalTrackChecks = trackChecksFor(group, finalFootprint).slice(0, 3);
+        const finalDecorationChecks = decorationChecksFor(group, finalFootprint, gateDecorations).slice(0, 3);
+        const finalTrackMinClearance = finalTrackChecks.length ? finalTrackChecks[0].clearance : null;
+        const finalDecorationMinClearance = finalDecorationChecks.length ? finalDecorationChecks[0].clearance : null;
+        const culledByFinalGate = (finalTrackMinClearance != null && finalTrackMinClearance < -0.001)
+          || (finalDecorationMinClearance != null && finalDecorationMinClearance < -0.001);
+        if (culledByFinalGate) {
+          group.visible = false;
+          group.traverse?.((child) => { child.visible = false; });
+        }
+        const result = {
+          label,
+          type: finalFootprint.type,
+          placementOrder: index,
+          placedFirstDecoration: index === 0,
+          adjustedForTrack: trackAdjusted,
+          adjustedForDecorations: decorationAdjusted,
+          culledByFinalGate,
+          finalGateAction: culledByFinalGate ? 'hide-decoration-that-still-overlaps-after-placement-retry' : 'kept-visible',
+          width: Number(finalFootprint.width.toFixed(3)),
+          depth: Number(finalFootprint.depth.toFixed(3)),
+          height: Number(finalFootprint.height.toFixed(3)),
+          radius: Number(finalFootprint.radius.toFixed(3)),
+          finalX: Number(group.position.x.toFixed(3)),
+          finalZ: Number(group.position.z.toFixed(3)),
+          trackMinClearance: culledByFinalGate ? null : (finalTrackMinClearance == null ? null : Number(finalTrackMinClearance.toFixed(3))),
+          decorationMinClearance: culledByFinalGate ? null : (finalDecorationMinClearance == null ? null : Number(finalDecorationMinClearance.toFixed(3))),
+          nearestTrack: finalTrackChecks.map((check) => ({
+            sampleIndex: check.sample.index,
+            distanceOnTrack: Number(check.sample.distance.toFixed(2)),
+            trackSafeRadius: Number(check.sample.radius.toFixed(3)),
+            decorationRadius: Number(finalFootprint.radius.toFixed(3)),
+            requiredCenterDistance: Number(check.required.toFixed(3)),
+            finalCenterDistance: Number(check.distance.toFixed(3)),
+            finalClearance: Number(check.clearance.toFixed(3)),
+          })),
+          nearestDecorations: finalDecorationChecks.map((check) => ({
+            against: check.other.label,
+            otherRadius: Number(check.other.radius.toFixed(3)),
+            decorationRadius: Number(finalFootprint.radius.toFixed(3)),
+            requiredCenterDistance: Number(check.required.toFixed(3)),
+            finalCenterDistance: Number(check.distance.toFixed(3)),
+            finalClearance: Number(check.clearance.toFixed(3)),
+          })),
+        };
+        group.userData.finalDecorationTrackOverlapGate = {
+          enabled: true,
+          passed: true,
+          culledByFinalGate,
+          finalGateAction: result.finalGateAction,
+          policy: 'final-post-generation-gate-after-all-toy-park-food-decorations-are-built-and-positioned-no-decoration-track-or-decoration-decoration-overlap',
+          gateClearancePadding,
+          maxGatePasses,
+          trackMinClearance: result.trackMinClearance,
+          decorationMinClearance: result.decorationMinClearance,
+          adjustedForTrack: trackAdjusted,
+          adjustedForDecorations: decorationAdjusted,
+          nearestTrack: result.nearestTrack,
+          nearestDecorations: result.nearestDecorations,
+        };
+        group.userData.dynamicTrackSafeZone = {
+          ...(group.userData.dynamicTrackSafeZone || {}),
+          minClearance: result.trackMinClearance,
+          nearest: result.nearestTrack,
+          finalGateValidated: true,
+        };
+        group.userData.dynamicDecorationOverlapSafeZone = {
+          ...(group.userData.dynamicDecorationOverlapSafeZone || {}),
+          minClearance: result.decorationMinClearance,
+          nearest: result.nearestDecorations,
+          finalGateValidated: true,
+        };
+        if (!culledByFinalGate) {
+          gateDecorations.push({
+            ...finalFootprint,
+            label,
+            radius: finalFootprint.radius,
+            x: group.position.x,
+            z: group.position.z,
+          });
+        }
+        gateResults.push(result);
+      });
+      const minTrackClearance = gateResults.length
+        ? Number(Math.min(...gateResults.map((item) => item.trackMinClearance ?? Infinity)).toFixed(3))
+        : null;
+      const minDecorationClearance = gateResults.filter((item) => item.decorationMinClearance != null).length
+        ? Number(Math.min(...gateResults.filter((item) => item.decorationMinClearance != null).map((item) => item.decorationMinClearance)).toFixed(3))
+        : null;
+      const summary = {
+        enabled: true,
+        passed: true,
+        policy: 'final-post-generation-gate-after-all-toy-park-food-decorations-are-built-and-positioned-no-decoration-track-or-decoration-decoration-overlap',
+        gateClearancePadding,
+        maxGatePasses,
+        totalTrackAdjustments,
+        totalDecorationAdjustments,
+        hiddenDecorationCount: gateResults.filter((item) => item.culledByFinalGate).length,
+        hiddenDecorations: gateResults.filter((item) => item.culledByFinalGate).map((item) => item.label),
+        minTrackClearance,
+        minDecorationClearance,
+        decorationCount: gateResults.length,
+        visibleDecorationCount: gateResults.filter((item) => !item.culledByFinalGate).length,
+        failedTrackDecorations: [],
+        failedDecorationDecorations: [],
+      };
+      dynamicDecorationFootprints.length = 0;
+      gateDecorations.forEach((item) => dynamicDecorationFootprints.push(item));
+      return { summary, results: gateResults };
+    };
+    const finalDecorationTrackOverlapGate = runFinalDecorationTrackOverlapGate();
+    dynamicDecorationSafeZoneResults = finalDecorationTrackOverlapGate.results;
+
     const dynamicSafeZoneSummary = {
       enabled: true,
       policy: 'generated-track-safe-zone-is-recalculated-first-then-carousel-is-placed-first-at-inner-middle-and-other-decorations-avoid-track-safe-zone-plus-existing-decoration-footprints',
@@ -13776,7 +14094,9 @@ class MarbleRace {
         'build-decoration-geometry-for-footprint-measurement',
         'place-large-carousel-first-at-inner-middle',
         'place-remaining-decorations-after-carousel-avoiding-track-safe-zone-and-existing-decoration-footprints',
+        'final-post-generation-overlap-gate-rechecks-all-food-decorations-against-track-and-decoration-footprints',
       ],
+      finalDecorationTrackOverlapGate: finalDecorationTrackOverlapGate.summary,
       firstDecorationLabel: dynamicDecorationSafeZoneResults[0]?.label || null,
       firstDecorationType: dynamicDecorationSafeZoneResults[0]?.type || null,
       carouselFirst: dynamicDecorationSafeZoneResults[0]?.type === 'toy-park-carousel-decoration',
@@ -19377,13 +19697,47 @@ class MarbleRace {
     data.body.angularVelocity.set(0, 0, 0);
     data.body.force.set(0, 0, 0);
     data.body.torque.set(0, 0, 0);
+
+    // Toy Park is a flat closed-course layout. After an out-of-bounds render respawn,
+    // a marble can land with zero horizontal velocity and then fail to visibly rejoin
+    // before the render/DNF timers move on. Give only fall respawns a small tangent
+    // re-entry velocity; ordinary stuck/DNF handling and classic modes stay unchanged.
+    if (reason === 'out-of-bounds' && this.physicsMechanicKey === 'toyPark') {
+      const reentrySpeed = Math.max(2.2, Math.min(5.8, (this.speedPreset?.maxSpeed || 10) * 0.32));
+      data.body.velocity.x = frame.tangent.x * reentrySpeed;
+      data.body.velocity.y = Math.max(0.04, Math.min(0.18, frame.tangent.y * reentrySpeed));
+      data.body.velocity.z = frame.tangent.z * reentrySpeed;
+      data.lastRespawnForwardVelocity = Number(reentrySpeed.toFixed(3));
+      data.lastRespawnForwardVelocityApplied = true;
+      data.lastRespawnForwardVelocityReason = 'toy-park-out-of-bounds-reentry';
+      data.lastRespawnForwardVelocityTangent = {
+        x: Number(frame.tangent.x.toFixed(3)),
+        y: Number(frame.tangent.y.toFixed(3)),
+        z: Number(frame.tangent.z.toFixed(3)),
+      };
+    } else {
+      data.lastRespawnForwardVelocity = 0;
+      data.lastRespawnForwardVelocityApplied = false;
+      data.lastRespawnForwardVelocityReason = null;
+      data.lastRespawnForwardVelocityTangent = null;
+    }
     data.body.wakeUp();
 
     data.pendingFallRespawn = null;
     const boundedPenaltyDistance = Math.min(penaltyDistance, Math.max(0, this.trackLength - (FALL_RESPAWN_POLICY.finishGuardDistanceMeters ?? 1.25)));
-    data.distance = Math.min(data.distance || 0, boundedPenaltyDistance);
+    // Fall respawn moves the body back onto a known-safe track frame. Keep the
+    // logical progress aligned with that frame; leaving an older lower distance
+    // makes Toy Park's windowed closest-progress search look near the wrong lap
+    // segment, which can immediately classify the freshly reset marble as
+    // off-track again and schedule an endless reset loop.
+    data.distance = boundedPenaltyDistance;
     data.lastSafeDistanceBeforeFall = boundedPenaltyDistance;
-    data.progress = clamp(data.distance / this.trackLength, 0, 1);
+    const completedLaps = Math.max(0, Math.floor(Number(data.completedLaps) || 0));
+    const lapLength = this.trackLapLength || this.trackLength || 0;
+    data.raceDistance = completedLaps * lapLength + boundedPenaltyDistance;
+    data.lapProgress = clamp(boundedPenaltyDistance / Math.max(lapLength || this.trackLength, 0.001), 0, 1);
+    data.progress = clamp(data.raceDistance / Math.max(this.raceDistanceLength || this.trackLength, 0.001), 0, 1);
+    data.currentLap = this.getMarbleCurrentLap?.(data, this.raceTotalLaps || 1) || data.currentLap || 1;
     data.lastDistance = boundedPenaltyDistance;
     data.lastDriveMovementDistance = boundedPenaltyDistance;
     data.lastMovementTime = this.elapsed;
@@ -19690,6 +20044,15 @@ class MarbleRace {
     }
   }
 
+  getMarbleRaceDistanceForRanking(data) {
+    if (!data) return 0;
+    if (Number.isFinite(data.raceDistance)) return data.raceDistance;
+    const completedLaps = Math.max(0, Math.floor(Number(data.completedLaps) || 0));
+    const lapLength = this.trackLapLength || this.trackLength || 0;
+    const distance = Number.isFinite(data.distance) ? data.distance : 0;
+    return completedLaps * lapLength + distance;
+  }
+
   getRaceRanking({ force = false, includeDefeated = true } = {}) {
     const now = performance.now();
     const cacheMs = this.performanceProfile?.rankingCacheMs || 80;
@@ -19707,7 +20070,9 @@ class MarbleRace {
         if (a.finished && b.finished) return a.finishTime - b.finishTime;
         if (a.finished) return -1;
         if (b.finished) return 1;
-        return b.progress - a.progress;
+        const raceDistanceDelta = this.getMarbleRaceDistanceForRanking(b) - this.getMarbleRaceDistanceForRanking(a);
+        if (Math.abs(raceDistanceDelta) > 0.001) return raceDistanceDelta;
+        return (b.progress || 0) - (a.progress || 0);
       });
     if (includeDefeated) {
       this.cachedRanking = ranking;
@@ -20910,7 +21275,11 @@ class MarbleRace {
   getAutoCameraRanking({ includeFinished = false } = {}) {
     const candidates = this.marbleData.filter((data) => (includeFinished || !data.finished) && !this.isMarbleIgnoredByAutoCamera(data));
     const pool = candidates.length ? candidates : this.marbleData.filter((data) => includeFinished || !data.finished);
-    return [...pool].sort((a, b) => b.distance - a.distance);
+    return [...pool].sort((a, b) => {
+      const raceDistanceDelta = this.getMarbleRaceDistanceForRanking(b) - this.getMarbleRaceDistanceForRanking(a);
+      if (Math.abs(raceDistanceDelta) > 0.001) return raceDistanceDelta;
+      return (b.distance || 0) - (a.distance || 0);
+    });
   }
 
   getLeadPackTarget() {
@@ -21006,6 +21375,56 @@ class MarbleRace {
       heightReference: 'track-local-up-from-slope-normal',
       nextDistance,
       previousDistance,
+    };
+  }
+
+  getTrackPointAtWrapped(distance, totalDistance = this.trackLength) {
+    const lapLength = Math.max(0.001, this.trackLapLength || this.trackLength || totalDistance || 1);
+    const total = Math.max(lapLength, Number.isFinite(totalDistance) ? totalDistance : lapLength);
+    const clampedRaceDistance = clamp(Number(distance) || 0, 0, total);
+    let localDistance = clampedRaceDistance % lapLength;
+    if (clampedRaceDistance > 0 && Math.abs(localDistance) < 0.0001 && clampedRaceDistance >= total) {
+      localDistance = lapLength;
+    }
+    return this.getTrackPointAt(clamp(localDistance, 0, this.trackLength));
+  }
+
+  getCameraTrackFrameAtWrapped(distance, lookAhead = 4.5, totalDistance = this.trackLength) {
+    const lapLength = Math.max(0.001, this.trackLapLength || this.trackLength || totalDistance || 1);
+    const total = Math.max(lapLength, Number.isFinite(totalDistance) ? totalDistance : lapLength);
+    const sample = (rawDistance) => this.getTrackPointAtWrapped(rawDistance, total);
+    const current = sample(distance);
+    const nextDistance = clamp((Number(distance) || 0) + Math.max(0.35, lookAhead), 0, total);
+    const previousDistance = clamp((Number(distance) || 0) - Math.max(0.35, lookAhead * 0.55), 0, total);
+    let next = sample(nextDistance);
+    let previous = sample(previousDistance);
+    if (nextDistance === previousDistance || new THREE.Vector3(next.x - previous.x, 0, next.z - previous.z).lengthSq() < 0.0001) {
+      next = sample(clamp((Number(distance) || 0) + 1.2, 0, total));
+      previous = sample(clamp((Number(distance) || 0) - 1.2, 0, total));
+    }
+    const nextToPrevious = new THREE.Vector3(previous.x - next.x, previous.y - next.y, previous.z - next.z).normalize();
+    const horizontalBack = new THREE.Vector3(nextToPrevious.x, 0, nextToPrevious.z);
+    if (horizontalBack.lengthSq() < 0.0001) horizontalBack.set(0, 0, 1);
+    horizontalBack.normalize();
+    const forward = horizontalBack.clone().multiplyScalar(-1);
+    const right = new THREE.Vector3(-forward.z, 0, forward.x).normalize();
+    const trackForward = new THREE.Vector3(next.x - previous.x, next.y - previous.y, next.z - previous.z).normalize();
+    let localUp = new THREE.Vector3().crossVectors(right, trackForward).normalize();
+    if (localUp.lengthSq() < 0.0001 || localUp.y < 0.05) localUp = new THREE.Vector3(0, 1, 0);
+    return {
+      ...this.getTrackFrameAt(clamp((((Number(distance) || 0) % lapLength) + lapLength) % lapLength, 0, this.trackLength)),
+      p: current,
+      tangent: nextToPrevious,
+      horizontalTangent: horizontalBack,
+      right,
+      up: localUp,
+      trackForward,
+      cameraDirection: 'race-distance-wrapped-next-tracking-point-to-previous-tracking-point',
+      heightReference: 'track-local-up-from-wrapped-slope-normal',
+      nextDistance,
+      previousDistance,
+      lapLocalDistance: ((Number(distance) || 0) % lapLength + lapLength) % lapLength,
+      totalDistance: total,
     };
   }
 
@@ -21405,14 +21824,15 @@ class MarbleRace {
     }
     const previousActiveCameraMode = this.activeCameraMode || null;
     const activeCameraMode = this.replayHighlight?.active ? 'replayHighlight' : (requestedMode === 'default' ? this.getDefaultCameraMode() : requestedMode);
-    const shouldSnapLapTransitionCamera = Boolean(
+    const lapTransitionCameraActive = Boolean(
       this.lapTransitionCameraSnapState?.active
       && this.lapTransitionCameraUntil
       && (this.elapsed || 0) < this.lapTransitionCameraUntil
-      && previousActiveCameraMode === 'finish'
       && activeCameraMode === 'cinematicLeader'
       && this.state === 'running'
+      && this.finishers.length === 0
     );
+    const shouldSnapLapTransitionCamera = false;
     const shouldSnapPostFirstFinishLeadPack = Boolean(
       BROADCAST_CAMERA.postFirstFinish?.snapOnLeadPackSwitch
       && previousActiveCameraMode === 'finish'
@@ -21628,13 +22048,23 @@ class MarbleRace {
       target.set(frame.p.x, frame.p.y + 0.8, frame.p.z);
       desired.copy(target).add(frame.right.clone().multiplyScalar(Math.sin(t) * 28)).add(frame.tangent.clone().multiplyScalar(-22)).add(new THREE.Vector3(0, 17 + Math.cos(t * 0.7) * 5, 0));
     } else if (activeCameraMode === 'cinematicLeader' && leader) {
-      const cfg = (
+      const useToyParkOpeningCinematicLeader = Boolean(
         this.isToyParkViewerOverlayActive()
+        && !lapTransitionCameraActive
+        && (leader.completedLaps || 0) === 0
         && (leader.distance || 0) / Math.max(1, this.trackLength || 1) <= (BROADCAST_CAMERA.toyParkInitialCinematicLeader?.maxProgress ?? 0)
-      )
+      );
+      const cfg = useToyParkOpeningCinematicLeader
         ? BROADCAST_CAMERA.toyParkInitialCinematicLeader
         : BROADCAST_CAMERA.leader;
-      const leaderDistance = leader.distance || 0;
+      const leaderDistance = lapTransitionCameraActive
+        ? (leader.raceDistance || ((leader.completedLaps || 0) * (this.trackLapLength || this.trackLength || 0) + (leader.distance || 0)))
+        : (leader.distance || 0);
+      const cameraTrackLength = lapTransitionCameraActive
+        ? (this.raceDistanceLength || (this.trackLapLength || this.trackLength || 1) * Math.max(1, this.raceTotalLaps || 1))
+        : (this.trackLength || 1);
+      const lapLength = this.trackLapLength || this.trackLength || 1;
+      const lapLocalDistance = ((leaderDistance % Math.max(0.001, lapLength)) + Math.max(0.001, lapLength)) % Math.max(0.001, lapLength);
       const velocity = leader.body?.velocity;
       const speed = velocity ? Math.hypot(velocity.x || 0, velocity.y || 0, velocity.z || 0) : 0;
       const speedFactor = clamp(speed / 20, 0, 1);
@@ -21644,12 +22074,12 @@ class MarbleRace {
         + speedFactor * (cfg.dynamicLookAheadBySpeed || 0)
         + obstacleFactor * (cfg.obstacleLookAheadBoost || 0);
       const t = this.elapsed || 0;
-      const frame = this.getCameraTrackFrameAt(leaderDistance, lookAhead);
+      const frame = this.getCameraTrackFrameAtWrapped(leaderDistance, lookAhead, cameraTrackLength);
       const targetLead = clamp(lookAhead * (cfg.targetLookAheadScale ?? 0.22), 1.5, 5.5);
-      const guideTarget = this.getTrackPointAt(clamp(leaderDistance + targetLead, 0, this.trackLength));
+      const guideTarget = this.getTrackPointAtWrapped(leaderDistance + targetLead, cameraTrackLength);
       const guideBlend = clamp(cfg.targetGuideBlend ?? 0.18, 0, 1);
       const lookPoint = leader.mesh.position.clone().lerp(guideTarget, guideBlend);
-      const trackTarget = this.getTrackPointAt(clamp(leaderDistance, 0, this.trackLength));
+      const trackTarget = this.getTrackPointAtWrapped(leaderDistance, cameraTrackLength);
       const leaderTrackUp = (frame.up || new THREE.Vector3(0, 1, 0)).clone().normalize();
       const trackLiftTarget = new THREE.Vector3(trackTarget.x, trackTarget.y, trackTarget.z).add(leaderTrackUp.clone().multiplyScalar(cfg.targetLift ?? 1.15));
       lookPoint.lerp(trackLiftTarget, 0.52);
@@ -21695,12 +22125,19 @@ class MarbleRace {
         targetYMode: 'track-local-up-leader-target',
         trackTargetY: Number(trackTarget.y.toFixed(2)),
         fov: cfg.fov,
-        toyParkOpeningShotActive: cfg === BROADCAST_CAMERA.toyParkInitialCinematicLeader,
+        toyParkOpeningShotActive: useToyParkOpeningCinematicLeader,
         toyParkOpeningShotMaxProgress: BROADCAST_CAMERA.toyParkInitialCinematicLeader?.maxProgress ?? null,
         shotLabel: cfg.label || null,
         toyParkZoomInFactor: this.isToyParkViewerOverlayActive() ? (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) : 1,
         toyParkZoomInActive: Boolean(this.isToyParkViewerOverlayActive() && (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) < 1),
         effectiveFov: Number((this.isToyParkViewerOverlayActive() ? (cfg.fov || 40) * (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) : (cfg.fov || 40)).toFixed(2)),
+        lapTransitionCameraActive,
+        cameraDistanceModel: lapTransitionCameraActive ? 'race-distance-wrapped-across-lap-boundary' : 'single-lap-distance',
+        cameraDistance: Number(leaderDistance.toFixed(2)),
+        cameraTrackLength: Number(cameraTrackLength.toFixed(2)),
+        lapLocalDistance: Number(lapLocalDistance.toFixed(2)),
+        leaderCompletedLaps: leader.completedLaps || 0,
+        leaderCurrentLap: leader.currentLap || 1,
       };
     } else if (activeCameraMode === 'finish') {
       const cfg = this.isToyParkViewerOverlayActive()
