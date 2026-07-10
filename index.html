@@ -10,6 +10,7 @@
     <div id="app">
       <div id="canvas-container" aria-label="3D marble racing simulation"></div>
       <button id="ui-toggle-btn" class="ui-toggle left-ui-toggle" type="button" aria-controls="left-hud" aria-expanded="true" title="Hide left UI">Like ＆ Subscribe</button>
+      <button id="camera-tune-open-btn" class="ui-toggle camera-tune-open-toggle webui-only" type="button" aria-controls="camera-panel" aria-expanded="false" title="Open Camera Tune sliders">Camera Tune</button>
       <button id="right-ui-toggle-btn" class="ui-toggle right-ui-toggle" type="button" aria-controls="right-hud" aria-expanded="true" title="Hide right UI">＠VibeGameCreator</button>
 
       <aside id="left-hud" class="hud hud-left">
@@ -20,6 +21,65 @@
             <p>Marble Rush Physics League</p>
           </div>
         </div>
+
+        <section id="camera-panel" class="panel camera-panel collapsed">
+          <div class="panel-header">
+            <h2>Camera Tune</h2>
+            <button id="camera-toggle-btn" class="panel-toggle" type="button" aria-controls="camera-panel" aria-expanded="false">Show</button>
+          </div>
+          <div class="panel-body">
+            <div class="button-grid">
+              <button data-camera="default">Default Auto</button>
+              <button data-camera="leadPack">Lead Pack</button>
+              <button data-camera="orbit">Free Orbit</button>
+              <button data-camera="selected">Follow Selected</button>
+              <button data-camera="cinematicLeader">Cinematic Leader</button>
+            </div>
+            <label>
+              Follow Marble
+              <select id="marble-select"></select>
+            </label>
+            <div class="camera-tune-panel" aria-label="Toy Park camera tuning sliders">
+              <div class="camera-tune-head">
+                <strong>Toy Park Camera Tune</strong>
+                <button id="camera-tune-reset-btn" type="button">Reset</button>
+              </div>
+              <label class="camera-tune-row">
+                Back: <span id="camera-tune-back-label">0</span>
+                <input id="camera-tune-back" data-camera-tune="back" type="range" min="-20" max="20" step="0.1" value="0" />
+              </label>
+              <label class="camera-tune-row">
+                Side: <span id="camera-tune-side-label">-2</span>
+                <input id="camera-tune-side" data-camera-tune="side" type="range" min="-20" max="20" step="0.1" value="-2" />
+              </label>
+              <label class="camera-tune-row">
+                Height: <span id="camera-tune-height-label">12</span>
+                <input id="camera-tune-height" data-camera-tune="height" type="range" min="5" max="160" step="1" value="12" />
+              </label>
+              <label class="camera-tune-row">
+                FOV: <span id="camera-tune-fov-label">46</span>
+                <input id="camera-tune-fov" data-camera-tune="fov" type="range" min="8" max="70" step="1" value="46" />
+              </label>
+              <label class="camera-tune-row">
+                Target Track: <span id="camera-tune-target-track-label">0.55</span>
+                <input id="camera-tune-target-track" data-camera-tune="targetTrackLiftBlend" type="range" min="0" max="1" step="0.01" value="0.55" />
+              </label>
+              <label class="camera-tune-row">
+                Target Guide: <span id="camera-tune-target-guide-label">0.08</span>
+                <input id="camera-tune-target-guide" data-camera-tune="targetGuideBlend" type="range" min="0" max="1" step="0.01" value="0.08" />
+              </label>
+              <label class="camera-tune-row">
+                Look Ahead: <span id="camera-tune-look-ahead-label">8.8</span>
+                <input id="camera-tune-look-ahead" data-camera-tune="lookAhead" type="range" min="0" max="25" step="0.1" value="8.8" />
+              </label>
+              <label class="camera-tune-row">
+                Position Smooth: <span id="camera-tune-position-smoothing-label">0.22</span>
+                <input id="camera-tune-position-smoothing" data-camera-tune="positionSmoothing" type="range" min="0.01" max="1" step="0.01" value="0.22" />
+              </label>
+              <small>Camera position 用 Back / Side / Height 三條 track-relative slider 表示；即時改 Default Auto/Cinematic Leader，唔會重新生成賽道。</small>
+            </div>
+          </div>
+        </section>
 
         <section id="controls-panel" class="panel controls-panel collapsed">
           <div class="panel-header">
@@ -206,26 +266,6 @@
               <small>Loading obstacle catalog…</small>
             </div>
             <small>障礙物開始按「普通 / 增益 / 減益」分類；現有障礙物全部歸入普通障礙物，可先開關普通類型後再重新生成賽道。</small>
-          </div>
-        </section>
-
-        <section id="camera-panel" class="panel camera-panel collapsed">
-          <div class="panel-header">
-            <h2>Camera</h2>
-            <button id="camera-toggle-btn" class="panel-toggle" type="button" aria-controls="camera-panel" aria-expanded="false">Show</button>
-          </div>
-          <div class="panel-body">
-            <div class="button-grid">
-              <button data-camera="default">Default Auto</button>
-              <button data-camera="leadPack">Lead Pack</button>
-              <button data-camera="orbit">Free Orbit</button>
-              <button data-camera="selected">Follow Selected</button>
-              <button data-camera="cinematicLeader">Cinematic Leader</button>
-            </div>
-            <label>
-              Follow Marble
-              <select id="marble-select"></select>
-            </label>
           </div>
         </section>
 

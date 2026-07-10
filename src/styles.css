@@ -372,6 +372,43 @@ button:hover {
 }
 
 .button-row { grid-template-columns: repeat(3, 1fr); }
+.camera-tune-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 9px;
+  border: 1px solid rgba(124, 247, 212, 0.18);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.2);
+}
+.camera-tune-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.camera-tune-head button {
+  min-height: 26px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+}
+.camera-tune-row {
+  gap: 3px;
+  color: var(--muted);
+}
+.camera-tune-row span {
+  color: var(--gold);
+  font-weight: 900;
+}
+.camera-tune-panel small {
+  font-size: 10px;
+  line-height: 1.35;
+}
 .track-code-row {
   display: grid;
   gap: 7px;
@@ -653,6 +690,18 @@ button.recording {
 
 .left-ui-toggle {
   bottom: 18px;
+}
+
+.camera-tune-open-toggle {
+  left: 192px;
+  bottom: 18px;
+  border-color: rgba(255, 209, 102, 0.62);
+  color: #ffeaa0;
+  background: linear-gradient(135deg, rgba(255, 209, 102, 0.26), rgba(124, 247, 212, 0.18));
+}
+
+body.playwright-render-hide-left-ui .camera-tune-open-toggle {
+  display: none !important;
 }
 
 .right-ui-toggle {
@@ -1488,8 +1537,9 @@ body.recording-cursor-hidden #canvas-container canvas {
 @media (max-width: 920px) {
   .hud-left, .hud-right { width: calc(100vw - 24px); left: 12px; right: 12px; }
   .ui-toggle { left: 12px; bottom: 12px; }
+  .camera-tune-open-toggle { left: 184px; bottom: 12px; }
   .hud-right { top: auto; bottom: 58px; }
-  .camera-panel { display: none; }
+  .camera-panel { display: block; }
   .brand { display: none; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   #leaderboard { max-height: 30vh; }

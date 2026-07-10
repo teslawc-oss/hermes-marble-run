@@ -66,6 +66,16 @@ const CANVAS_START_HOOK = {
   postStartHoldSeconds: 1.8,
   goFadeStartSeconds: 1.15,
 };
+const CAMERA_TUNE_FIELDS = {
+  back: { label: 'Back', decimals: 1 },
+  side: { label: 'Side', decimals: 1 },
+  height: { label: 'Height', decimals: 0 },
+  fov: { label: 'FOV', decimals: 0 },
+  targetTrackLiftBlend: { label: 'Target Track', decimals: 2 },
+  targetGuideBlend: { label: 'Target Guide', decimals: 2 },
+  lookAhead: { label: 'Look Ahead', decimals: 1 },
+  positionSmoothing: { label: 'Position Smooth', decimals: 2 },
+};
 const TRACK_PRESETS = {
   short: { label: 'Short', base: 240, variation: 56, segment: 9, branches: 1 },
   medium: { label: 'Standard', base: 380, variation: 90, segment: 10, branches: 2 },
@@ -612,14 +622,16 @@ const BROADCAST_CAMERA = {
   toyParkDefaultAlternatingSequence: ['cinematicLeader'],
   toyParkDefaultAlternatingLabel: 'Toy Park Default Auto stays on cinematicLeader through non-final-lap finish-line crossings; the finish-line camera is reserved for after the final-lap winner crosses the line.',
   toyParkFinalApproachProgress: 0.94,
-  toyParkFinalApproachDistance: 15,
-  toyParkFinalApproachMode: 'final-lap-crossed-only',
-  toyParkFinalApproachLabel: 'Toy Park final approach is gated to the final lap: non-final laps stay cinematicLeader through the finish line, and the camera switches to finish only after the final-lap crossing / first finisher is recorded.',
+  toyParkFinalApproachDistance: 22,
+  toyParkFinalApproachMode: 'final-lap-pre-finish-through-all-finished',
+  toyParkFinalApproachLabel: 'Toy Park final approach is gated to the final lap: non-final laps stay cinematicLeader through the finish line, while the final-lap leader switches to a top-down finish-line bird-eye shot before crossing and holds it until every marble finishes.',
   finishSlowMotionCameraHoldSeconds: 3.4,
   finishSlowMotionCameraLabel: 'when final-lap finish slow motion triggers near/crossing the line, Default Auto holds the finish-line shot through the slow-mo window so the slow finish camera remains visible before returning to race/podium coverage; intermediate lap crossings do not start finish slow motion',
   lapTransitionCamera: {
-    snapFollowSeconds: 1.2,
-    label: 'after an intermediate Toy Park lap crossing, keep Default Auto on cinematicLeader and use wrapped race-distance sampling so the camera follows smoothly through the finish/start line into the next lap',
+    snapFollowSeconds: 5.5,
+    startTileFollowDistance: 22,
+    maxFollowSeconds: 8,
+    label: 'after an intermediate Toy Park lap crossing, keep Default Auto on cinematicLeader and anchor the camera target to the live marble until it has smoothly crossed the start tile into the next lap',
   },
   postFirstFinish: {
     finishHoldSeconds: 7,
@@ -635,7 +647,7 @@ const BROADCAST_CAMERA = {
     boostStep: 3.5,
     maxElevationDegrees: 58,
     protectedModes: ['leadBattle', 'selected', 'unfinishedOrder', 'replayHighlight'],
-    raceFollowProtectedModes: ['leadPack', 'cinematicLeader'],
+    raceFollowProtectedModes: ['leadPack'],
     raceFollowMaxHeightBoost: 5,
     raceFollowBoostStep: 2.5,
     raceFollowAvoidance: {
@@ -651,47 +663,56 @@ const BROADCAST_CAMERA = {
     label: 'auto camera applies a bounded lift on real line-of-sight blockers; lead-pack and 60%+ cinematic leader only use the smaller passed-track guard so the shot stays readable without being blocked by old track sections',
   },
   leader: {
-    back: -9.9,
-    side: 1.16,
-    height: 27,
-    lookAhead: 14.8,
-    targetLookAheadScale: 0.3,
-    targetGuideBlend: 0.44,
-    targetLift: 1.2,
-    dynamicLookAheadBySpeed: 6.5,
-    maxSideWave: 0.18,
-    sideWaveSpeed: 0.24,
-    cameraYawDegrees: 11,
-    positionSmoothing: 0.065,
-    targetSmoothing: 0.13,
-    fov: 30.2,
-    obstacleAwareDistance: 30.2,
-    obstaclePullback: 1.2,
-    obstacleHeightBoost: 2.7,
-    obstacleLookAheadBoost: 3.2,
-    label: 'mid/late-race leader chase shot: zoomed out about 8% so P1 and more upcoming track stay visible without feeling too distant',
+    back: 0,
+    side: -2,
+    height: 12,
+    lookAhead: 8.8,
+    targetLookAheadScale: 0.18,
+    targetGuideBlend: 0.08,
+    targetTrackLiftBlend: 0.55,
+    targetLift: 0.86,
+    dynamicLookAheadBySpeed: 1.8,
+    maxSideWave: 0.02,
+    sideWaveSpeed: 0.14,
+    cameraYawDegrees: 0,
+    roadPreviewRotateDegrees: 0,
+    roadPreviewRotateCycleSeconds: 7.5,
+    roadPreviewRotateDuty: 0.36,
+    positionSmoothing: 0.22,
+    targetSmoothing: 0.3,
+    fov: 46,
+    obstacleAwareDistance: 35,
+    obstaclePullback: 0,
+    obstacleHeightBoost: 0,
+    obstacleLookAheadBoost: 0,
+    heightSmoothing: 0.5,
+    maxVerticalStep: 4,
+    label: 'Toy Park true bird-eye near-track drone follow: top-down camera stays close to active track while following leader/chaser',
   },
   toyParkInitialCinematicLeader: {
     maxProgress: 0.08,
-    back: -7.2,
-    side: 1.22,
-    height: 34,
-    lookAhead: 10.8,
-    targetLookAheadScale: 0.26,
-    targetGuideBlend: 0.4,
-    targetLift: 1.05,
-    dynamicLookAheadBySpeed: 4.2,
-    maxSideWave: 0.06,
-    sideWaveSpeed: 0.18,
-    cameraYawDegrees: 10,
-    positionSmoothing: 0.055,
-    targetSmoothing: 0.105,
-    fov: 26.4,
-    obstacleAwareDistance: 24,
-    obstaclePullback: 0.8,
-    obstacleHeightBoost: 2.4,
-    obstacleLookAheadBoost: 2.5,
-    label: 'Toy Park opening cinematic leader: higher off the track and closer zoom, framing the start gate and marbles like a mobile three-quarter overhead shot',
+    holdSeconds: 1.8,
+    back: -7.25,
+    side: 0.78,
+    height: 41.5,
+    lookAhead: 13.2,
+    targetLookAheadScale: 0.28,
+    targetGuideBlend: 0.46,
+    targetLift: 0.95,
+    dynamicLookAheadBySpeed: 3.8,
+    maxSideWave: 0.02,
+    sideWaveSpeed: 0.12,
+    cameraYawDegrees: 7.5,
+    positionSmoothing: 0.064,
+    targetSmoothing: 0.13,
+    fov: 27.2,
+    obstacleAwareDistance: 25,
+    obstaclePullback: 0.6,
+    obstacleHeightBoost: 0,
+    obstacleLookAheadBoost: 2.3,
+    heightSmoothing: 0.12,
+    maxVerticalStep: 0.3,
+    label: 'Toy Park start camera: holds briefly before following the leader, keeping the START sign/racers readable while revealing more generated road after the gate',
   },
   leadPack: {
     back: -8.2,
@@ -731,11 +752,11 @@ const BROADCAST_CAMERA = {
   unfinished: { back: -2.6, side: 0.8, height: 27.0 },
   finish: { forward: 3.3, height: 27.5, targetLift: 1.05, fov: 44 },
   toyParkFinish: {
-    forward: 2.0,
-    height: 22.5,
-    targetLift: 0.72,
-    fov: 38,
-    label: 'Toy Park finish-line camera: lower and tighter framing on the checkered line so the final shot reads as a finish instead of a distant overview',
+    forward: 0,
+    height: 48,
+    targetLift: 0.35,
+    fov: 34,
+    label: 'Toy Park final-lap finish camera: top-down finish-line bird-eye view that starts before the leader crosses and stays until every marble completes',
   },
   podium360: {
     enabled: true,
@@ -1203,6 +1224,7 @@ class MarbleRace {
     this.cameraTargetSmoothed = new THREE.Vector3();
     this.leadPackDistanceSmoothed = 0;
     this.leadPackInitialized = false;
+    this.cinematicLeaderSmoothedHeight = null;
     this.initialCameraRotationApplied = false;
     this.leadBattleInitialized = false;
     this.leadBattleState = null;
@@ -1663,6 +1685,7 @@ class MarbleRace {
       leftHud: document.querySelector('#left-hud'),
       rightHud: document.querySelector('#right-hud'),
       uiToggle: document.querySelector('#ui-toggle-btn'),
+      cameraTuneOpen: document.querySelector('#camera-tune-open-btn'),
       rightUiToggle: document.querySelector('#right-ui-toggle-btn'),
       record: document.querySelector('#record-btn'),
       continuousRecord: document.querySelector('#continuous-record-btn'),
@@ -1681,6 +1704,9 @@ class MarbleRace {
       controlsToggle: document.querySelector('#controls-toggle-btn'),
       cameraPanel: document.querySelector('#camera-panel'),
       cameraToggle: document.querySelector('#camera-toggle-btn'),
+      cameraTuneReset: document.querySelector('#camera-tune-reset-btn'),
+      cameraTuneInputs: Array.from(document.querySelectorAll('[data-camera-tune]')),
+      cameraTuneLabels: {},
       obstacleTypesPanel: document.querySelector('#obstacle-types-panel'),
       obstacleTypesToggle: document.querySelector('#obstacle-types-toggle-btn'),
       obstacleTypeToggles: Array.from(document.querySelectorAll('[data-obstacle-type]')),
@@ -1744,6 +1770,12 @@ class MarbleRace {
     };
 
     this.leftUICollapsed = false;
+    this.ui.cameraTuneInputs?.forEach((input) => {
+      const key = input.dataset.cameraTune;
+      if (key) this.ui.cameraTuneLabels[key] = input.closest('label')?.querySelector('span') || null;
+    });
+    this.cameraTuneDefaults = { ...BROADCAST_CAMERA.leader };
+    this.cameraTuneOverrides = {};
     this.applyLeftUIState();
     this.applyRightUIState();
     this.setTtsPitch(this.ui.ttsPitchSlider?.value || this.ttsPitch || 1, { resetQueue: false, updateStatus: false });
@@ -2884,95 +2916,263 @@ class MarbleRace {
     const rows = (ranking?.length ? ranking : this.getRanking({ force: true })).filter(Boolean).slice(0, 3);
     if (!rows.length) return null;
     const winner = rows[0];
-    const radius = vertical ? 24 : 30;
-    const titleFont = vertical ? '900 42px Arial Black, Impact, sans-serif' : '900 46px Arial Black, Impact, sans-serif';
-    const winnerFont = vertical ? '900 34px Arial Black, Impact, sans-serif' : '900 38px Arial Black, Impact, sans-serif';
-    const rowFont = vertical ? '800 22px Arial, system-ui, sans-serif' : '800 25px Arial, system-ui, sans-serif';
+    const dark = '#17131f';
+    const normalizeHex = (value, fallback = '#ffffff') => {
+      if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value.trim())) return value.trim();
+      if (Number.isFinite(value)) return `#${Number(value).toString(16).padStart(6, '0')}`;
+      return fallback;
+    };
+    const paletteFor = (data) => {
+      const palette = Array.isArray(data?.paletteHex) && data.paletteHex.length
+        ? data.paletteHex
+        : [data?.colorHex || data?.color || '#ffd43d', '#ffffff', dark, '#ff7a3d'];
+      return [
+        normalizeHex(palette[0], '#ffd43d'),
+        normalizeHex(palette[1], '#ffffff'),
+        normalizeHex(palette[2], dark),
+        normalizeHex(palette[3], '#ff7a3d'),
+      ];
+    };
+    const lightenHex = (hex, amount = 0.28) => {
+      const raw = normalizeHex(hex, '#ffffff').slice(1);
+      const value = Number.parseInt(raw, 16);
+      const r = Math.round(((value >> 16) & 255) + (255 - ((value >> 16) & 255)) * amount);
+      const g = Math.round(((value >> 8) & 255) + (255 - ((value >> 8) & 255)) * amount);
+      const b = Math.round((value & 255) + (255 - (value & 255)) * amount);
+      return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+    };
+    const scale = Math.min(1.24, Math.max(0.82, width / 430));
+    const drawCheckerFlag = (fx, fy, fw, fh, rotate = 0) => {
+      ctx.save();
+      ctx.translate(fx + fw / 2, fy + fh / 2);
+      ctx.rotate((rotate * Math.PI) / 180);
+      this.drawViewerRoundedRect(ctx, -fw / 2, -fh / 2, fw, fh, 6 * scale);
+      ctx.clip();
+      const cell = Math.max(8 * scale, fh / 3.5);
+      for (let yy = -fh / 2; yy < fh / 2 + cell; yy += cell) {
+        for (let xx = -fw / 2; xx < fw / 2 + cell; xx += cell) {
+          ctx.fillStyle = ((Math.floor((xx + fw / 2) / cell) + Math.floor((yy + fh / 2) / cell)) % 2) ? '#111111' : '#ffffff';
+          ctx.fillRect(xx, yy, cell, cell);
+        }
+      }
+      ctx.restore();
+      ctx.save();
+      ctx.translate(fx + fw / 2, fy + fh / 2);
+      ctx.rotate((rotate * Math.PI) / 180);
+      this.drawViewerRoundedRect(ctx, -fw / 2, -fh / 2, fw, fh, 6 * scale);
+      ctx.lineWidth = 3 * scale;
+      ctx.strokeStyle = dark;
+      ctx.stroke();
+      ctx.restore();
+    };
+    const drawAvatar = (data, cx, cy, size) => {
+      const [base, accent, accent2, accent3] = paletteFor(data);
+      const ax = cx - size * 0.5;
+      const ay = cy - size * 0.5;
+      const radius = size * 0.43;
+      const patternKey = data?.patternKey || '';
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, size * 0.49, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.lineWidth = 4 * scale;
+      ctx.strokeStyle = dark;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.clip();
+      const gradient = ctx.createLinearGradient(ax, ay, ax + size, ay + size);
+      gradient.addColorStop(0, lightenHex(base, 0.18));
+      gradient.addColorStop(0.55, base);
+      gradient.addColorStop(1, accent);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(ax, ay, size, size);
+
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      if (patternKey === 'candy-captain') {
+        ctx.strokeStyle = accent; ctx.lineWidth = size * 0.13;
+        for (let i = -2; i < 5; i += 1) { ctx.beginPath(); ctx.moveTo(ax + i * size * 0.28, ay + size); ctx.lineTo(ax + (i + 1.2) * size * 0.28, ay); ctx.stroke(); }
+        ctx.fillStyle = accent2; ctx.fillRect(cx - size * 0.24, cy - size * 0.34, size * 0.48, size * 0.18);
+        ctx.fillStyle = dark; ctx.beginPath(); ctx.arc(cx - size * 0.12, cy, size * 0.055, 0, Math.PI * 2); ctx.arc(cx + size * 0.12, cy, size * 0.055, 0, Math.PI * 2); ctx.fill();
+      } else if (patternKey === 'bubble-goblin') {
+        ctx.strokeStyle = accent; ctx.lineWidth = size * 0.055;
+        for (let i = 0; i < 8; i += 1) { ctx.beginPath(); ctx.arc(ax + ((i * 17) % 43) / 43 * size, ay + ((i * 23) % 37) / 37 * size, size * (0.07 + (i % 3) * 0.02), 0, Math.PI * 2); ctx.stroke(); }
+        ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(cx - size * 0.12, cy, size * 0.16, size * 0.22, -0.15, 0, Math.PI * 2); ctx.ellipse(cx + size * 0.16, cy, size * 0.16, size * 0.22, 0.15, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = dark; ctx.beginPath(); ctx.arc(cx - size * 0.08, cy + size * 0.01, size * 0.07, 0, Math.PI * 2); ctx.arc(cx + size * 0.12, cy + size * 0.01, size * 0.07, 0, Math.PI * 2); ctx.fill();
+      } else if (patternKey === 'rocket-bunny') {
+        ctx.fillStyle = accent;
+        for (let i = 0; i < 6; i += 1) { ctx.beginPath(); ctx.arc(ax + (i * 0.18 + 0.08) * size, ay + ((i % 3) * 0.23 + 0.1) * size, size * 0.035, 0, Math.PI * 2); ctx.fill(); }
+        ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(cx - size * 0.11, cy - size * 0.19, size * 0.07, size * 0.23, -0.15, 0, Math.PI * 2); ctx.ellipse(cx + size * 0.11, cy - size * 0.19, size * 0.07, size * 0.23, 0.15, 0, Math.PI * 2); ctx.arc(cx, cy + size * 0.08, size * 0.23, 0, Math.PI * 2); ctx.fill();
+      } else if (patternKey === 'choco-bear') {
+        ctx.fillStyle = accent; ctx.fillRect(ax, ay, size, size * 0.28);
+        ctx.fillStyle = accent2; ctx.beginPath(); ctx.arc(cx - size * 0.22, cy - size * 0.13, size * 0.16, 0, Math.PI * 2); ctx.arc(cx + size * 0.22, cy - size * 0.13, size * 0.16, 0, Math.PI * 2); ctx.arc(cx, cy + size * 0.08, size * 0.31, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = dark; ctx.beginPath(); ctx.arc(cx - size * 0.11, cy + size * 0.02, size * 0.045, 0, Math.PI * 2); ctx.arc(cx + size * 0.11, cy + size * 0.02, size * 0.045, 0, Math.PI * 2); ctx.ellipse(cx, cy + size * 0.16, size * 0.08, size * 0.05, 0, 0, Math.PI * 2); ctx.fill();
+      } else if (patternKey === 'neon-penguin') {
+        ctx.strokeStyle = accent; ctx.lineWidth = size * 0.08;
+        for (let i = 0; i < 4; i += 1) { ctx.beginPath(); ctx.moveTo(ax, ay + size * (0.2 + i * 0.18)); ctx.lineTo(ax + size, ay + size * (0.1 + i * 0.18)); ctx.stroke(); }
+        ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(cx, cy + size * 0.08, size * 0.28, size * 0.34, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = accent2; ctx.fillRect(cx - size * 0.25, cy - size * 0.09, size * 0.5, size * 0.14);
+      } else if (patternKey === 'rainbow-unicorn') {
+        [accent, accent2, accent3].forEach((hex, i) => { ctx.strokeStyle = hex; ctx.lineWidth = size * 0.055; ctx.beginPath(); ctx.arc(cx, cy, size * (0.24 + i * 0.1), Math.PI * 1.05, Math.PI * 1.85); ctx.stroke(); });
+        ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(cx, cy + size * 0.06, size * 0.27, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#ffe66d'; ctx.beginPath(); ctx.moveTo(cx, cy - size * 0.43); ctx.lineTo(cx + size * 0.13, cy - size * 0.08); ctx.lineTo(cx - size * 0.13, cy - size * 0.08); ctx.closePath(); ctx.fill();
+      } else if (patternKey === 'mecha-duck') {
+        ctx.fillStyle = accent; ctx.fillRect(ax, ay, size * 0.47, size);
+        ctx.fillStyle = accent3; ctx.beginPath(); ctx.arc(cx, cy + size * 0.02, size * 0.31, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = accent2; ctx.fillRect(cx + size * 0.05, cy - size * 0.23, size * 0.28, size * 0.25);
+        ctx.fillStyle = '#ff8a00'; ctx.beginPath(); ctx.ellipse(cx, cy + size * 0.19, size * 0.28, size * 0.08, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = dark; ctx.beginPath(); ctx.arc(cx - size * 0.13, cy - size * 0.06, size * 0.045, 0, Math.PI * 2); ctx.arc(cx + size * 0.2, cy - size * 0.11, size * 0.06, 0, Math.PI * 2); ctx.fill();
+      } else if (patternKey === 'lava-dragon') {
+        ctx.strokeStyle = accent2; ctx.lineWidth = size * 0.12;
+        for (let i = -1; i < 4; i += 1) { ctx.beginPath(); ctx.moveTo(ax + size * (i * 0.26), ay); ctx.lineTo(ax + size * (0.26 + i * 0.26), ay + size); ctx.stroke(); }
+        ctx.strokeStyle = accent3; ctx.lineWidth = size * 0.055; ctx.stroke();
+        ctx.fillStyle = accent2; ctx.beginPath(); ctx.arc(cx, cy, size * 0.31, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = base; ctx.beginPath(); ctx.ellipse(cx, cy, size * 0.25, size * 0.13, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#101010'; ctx.beginPath(); ctx.ellipse(cx, cy, size * 0.045, size * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.strokeStyle = accent; ctx.lineWidth = size * 0.11;
+        ctx.beginPath(); ctx.arc(cx, cy, size * 0.28, 0, Math.PI * 1.5); ctx.stroke();
+      }
+      ctx.restore();
+
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.strokeStyle = dark; ctx.lineWidth = 3.5 * scale; ctx.stroke();
+      const highlight = ctx.createRadialGradient(ax + size * 0.32, ay + size * 0.25, size * 0.03, ax + size * 0.35, ay + size * 0.28, size * 0.31);
+      highlight.addColorStop(0, 'rgba(255,255,255,0.82)');
+      highlight.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = highlight;
+      ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    };
+    const drawNameBadge = (text, px, py, pw, ph, color, font, strokeWidth = 4 * scale) => {
+      this.drawViewerRoundedRect(ctx, px, py, pw, ph, ph * 0.34);
+      const grad = ctx.createLinearGradient(px, py, px + pw, py + ph);
+      grad.addColorStop(0, color || '#ffd43d');
+      grad.addColorStop(1, 'rgba(23, 19, 31, 0.92)');
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.lineWidth = 3 * scale;
+      ctx.strokeStyle = dark;
+      ctx.stroke();
+      this.drawViewerText(ctx, text, px + pw / 2, py + ph * 0.66, {
+        font,
+        fill: '#ffffff',
+        strokeWidth,
+        align: 'center',
+        maxWidth: pw - 16 * scale,
+      });
+    };
+
     ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.45)';
-    ctx.shadowBlur = vertical ? 18 : 24;
-    ctx.shadowOffsetY = vertical ? 8 : 10;
-    this.drawViewerRoundedRect(ctx, x, y, width, height, radius);
-    const gradient = ctx.createLinearGradient(x, y, x + width, y + height);
-    gradient.addColorStop(0, 'rgba(23, 19, 31, 0.94)');
-    gradient.addColorStop(0.48, 'rgba(255, 118, 186, 0.88)');
-    gradient.addColorStop(1, 'rgba(255, 214, 91, 0.92)');
-    ctx.fillStyle = gradient;
+    this.drawViewerRoundedRect(ctx, x, y, width, height, 26 * scale);
+    const panelGradient = ctx.createLinearGradient(x, y, x + width, y + height);
+    panelGradient.addColorStop(0, 'rgba(39, 198, 255, 0.96)');
+    panelGradient.addColorStop(0.48, 'rgba(43, 70, 190, 0.94)');
+    panelGradient.addColorStop(1, 'rgba(255, 164, 54, 0.96)');
+    ctx.fillStyle = panelGradient;
     ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = 'rgba(255,255,255,0.78)';
-    ctx.lineWidth = vertical ? 4 : 5;
+    const glow = ctx.createRadialGradient(x + width * 0.18, y, 0, x + width * 0.18, y, width * 0.42);
+    glow.addColorStop(0, 'rgba(255, 212, 61, 0.20)');
+    glow.addColorStop(1, 'rgba(255, 212, 61, 0)');
+    ctx.fillStyle = glow;
+    ctx.fill();
+    ctx.lineWidth = 4 * scale;
+    ctx.strokeStyle = dark;
+    ctx.stroke();
+    this.drawViewerRoundedRect(ctx, x + 8 * scale, y + 8 * scale, width - 16 * scale, height - 16 * scale, 20 * scale);
+    ctx.lineWidth = 2 * scale;
+    ctx.strokeStyle = 'rgba(255,255,255,0.38)';
     ctx.stroke();
 
-    this.drawViewerText(ctx, 'FINAL RESULT', x + width / 2, y + (vertical ? 42 : 50), {
-      font: titleFont,
-      fill: '#ffffff',
-      strokeWidth: 7,
+    drawCheckerFlag(x + 28 * scale, y - 22 * scale, 72 * scale, 42 * scale, -9);
+    drawCheckerFlag(x + width - 100 * scale, y - 22 * scale, 72 * scale, 42 * scale, 9);
+    this.drawViewerText(ctx, 'FINAL RESULT', x + width / 2, y + 66 * scale, {
+      font: `900 ${Math.round(40 * scale)}px Arial Black, Impact, sans-serif`,
+      fill: '#ffd43d',
+      stroke: dark,
+      strokeWidth: 7 * scale,
       align: 'center',
-      maxWidth: width - 48,
+      maxWidth: width - 40 * scale,
     });
-    this.drawViewerText(ctx, '🏆 WINNER', x + width / 2, y + (vertical ? 88 : 102), {
-      font: vertical ? '900 22px Arial Black, Impact, sans-serif' : '900 25px Arial Black, Impact, sans-serif',
-      fill: '#141414',
-      strokeWidth: 0,
-      align: 'center',
-      maxWidth: width - 52,
-    });
-    const winnerColor = winner.colorHex || '#ffd43d';
-    ctx.save();
-    ctx.fillStyle = winnerColor;
-    ctx.beginPath();
-    ctx.arc(x + (vertical ? 78 : 92), y + (vertical ? 129 : 150), vertical ? 28 : 34, 0, Math.PI * 2);
+
+    const winnerColor = normalizeHex(winner.colorHex || winner.color, '#ffd43d');
+    const winnerX = x + 30 * scale;
+    const winnerY = y + 102 * scale;
+    const winnerW = width - 60 * scale;
+    const winnerH = 150 * scale;
+    this.drawViewerRoundedRect(ctx, winnerX, winnerY, winnerW, winnerH, 22 * scale);
+    const winnerGradient = ctx.createLinearGradient(winnerX, winnerY, winnerX + winnerW, winnerY + winnerH);
+    winnerGradient.addColorStop(0, 'rgba(255, 244, 151, 0.97)');
+    winnerGradient.addColorStop(1, 'rgba(255, 191, 61, 0.96)');
+    ctx.fillStyle = winnerGradient;
     ctx.fill();
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 4 * scale;
+    ctx.strokeStyle = dark;
     ctx.stroke();
-    ctx.restore();
-    this.drawViewerText(ctx, winner.name || 'Winner', x + (vertical ? 122 : 142), y + (vertical ? 141 : 164), {
-      font: winnerFont,
-      fill: '#fff7b1',
-      strokeWidth: 7,
-      maxWidth: width - (vertical ? 150 : 172),
+    const winnerGlow = ctx.createRadialGradient(winnerX + winnerW * 0.18, winnerY + winnerH * 0.22, 0, winnerX + winnerW * 0.18, winnerY + winnerH * 0.22, winnerW * 0.32);
+    winnerGlow.addColorStop(0, `${winnerColor}66`);
+    winnerGlow.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = winnerGlow;
+    ctx.fill();
+    this.drawViewerText(ctx, '🏆 WINNER', winnerX + 16 * scale, winnerY + 34 * scale, {
+      font: `900 ${Math.round(13 * scale)}px Arial Black, Impact, sans-serif`,
+      fill: dark,
+      strokeWidth: 0,
+      maxWidth: winnerW - 32 * scale,
     });
+    drawAvatar(winner, winnerX + 60 * scale, winnerY + 88 * scale, 76 * scale, true);
+    drawNameBadge(winner.name || 'Winner', winnerX + 110 * scale, winnerY + 58 * scale, winnerW - 136 * scale, 42 * scale, winnerColor, `900 ${Math.round(28 * scale)}px Arial Black, Impact, sans-serif`);
     const winnerTime = Number.isFinite(winner.finishTime) ? `${winner.finishTime.toFixed(2)}s` : 'FINISHED';
-    this.drawViewerText(ctx, winnerTime, x + width - 30, y + (vertical ? 180 : 202), {
-      font: vertical ? '900 22px Arial Black, Impact, sans-serif' : '900 25px Arial Black, Impact, sans-serif',
-      fill: '#ffffff',
-      strokeWidth: 5,
+    this.drawViewerText(ctx, winnerTime, winnerX + winnerW - 18 * scale, winnerY + 132 * scale, {
+      font: `900 ${Math.round(28 * scale)}px Arial Black, Impact, sans-serif`,
+      fill: dark,
+      stroke: 'rgba(255,255,255,0.45)',
+      strokeWidth: 1.5 * scale,
       align: 'right',
-      maxWidth: 170,
+      maxWidth: winnerW - 120 * scale,
     });
+
     rows.slice(1, 3).forEach((data, index) => {
       const rank = index + 2;
-      const rowY = y + (vertical ? 213 : 240) + index * (vertical ? 43 : 48);
-      this.drawViewerRoundedRect(ctx, x + 28, rowY - 27, width - 56, vertical ? 34 : 39, vertical ? 16 : 18);
-      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      const rowX = x + 30 * scale;
+      const rowY = y + (272 + index * 62) * scale;
+      const rowW = width - 60 * scale;
+      const rowH = 48 * scale;
+      const [base, accent, accent2] = paletteFor(data);
+      this.drawViewerRoundedRect(ctx, rowX, rowY, rowW, rowH, 16 * scale);
+      const rowGradient = ctx.createLinearGradient(rowX, rowY, rowX + rowW, rowY + rowH);
+      rowGradient.addColorStop(0, accent || '#ffffff');
+      rowGradient.addColorStop(0.55, base || '#ffd43d');
+      rowGradient.addColorStop(1, accent2 || '#ffffff');
+      ctx.fillStyle = rowGradient;
       ctx.fill();
-      this.drawViewerText(ctx, `${rank === 2 ? '🥈' : '🥉'} #${rank}`, x + 50, rowY, {
-        font: rowFont,
-        fill: '#ffffff',
-        strokeWidth: 4,
-        maxWidth: 95,
+      ctx.lineWidth = 3 * scale;
+      ctx.strokeStyle = dark;
+      ctx.stroke();
+      this.drawViewerText(ctx, `${rank === 2 ? '🥈' : '🥉'} #${rank}`, rowX + 12 * scale, rowY + 31 * scale, {
+        font: `900 ${Math.round(15 * scale)}px Arial Black, Impact, sans-serif`,
+        fill: dark,
+        strokeWidth: 0,
+        maxWidth: 72 * scale,
       });
-      this.drawViewerText(ctx, data.name || `Marble ${rank}`, x + (vertical ? 138 : 150), rowY, {
-        font: rowFont,
-        fill: data.colorHex || '#ffffff',
-        strokeWidth: 4,
-        maxWidth: width - (vertical ? 260 : 285),
-      });
+      drawAvatar(data, rowX + 94 * scale, rowY + rowH / 2, 50 * scale, false);
+      drawNameBadge(data.name || `Marble ${rank}`, rowX + 127 * scale, rowY + 8 * scale, rowW - 240 * scale, 32 * scale, normalizeHex(data.colorHex || data.color, '#ffd43d'), `900 ${Math.round(16 * scale)}px Arial Black, Impact, sans-serif`, 3 * scale);
       const time = Number.isFinite(data.finishTime) ? `${data.finishTime.toFixed(2)}s` : '--';
-      this.drawViewerText(ctx, time, x + width - 46, rowY, {
-        font: rowFont,
-        fill: '#fff7b1',
-        strokeWidth: 4,
+      this.drawViewerText(ctx, time, rowX + rowW - 12 * scale, rowY + 31 * scale, {
+        font: `900 ${Math.round(15 * scale)}px Arial Black, Impact, sans-serif`,
+        fill: dark,
+        strokeWidth: 0,
         align: 'right',
-        maxWidth: 110,
+        maxWidth: 82 * scale,
       });
     });
     ctx.restore();
     return {
       visible: true,
-      style: 'toy-park-final-result-canvas-card',
+      style: 'toy-park-final-result-web-matched-canvas-card',
+      webParity: true,
       layout: vertical ? 'vertical' : 'horizontal',
       rect: { x, y, width, height },
       rows: rows.map((data, index) => ({ rank: index + 1, name: data.name, finishTime: data.finishTime ?? null })),
@@ -3096,10 +3296,10 @@ class MarbleRace {
     const finalResultSummary = toyParkOverlay && this.state === 'finished'
       ? this.drawToyParkFinalResultCanvasCard({
         ctx,
-        x: Math.max(44, logicalW * 0.5 - 315),
-        y: Math.max(150, logicalH * 0.5 - 190),
-        width: 630,
-        height: 345,
+        x: Math.max(44, logicalW * 0.5 - 318),
+        y: Math.max(120, logicalH * 0.5 - 252),
+        width: 636,
+        height: 504,
         vertical: false,
         ranking: rankingSource,
       })
@@ -3265,10 +3465,10 @@ class MarbleRace {
     const finalResultSummary = toyParkOverlay && this.state === 'finished'
       ? this.drawToyParkFinalResultCanvasCard({
         ctx,
-        x: Math.max(28, w * 0.5 - 300),
-        y: Math.max(190, h * 0.5 - 205),
-        width: Math.min(600, w - 56),
-        height: 360,
+        x: Math.max(28, w * 0.5 - Math.min(516, w - 56) / 2),
+        y: Math.max(160, h * 0.5 - 252),
+        width: Math.min(516, w - 56),
+        height: 504,
         vertical: true,
         ranking,
       })
@@ -3410,7 +3610,9 @@ class MarbleRace {
         sh: Number(rect.sh.toFixed(1)),
       },
       cameraCropFactor: Number(cameraCropFactor.toFixed(3)),
-      cameraCropCompensation: cameraCropFactor > 1.01 ? 'shorts/vertical cover crop detected; render camera FOV is widened while capturing so the 9:16 video keeps the same usable race view' : 'none',
+      cameraCropCompensation: this.videoCompositeCameraCropState?.cropCompensationDisabledForToyPark
+        ? 'disabled for Toy Park vertical render; using web camera FOV despite cover crop'
+        : (cameraCropFactor > 1.01 ? 'shorts/vertical cover crop detected; render camera FOV is widened while capturing so the 9:16 video keeps the same usable race view' : 'none'),
       cameraFov: Number((this.camera?.fov || 0).toFixed(2)),
       overlay: this.lastViewerOverlaySummary || null,
     };
@@ -3465,6 +3667,7 @@ class MarbleRace {
     this.ui.regen.addEventListener('click', () => this.newRace({ regenerateTrack: true }));
     this.ui.pause.addEventListener('click', () => this.togglePause());
     this.ui.uiToggle.addEventListener('click', () => this.toggleLeftUI());
+    this.ui.cameraTuneOpen?.addEventListener('click', () => this.openCameraTunePanel());
     this.ui.rightUiToggle.addEventListener('click', () => this.toggleRightUI());
     this.ui.controlsToggle.addEventListener('click', () => this.togglePanel(this.ui.controlsPanel, this.ui.controlsToggle));
     this.ui.cameraToggle.addEventListener('click', () => this.togglePanel(this.ui.cameraPanel, this.ui.cameraToggle));
@@ -3525,6 +3728,12 @@ class MarbleRace {
     document.querySelectorAll('[data-camera]').forEach((button) => {
       button.addEventListener('click', () => { this.cameraMode = button.dataset.camera; });
     });
+    this.ui.cameraTuneInputs?.forEach((input) => {
+      input.addEventListener('input', () => this.updateCameraTuneFromUI());
+      input.addEventListener('change', () => this.updateCameraTuneFromUI());
+    });
+    this.ui.cameraTuneReset?.addEventListener('click', () => this.resetCameraTuneSliders());
+    this.syncCameraTuneSliders();
     window.addEventListener('keydown', (event) => {
       if (event.code === 'Space') return;
       if (event.key.toLowerCase() === 'r') this.newRace({ regenerateTrack: false });
@@ -3874,6 +4083,7 @@ class MarbleRace {
   resetDefaultAutoCameraForRace({ preservePhase = false } = {}) {
     this.cameraMode = 'default';
     this.leadPackInitialized = false;
+    this.cinematicLeaderSmoothedHeight = null;
     this.leadBattleInitialized = false;
     this.leadBattleState = null;
     this.defaultCameraFocusId = null;
@@ -17297,6 +17507,12 @@ class MarbleRace {
       this.ui.uiToggle.title = this.leftUICollapsed ? 'Show left UI' : 'Hide left UI';
       this.ui.uiToggle.setAttribute('aria-expanded', String(!this.leftUICollapsed));
     }
+    if (this.ui.cameraTuneOpen) {
+      const open = !this.leftUICollapsed && !this.ui.cameraPanel?.classList.contains('collapsed');
+      this.ui.cameraTuneOpen.setAttribute('aria-expanded', String(open));
+      this.ui.cameraTuneOpen.textContent = open ? 'Hide Tune' : 'Camera Tune';
+      this.ui.cameraTuneOpen.title = open ? 'Hide Camera Tune sliders' : 'Open Camera Tune sliders';
+    }
   }
 
   applyRightUIState() {
@@ -17324,6 +17540,20 @@ class MarbleRace {
 
   toggleLeftUI() {
     this.leftUICollapsed = !this.leftUICollapsed;
+    this.applyLeftUIState();
+    this.updateUI();
+  }
+
+  openCameraTunePanel() {
+    const shouldClose = !this.leftUICollapsed && !this.ui.cameraPanel?.classList.contains('collapsed');
+    this.leftUICollapsed = shouldClose;
+    this.applyLeftUIState();
+    if (!shouldClose) {
+      this.ui.cameraPanel?.classList.remove('collapsed');
+      this.ui.cameraToggle?.setAttribute('aria-expanded', 'true');
+      if (this.ui.cameraToggle) this.ui.cameraToggle.textContent = 'Hide';
+      if (this.ui.leftHud) this.ui.leftHud.scrollTop = 0;
+    }
     this.applyLeftUIState();
     this.updateUI();
   }
@@ -19958,7 +20188,7 @@ class MarbleRace {
             policy: TOY_PARK_RACE_LAPS.label,
           };
           this.defaultCameraPhaseUntil = 0;
-          this.lapTransitionCameraUntil = this.elapsed + (BROADCAST_CAMERA.lapTransitionCamera?.snapFollowSeconds ?? 1.2);
+          this.lapTransitionCameraUntil = this.elapsed + (BROADCAST_CAMERA.lapTransitionCamera?.snapFollowSeconds ?? 5.5);
           this.lapTransitionCameraFocusId = data.id;
           this.lapTransitionCameraSnapState = {
             active: true,
@@ -19966,6 +20196,9 @@ class MarbleRace {
             marbleName: data.name,
             completedLaps: data.completedLaps,
             currentLap: data.currentLap,
+            lapStartedAt: Number((this.elapsed || 0).toFixed(2)),
+            startTileFollowDistance: BROADCAST_CAMERA.lapTransitionCamera?.startTileFollowDistance ?? 22,
+            maxFollowSeconds: BROADCAST_CAMERA.lapTransitionCamera?.maxFollowSeconds ?? 8,
             until: Number(this.lapTransitionCameraUntil.toFixed(2)),
             reason: 'intermediate-lap-crossing-reset-to-cinematic-follow',
             label: BROADCAST_CAMERA.lapTransitionCamera?.label,
@@ -20221,6 +20454,68 @@ class MarbleRace {
     });
     this.ui.leaderboard.appendChild(fragment);
     if (ranking[0]) this.currentLeader = ranking[0];
+  }
+
+  getCameraTuneBaseConfig() {
+    return this.cameraTuneDefaults || BROADCAST_CAMERA.leader;
+  }
+
+  getCameraTuneConfig() {
+    return {
+      ...this.getCameraTuneBaseConfig(),
+      ...(this.cameraTuneOverrides || {}),
+    };
+  }
+
+  formatCameraTuneValue(key, value) {
+    const decimals = CAMERA_TUNE_FIELDS[key]?.decimals ?? 2;
+    const number = Number(value);
+    if (!Number.isFinite(number)) return String(value ?? '');
+    return decimals <= 0 ? String(Math.round(number)) : number.toFixed(decimals).replace(/\.?0+$/, '');
+  }
+
+  syncCameraTuneSliders() {
+    const cfg = this.getCameraTuneConfig();
+    this.ui?.cameraTuneInputs?.forEach((input) => {
+      const key = input.dataset.cameraTune;
+      if (!key || cfg[key] == null) return;
+      const value = Number(cfg[key]);
+      if (Number.isFinite(value)) input.value = String(value);
+      if (this.ui.cameraTuneLabels?.[key]) {
+        this.ui.cameraTuneLabels[key].textContent = this.formatCameraTuneValue(key, value);
+      }
+    });
+    window.__MARBLE_RACE_CAMERA_TUNE__ = {
+      active: Object.keys(this.cameraTuneOverrides || {}).length > 0,
+      overrides: { ...(this.cameraTuneOverrides || {}) },
+      effective: Object.fromEntries(Object.keys(CAMERA_TUNE_FIELDS).map((key) => [key, Number(this.getCameraTuneConfig()[key])])),
+    };
+  }
+
+  updateCameraTuneFromUI() {
+    const next = {};
+    this.ui?.cameraTuneInputs?.forEach((input) => {
+      const key = input.dataset.cameraTune;
+      if (!key) return;
+      const value = Number(input.value);
+      if (!Number.isFinite(value)) return;
+      next[key] = value;
+      if (this.ui.cameraTuneLabels?.[key]) {
+        this.ui.cameraTuneLabels[key].textContent = this.formatCameraTuneValue(key, value);
+      }
+    });
+    this.cameraTuneOverrides = next;
+    if (Number.isFinite(next.height)) this.cinematicLeaderSmoothedHeight = next.height;
+    this.cameraMode = 'default';
+    this.syncCameraTuneSliders();
+    this.updateUI();
+  }
+
+  resetCameraTuneSliders() {
+    this.cameraTuneOverrides = {};
+    this.cinematicLeaderSmoothedHeight = this.getCameraTuneBaseConfig().height;
+    this.syncCameraTuneSliders();
+    this.updateUI();
   }
 
   updateUI() {
@@ -21086,6 +21381,7 @@ class MarbleRace {
       initialCameraVerticalAxisRotationDegrees: BROADCAST_CAMERA.initialVerticalAxisRotationDegrees,
       initialCameraRotationApplied: this.initialCameraRotationApplied,
       cameraAngleStyle: 'mostly high-angle downward broadcast follow; close low lead-battle shot disabled by default',
+      cameraTune: window.__MARBLE_RACE_CAMERA_TUNE__ || null,
       leadPackSize: this.getLeadPackTarget()?.size ?? 0,
     };
     window.__MARBLE_RACE_DEBUG__ = debug;
@@ -21767,6 +22063,22 @@ class MarbleRace {
   }
 
   getDefaultCameraMode() {
+    const lapTransitionState = this.lapTransitionCameraSnapState;
+    if (lapTransitionState?.active && this.state === 'running') {
+      const transitionTarget = this.marbleData.find((data) => data?.id === lapTransitionState.marbleId);
+      const startedAt = Number.isFinite(lapTransitionState.lapStartedAt) ? lapTransitionState.lapStartedAt : (this.elapsed || 0);
+      const maxFollowSeconds = Number(lapTransitionState.maxFollowSeconds ?? BROADCAST_CAMERA.lapTransitionCamera?.maxFollowSeconds ?? 8);
+      const startTileFollowDistance = Number(lapTransitionState.startTileFollowDistance ?? BROADCAST_CAMERA.lapTransitionCamera?.startTileFollowDistance ?? 22);
+      const shouldEndByDistance = transitionTarget && (transitionTarget.distance || 0) >= startTileFollowDistance;
+      const shouldEndByTime = Number.isFinite(maxFollowSeconds) && (this.elapsed || 0) - startedAt >= maxFollowSeconds;
+      if (!transitionTarget || transitionTarget.finished || transitionTarget.defeated || shouldEndByDistance || shouldEndByTime) {
+        this.lapTransitionCameraSnapState = { ...lapTransitionState, active: false, endedAt: Number((this.elapsed || 0).toFixed(2)), endReason: shouldEndByDistance ? 'start-tile-follow-distance-reached' : (shouldEndByTime ? 'max-follow-seconds-reached' : 'target-unavailable') };
+        this.lapTransitionCameraUntil = 0;
+        this.lapTransitionCameraFocusId = null;
+      } else {
+        this.lapTransitionCameraUntil = Math.max(this.lapTransitionCameraUntil || 0, (this.elapsed || 0) + 0.25);
+      }
+    }
     const leader = this.getAutoCameraRanking({ includeFinished: false })[0]
       || this.getAutoCameraRanking({ includeFinished: true })[0]
       || this.getRanking({ force: false })[0];
@@ -21791,6 +22103,13 @@ class MarbleRace {
     if (BROADCAST_CAMERA.highAngleBattleEnabled && this.getLeadBattleTarget()) return 'leadBattle';
     const leaderProgress = this.trackLength && leader ? clamp((leader.distance || 0) / this.trackLength, 0, 1) : 0;
     if (this.isToyParkViewerOverlayActive()) {
+      const totalLaps = this.getToyParkOverlayTotalLaps?.() || this.raceTotalLaps || 1;
+      const leaderCurrentLap = this.getMarbleCurrentLap?.(leader, totalLaps) || leader?.currentLap || 1;
+      const finalLapActive = leaderCurrentLap >= totalLaps;
+      const distanceToFinish = Math.max(0, (this.trackLapLength || this.trackLength || 0) - (leader?.distance || 0));
+      const finalApproachByProgress = leaderProgress >= (BROADCAST_CAMERA.toyParkFinalApproachProgress ?? 0.94);
+      const finalApproachByDistance = distanceToFinish <= (BROADCAST_CAMERA.toyParkFinalApproachDistance ?? 22);
+      if (leader && finalLapActive && (finalApproachByProgress || finalApproachByDistance)) return 'finish';
       const phaseSize = Math.max(0.01, BROADCAST_CAMERA.toyParkDefaultAlternatingPhaseSize || 0.2);
       const sequence = Array.isArray(BROADCAST_CAMERA.toyParkDefaultAlternatingSequence) && BROADCAST_CAMERA.toyParkDefaultAlternatingSequence.length
         ? BROADCAST_CAMERA.toyParkDefaultAlternatingSequence
@@ -22050,13 +22369,17 @@ class MarbleRace {
     } else if (activeCameraMode === 'cinematicLeader' && leader) {
       const useToyParkOpeningCinematicLeader = Boolean(
         this.isToyParkViewerOverlayActive()
+        && !Object.keys(this.cameraTuneOverrides || {}).length
         && !lapTransitionCameraActive
         && (leader.completedLaps || 0) === 0
-        && (leader.distance || 0) / Math.max(1, this.trackLength || 1) <= (BROADCAST_CAMERA.toyParkInitialCinematicLeader?.maxProgress ?? 0)
+        && (
+          (this.elapsed || 0) <= (BROADCAST_CAMERA.toyParkInitialCinematicLeader?.holdSeconds ?? 0)
+          || (leader.distance || 0) / Math.max(1, this.trackLength || 1) <= (BROADCAST_CAMERA.toyParkInitialCinematicLeader?.maxProgress ?? 0)
+        )
       );
       const cfg = useToyParkOpeningCinematicLeader
         ? BROADCAST_CAMERA.toyParkInitialCinematicLeader
-        : BROADCAST_CAMERA.leader;
+        : this.getCameraTuneConfig();
       const leaderDistance = lapTransitionCameraActive
         ? (leader.raceDistance || ((leader.completedLaps || 0) * (this.trackLapLength || this.trackLength || 0) + (leader.distance || 0)))
         : (leader.distance || 0);
@@ -22077,27 +22400,44 @@ class MarbleRace {
       const frame = this.getCameraTrackFrameAtWrapped(leaderDistance, lookAhead, cameraTrackLength);
       const targetLead = clamp(lookAhead * (cfg.targetLookAheadScale ?? 0.22), 1.5, 5.5);
       const guideTarget = this.getTrackPointAtWrapped(leaderDistance + targetLead, cameraTrackLength);
-      const guideBlend = clamp(cfg.targetGuideBlend ?? 0.18, 0, 1);
+      const guideBlend = lapTransitionCameraActive ? 0 : clamp(cfg.targetGuideBlend ?? 0.18, 0, 1);
       const lookPoint = leader.mesh.position.clone().lerp(guideTarget, guideBlend);
-      const trackTarget = this.getTrackPointAtWrapped(leaderDistance, cameraTrackLength);
+      const trackTarget = lapTransitionCameraActive
+        ? leader.mesh.position.clone()
+        : this.getTrackPointAtWrapped(leaderDistance, cameraTrackLength);
       const leaderTrackUp = (frame.up || new THREE.Vector3(0, 1, 0)).clone().normalize();
       const trackLiftTarget = new THREE.Vector3(trackTarget.x, trackTarget.y, trackTarget.z).add(leaderTrackUp.clone().multiplyScalar(cfg.targetLift ?? 1.15));
-      lookPoint.lerp(trackLiftTarget, 0.52);
+      lookPoint.lerp(trackLiftTarget, lapTransitionCameraActive ? 0.08 : clamp(cfg.targetTrackLiftBlend ?? 0.52, 0, 1));
       const sideWave = Math.sin(t * (cfg.sideWaveSpeed || 0.24)) * (cfg.maxSideWave || 0);
+      const previewCycleSeconds = Math.max(0.001, cfg.roadPreviewRotateCycleSeconds || 1);
+      const previewCycle = ((t % previewCycleSeconds) + previewCycleSeconds) % previewCycleSeconds / previewCycleSeconds;
+      const previewDuty = clamp(cfg.roadPreviewRotateDuty ?? 0, 0, 1);
+      const previewPhase = previewDuty > 0 ? clamp(previewCycle / previewDuty, 0, 1) : 0;
+      const previewEase = previewDuty > 0 && previewCycle <= previewDuty
+        ? Math.sin(previewPhase * Math.PI)
+        : 0;
+      const roadPreviewRotateDegrees = (cfg.roadPreviewRotateDegrees || 0) * previewEase;
       const desiredBack = cfg.back - obstacleFactor * (cfg.obstaclePullback || 0);
       const desiredSide = cfg.side + sideWave;
-      const desiredHeight = cfg.height + obstacleFactor * (cfg.obstacleHeightBoost || 0);
+      const rawDesiredHeight = cfg.height + obstacleFactor * (cfg.obstacleHeightBoost || 0);
+      const previousHeight = Number.isFinite(this.cinematicLeaderSmoothedHeight) ? this.cinematicLeaderSmoothedHeight : rawDesiredHeight;
+      const heightAlpha = clamp(cfg.heightSmoothing ?? 1, 0, 1);
+      const maxVerticalStep = cfg.maxVerticalStep ?? Infinity;
+      const blendedHeight = previousHeight + (rawDesiredHeight - previousHeight) * heightAlpha;
+      const heightDelta = clamp(blendedHeight - previousHeight, -maxVerticalStep, maxVerticalStep);
+      const desiredHeight = previousHeight + heightDelta;
+      this.cinematicLeaderSmoothedHeight = desiredHeight;
       const rawDesired = leader.mesh.position.clone()
         .add(frame.tangent.clone().multiplyScalar(desiredBack))
         .add(frame.right.clone().multiplyScalar(desiredSide))
         .add(leaderTrackUp.clone().multiplyScalar(desiredHeight));
-      const yawDegrees = (cfg.cameraYawDegrees || 0) + sideWave * 4;
+      const yawDegrees = (cfg.cameraYawDegrees || 0) + sideWave * 4 + roadPreviewRotateDegrees;
       const yawRadians = THREE.MathUtils.degToRad(yawDegrees);
       const yawAdjusted = yawDegrees
         ? lookPoint.clone().add(rawDesired.clone().sub(lookPoint).applyAxisAngle(leaderTrackUp, yawRadians))
         : rawDesired;
       target.copy(lookPoint);
-      this.cameraTargetSmoothed.lerp(target, cfg.targetSmoothing || 0.075);
+      this.cameraTargetSmoothed.lerp(target, lapTransitionCameraActive ? 0.36 : (cfg.targetSmoothing || 0.075));
       target.copy(this.cameraTargetSmoothed);
       desired.copy(yawAdjusted);
       this.cinematicLeaderCameraState = {
@@ -22113,7 +22453,13 @@ class MarbleRace {
         desiredBack: Number(desiredBack.toFixed(2)),
         desiredSide: Number(desiredSide.toFixed(2)),
         desiredHeight: Number(desiredHeight.toFixed(2)),
+        rawDesiredHeight: Number(rawDesiredHeight.toFixed(2)),
+        heightSmoothing: Number(heightAlpha.toFixed(3)),
+        heightDelta: Number(heightDelta.toFixed(3)),
         cameraYawDegrees: Number(yawDegrees.toFixed(2)),
+        roadPreviewRotateDegrees: Number(roadPreviewRotateDegrees.toFixed(2)),
+        roadPreviewRotateActive: Math.abs(roadPreviewRotateDegrees) > 0.1,
+        roadPreviewRotateCycle: Number(previewCycle.toFixed(3)),
         sideShotActive: Math.abs(yawDegrees) > 0.01 || Math.abs(desiredSide) > 0.01,
         forwardTrackLead: Number(targetLead.toFixed(2)),
         angleReference: 'lead-pack-style track-local tangent/right/up',
@@ -22127,6 +22473,7 @@ class MarbleRace {
         fov: cfg.fov,
         toyParkOpeningShotActive: useToyParkOpeningCinematicLeader,
         toyParkOpeningShotMaxProgress: BROADCAST_CAMERA.toyParkInitialCinematicLeader?.maxProgress ?? null,
+        toyParkOpeningShotHoldSeconds: BROADCAST_CAMERA.toyParkInitialCinematicLeader?.holdSeconds ?? null,
         shotLabel: cfg.label || null,
         toyParkZoomInFactor: this.isToyParkViewerOverlayActive() ? (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) : 1,
         toyParkZoomInActive: Boolean(this.isToyParkViewerOverlayActive() && (BROADCAST_CAMERA.toyParkDefaultCameraZoomInFactor || 1) < 1),
@@ -22145,13 +22492,19 @@ class MarbleRace {
         : BROADCAST_CAMERA.finish;
       const frame = this.getTrackFrameAt(this.trackLength);
       target.set(frame.p.x, frame.p.y + (cfg.targetLift ?? 1.05), frame.p.z);
-      desired.copy(target).add(frame.tangent.clone().multiplyScalar(cfg.forward)).add(new THREE.Vector3(0, cfg.height, 0));
+      const finishUp = frame.up?.clone?.().normalize?.() || new THREE.Vector3(0, 1, 0);
+      desired.copy(target).add(frame.tangent.clone().multiplyScalar(cfg.forward)).add(finishUp.multiplyScalar(cfg.height));
       this.finishCameraState = {
         mode: this.isToyParkViewerOverlayActive() ? 'toyParkFinish' : 'finish',
         forward: cfg.forward,
         height: cfg.height,
         targetLift: cfg.targetLift ?? 1.05,
         fov: cfg.fov || BROADCAST_CAMERA.finish.fov || 44,
+        finalApproachMode: this.isToyParkViewerOverlayActive() ? BROADCAST_CAMERA.toyParkFinalApproachMode : null,
+        finalApproachDistance: this.isToyParkViewerOverlayActive() ? BROADCAST_CAMERA.toyParkFinalApproachDistance : null,
+        finalApproachProgress: this.isToyParkViewerOverlayActive() ? BROADCAST_CAMERA.toyParkFinalApproachProgress : null,
+        birdEyeActive: Boolean(this.isToyParkViewerOverlayActive()),
+        holdUntilAllFinished: Boolean(this.isToyParkViewerOverlayActive()),
         label: cfg.label || null,
       };
     } else if (activeCameraMode === 'podium360') {
@@ -22225,10 +22578,17 @@ class MarbleRace {
     const targetWidth = this.videoCompositeCanvas?.width || layout.width || sourceWidth;
     const targetHeight = this.videoCompositeCanvas?.height || layout.height || sourceHeight;
     const rawCropFactor = this.getVideoCompositeCameraCropFactor(sourceWidth, sourceHeight, targetWidth, targetHeight, layout.fit || 'cover');
-    // The live /toypark phone preview is already portrait; do not widen the camera as if it
-    // were being cover-cropped into the default 16:9 composite target.
-    const cropFactor = toyParkNarrowPortraitPreview ? 1 : rawCropFactor;
-    const verticalRenderZoomOutFactor = (layout.key || this.videoCanvasLayoutKey) === 'vertical' ? 1.08 : 1;
+    const toyParkVerticalRenderWithoutCropCompensation = Boolean(
+      this.isToyParkViewerOverlayActive()
+      && (layout.key || this.videoCanvasLayoutKey) === 'vertical'
+    );
+    // Toy Park vertical renders now keep the same web camera FOV instead of widening every
+    // frame for composite cover-crop compensation. This avoids the render-only "pulled back"
+    // camera feel; the raw crop factor is still reported for diagnostics.
+    const cropFactor = (toyParkNarrowPortraitPreview || toyParkVerticalRenderWithoutCropCompensation) ? 1 : rawCropFactor;
+    const verticalRenderZoomOutFactor = toyParkVerticalRenderWithoutCropCompensation
+      ? 1
+      : ((layout.key || this.videoCanvasLayoutKey) === 'vertical' ? 1.08 : 1);
     const compensatedDesiredFov = (cropFactor > 1.01 || verticalRenderZoomOutFactor > 1 || portraitPreviewFovBoost > 1)
       ? clamp(THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(viewportDesiredFov) / 2) * cropFactor * verticalRenderZoomOutFactor)), viewportDesiredFov, 96)
       : viewportDesiredFov;
@@ -22254,6 +22614,8 @@ class MarbleRace {
           ? 'vertical Shorts render zoom-out: widens live render FOV slightly after cover-crop compensation so fast leaders stay in frame'
           : (cropFactor > 1.01 ? 'compensates vertical Shorts cover-crop by widening the live render FOV before compositing' : 'no video-crop camera compensation needed')),
       toyParkNarrowPortraitPreview,
+      toyParkVerticalRenderWithoutCropCompensation,
+      cropCompensationDisabledForToyPark: toyParkVerticalRenderWithoutCropCompensation,
     };
     if (Math.abs(this.camera.fov - compensatedDesiredFov) > 0.01) {
       this.camera.fov = lerp(this.camera.fov, compensatedDesiredFov, (activeCameraMode === 'cinematicLeader' || activeCameraMode === 'leadPack') ? 0.035 : 0.055);
