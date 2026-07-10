@@ -59,6 +59,7 @@ const config = {
   height: Number(args.get('height') || process.env.MARBLE_RENDER_HEIGHT || toyParkRenderDefaults.height || 720),
   captureScale: Number(args.get('capture-scale') || process.env.MARBLE_RENDER_CAPTURE_SCALE || 1),
   fps: Number(args.get('fps') || process.env.MARBLE_RENDER_FPS || 60),
+  captureFps: Number(args.get('capture-fps') || process.env.MARBLE_RENDER_CAPTURE_FPS || 0),
   videoCrf: Number(args.get('crf') || process.env.MARBLE_RENDER_CRF || 18),
   videoPreset: args.get('video-preset') || process.env.MARBLE_RENDER_VIDEO_PRESET || 'veryfast',
   timeoutSeconds: Number(args.get('timeout') || process.env.MARBLE_RENDER_TIMEOUT || 900),
@@ -135,8 +136,19 @@ config.timeoutSeconds = hasExplicitTimeout && Number.isFinite(config.timeoutSeco
   : Math.max(120, Math.min(7200, dynamicTimeoutSeconds));
 if (config.videoCanvasLayout === 'vertical' && !args.has('width') && !process.env.MARBLE_RENDER_WIDTH) config.width = 720;
 if (config.videoCanvasLayout === 'vertical' && !args.has('height') && !process.env.MARBLE_RENDER_HEIGHT) config.height = 1280;
+const hasExplicitCaptureFps = args.has('capture-fps') || process.env.MARBLE_RENDER_CAPTURE_FPS != null;
+config.captureFps = Number.isFinite(config.captureFps) && config.captureFps > 0
+  ? Math.max(1, Math.min(120, Math.round(config.captureFps)))
+  : (isToyParkRenderUrl && config.videoCanvasLayout === 'vertical' && config.videoCapture === 'canvas' ? 30 : config.fps);
+if (hasExplicitCaptureFps && config.captureFps > config.fps) config.captureFps = config.fps;
 config.youtubeKind = config.videoCanvasLayout === 'vertical' ? 'shorts' : 'long';
 config.outputAspectRatio = config.videoCanvasLayout === 'vertical' ? '9:16' : '16:9';
+config.framePacingDiagnostics = args.get('frame-pacing-diagnostics') === 'true'
+  || process.env.MARBLE_RENDER_FRAME_PACING_DIAGNOSTICS === 'true'
+  || (args.get('frame-pacing-diagnostics') !== 'false'
+    && process.env.MARBLE_RENDER_FRAME_PACING_DIAGNOSTICS !== 'false'
+    && isToyParkRenderUrl
+    && config.videoCanvasLayout === 'vertical');
 config.captureWidth = Math.round(config.width * config.captureScale);
 config.captureHeight = Math.round(config.height * config.captureScale);
 config.thumbnailMaxWords = Number.isFinite(config.thumbnailMaxWords) ? Math.max(2, Math.min(10, Math.round(config.thumbnailMaxWords))) : 6;
@@ -195,6 +207,11 @@ const log = (...parts) => {
   const line = [`[render:auto-cup +${elapsedLabel()}]`, ...parts.map(formatLogPart)].join(' ');
   console.log(line);
   writeRenderLogLine(line);
+};
+const diagnosticLog = (...parts) => {
+  const line = [`[render:auto-cup +${elapsedLabel()}]`, ...parts.map(formatLogPart)].join(' ');
+  console.log(line);
+  writeRenderLogLine(line, { force: true });
 };
 const warn = (...parts) => {
   const line = [`[render:auto-cup +${elapsedLabel()}] WARN`, ...parts.map(formatLogPart)].join(' ');
@@ -1086,6 +1103,69 @@ async function main() {
     }).catch(() => null);
   };
 
+  const summarizeFramePacingForTuning = (snapshot = {}) => {
+    const frameTiming = snapshot.frameTiming || null;
+    const lastSummary = frameTiming?.lastSummary || snapshot.frameProfiler || null;
+    const latestUnique = frameTiming?.latestUniqueFrameWindow || lastSummary?.latestUniqueFrameWindow || null;
+    const cameraMotion = frameTiming?.cameraMotion?.lastSummary || lastSummary?.cameraMotion || null;
+    const chunkTiming = frameTiming?.captureChunkTiming?.last || snapshot.capture?.lastChunkTiming || null;
+    const capture = snapshot.capture || null;
+    const outputFps = Number(snapshot.fps ?? config.fps ?? 60);
+    const captureFps = Number(snapshot.captureFps ?? snapshot.capture?.requestedFps ?? config.captureFps ?? outputFps);
+    const uniqueFps = Number(latestUnique?.uniqueFps ?? lastSummary?.uniqueFps ?? snapshot.browserFps ?? 0);
+    const p95FrameMs = Number(lastSummary?.p95FrameMs ?? 0);
+    const p95RafMs = Number(lastSummary?.p95RafIntervalMs ?? 0);
+    const maxRafMs = Number(lastSummary?.maxRafIntervalMs ?? 0);
+    const cameraP95Step = Number(cameraMotion?.positionStepPerFrame?.p95 ?? 0);
+    const cameraMaxStep = Number(cameraMotion?.positionStepPerFrame?.max ?? 0);
+    const cameraDesiredGap = Number(cameraMotion?.desiredGap?.p95 ?? 0);
+    const modeSwitches = Number(cameraMotion?.modeSwitches ?? 0);
+    const snapEvents = Number(cameraMotion?.snapEvents ?? 0);
+    const bindingRoundTripMs = Number(chunkTiming?.bindingRoundTripMs ?? 0);
+    const pendingWrites = Number(capture?.pendingWrites ?? chunkTiming?.pendingAfter ?? 0);
+    const msSinceLastChunk = Number(chunkTiming?.msSinceLastChunk ?? 0);
+    const advice = [];
+    if (captureFps < outputFps) advice.push(`A方案啟用：canvas capture ${captureFps}fps → output ${outputFps}fps；如果肉眼順咗，root cause多數係60fps MediaRecorder/capture cadence`);
+    if (captureFps === outputFps && captureFps === 30) advice.push('A2方案啟用：canvas capture 30fps → output 30fps；如果小跳少咗，問題主要係30fps VFR source被升成60fps CFR時duplicate cadence唔平均');
+    if (uniqueFps > 0 && uniqueFps < 55 && captureFps >= 55) advice.push('uniqueFps低過55：先降capture壓力/效果/obstacles，或試720x1280、30fps capture、headful/cleanup；MP4可以仍然標60但有重複frame');
+    if (p95RafMs > 24 || maxRafMs > 45) advice.push('RAF interval有spike：browser/compositor scheduling跳，檢查CPU/WindowServer/Chrome、減render workload');
+    if (p95FrameMs > 14) advice.push('game frame work接近/超過16.7ms：睇avgPhysics/avgRender/avgOverlay/avgUi，對應減physics/effects/UI/overlay');
+    if (cameraP95Step > 1.25 || cameraMaxStep > 4) advice.push('camera每frame移動太大：加Position Smooth/Target Smooth，降低lookAhead/sideWave/yaw/finish snap；如果只係cameraMotion spike而uniqueFps正常，就係camera tune問題');
+    if (cameraDesiredGap > 12) advice.push('camera smoothing追唔切desired：加smoothing或減height/FOV/targetGuide/roadPreview旋轉幅度');
+    if (modeSwitches > 1 || snapEvents > 0) advice.push('camera mode/snap切換多：檢查finalApproach/finish/lap transition director，必要時延長hold或減snap');
+    if (bindingRoundTripMs > 500 || pendingWrites > 2 || msSinceLastChunk > 2600) advice.push('MediaRecorder chunk/backpressure：轉base64/chunk、降bitrate/解析度，睇pendingWrites/bindingRoundTripMs');
+    if (!advice.length) advice.push('主要指標正常：若仍肉眼跳，下一步比較source WebM vs MP4，或加逐frame ffprobe/mpdecimate分析duplicate cadence');
+    return {
+      uniqueFps: uniqueFps ? Number(uniqueFps.toFixed(2)) : null,
+      outputFps,
+      captureFps,
+      duplicateOrMissingFrames: latestUnique?.duplicateOrMissingFrames ?? null,
+      p95FrameMs: p95FrameMs || null,
+      p95RafMs: p95RafMs || null,
+      maxRafMs: maxRafMs || null,
+      cameraP95Step: cameraP95Step || null,
+      cameraMaxStep: cameraMaxStep || null,
+      cameraDesiredGap: cameraDesiredGap || null,
+      modeSwitches,
+      snapEvents,
+      capturePendingWrites: Number.isFinite(pendingWrites) ? pendingWrites : null,
+      bindingRoundTripMs: bindingRoundTripMs || null,
+      msSinceLastChunk: msSinceLastChunk || null,
+      activeCameraModes: cameraMotion?.activeModes || null,
+      cameraLast: cameraMotion?.last ? {
+        mode: cameraMotion.last.mode,
+        positionSmooth: cameraMotion.last.positionSmooth,
+        targetSmooth: cameraMotion.last.targetSmooth,
+        fov: cameraMotion.last.fov,
+        desiredFov: cameraMotion.last.desiredFov,
+        crop: cameraMotion.last.crop,
+        cinematicLeader: cameraMotion.last.cinematicLeader,
+        finish: cameraMotion.last.finish,
+      } : null,
+      tuneAdvice: advice,
+    };
+  };
+
   const logRenderProgressSnapshot = async (page, reason = 'periodic') => {
     const snapshot = await readRenderProgressSnapshot(page);
     if (!snapshot) return null;
@@ -1129,6 +1209,26 @@ async function main() {
         totalChunkProgress,
       } : null,
     }));
+    if (config.framePacingDiagnostics) {
+      diagnosticLog('[diagnostic] frame-pacing-tune', JSON.stringify({
+        reason,
+        stage: currentStageLabel,
+        jobElapsedSeconds,
+        gameElapsedSeconds,
+        captureElapsedSeconds,
+        videoCanvasLayout: config.videoCanvasLayout,
+        fps: config.fps,
+        captureFps: config.captureFps,
+        capture: snapshot.capture ? {
+          requestedFps: snapshot.capture.requestedFps,
+          trackSettings: snapshot.capture.trackSettings,
+          chunkCount: snapshot.capture.chunkCount,
+          pendingWrites: snapshot.capture.pendingWrites,
+          pendingWritesMax: snapshot.capture.pendingWritesMax,
+        } : null,
+        summary: summarizeFramePacingForTuning(snapshot),
+      }));
+    }
     return snapshot;
   };
 
@@ -1360,10 +1460,12 @@ async function main() {
     log(`Opening ${config.url}`);
     log('Render settings:', JSON.stringify({
       debugLogs: config.debugLogs,
+      framePacingDiagnostics: config.framePacingDiagnostics,
       viewport: `${config.width}x${config.height}`,
       capture: `${config.captureWidth}x${config.captureHeight}`,
       captureScale: config.captureScale,
       fps: config.fps,
+      captureFps: config.captureFps,
       crf: config.videoCrf,
       videoPreset: config.videoPreset,
       showLeftUi: config.showLeftUi,
@@ -1595,7 +1697,7 @@ async function main() {
     let canvasCaptureInfo = null;
     if (config.videoCapture === 'canvas') {
       progress('canvas-capture-start', config.videoCanvasLayout);
-      canvasCaptureInfo = await page.evaluate(async ({ fps, width, height, videoCanvasLayout, targetSeconds, useBufferedFinalExport, chunkPayloadEncoding }) => {
+      canvasCaptureInfo = await page.evaluate(async ({ fps, captureFps, width, height, videoCanvasLayout, targetSeconds, useBufferedFinalExport, chunkPayloadEncoding }) => {
         window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS = Math.max(1, Number(targetSeconds || 0) || 1);
         window.__MARBLE_RENDER_CANVAS_BUFFERED_EXPORT = Boolean(useBufferedFinalExport);
         const app = window.__MARBLE_RACE_APP__;
@@ -1610,7 +1712,9 @@ async function main() {
           'video/webm',
         ];
         const mimeType = mimeTypes.find((type) => MediaRecorder.isTypeSupported(type)) || '';
-        const stream = canvas.captureStream(Math.max(1, Math.round(Number(fps) || 60)));
+        const requestedCaptureFps = Math.max(1, Math.round(Number(captureFps || fps) || 60));
+        const outputFps = Math.max(1, Math.round(Number(fps) || requestedCaptureFps || 60));
+        const stream = canvas.captureStream(requestedCaptureFps);
         const bufferedFinalExport = Boolean(window.__MARBLE_RENDER_CANVAS_BUFFERED_EXPORT);
         const payloadEncoding = chunkPayloadEncoding === 'array' ? 'array' : 'base64';
         const videoBitsPerSecond = Math.max(4_000_000, Math.min(16_000_000, Math.round(Number(window.__MARBLE_RENDER_CANVAS_BITRATE || 7_000_000))));
@@ -1750,7 +1854,8 @@ async function main() {
               ok: true,
               fallbackReason,
               mimeType: recorder.mimeType || mimeType || 'video/webm',
-              requestedFps: Math.max(1, Math.round(Number(fps) || 60)),
+              requestedFps: requestedCaptureFps,
+              outputFps,
               width: canvas.width || width,
               height: canvas.height || height,
               videoCanvas: app?.getVideoCompositeCanvasInfo?.() || null,
@@ -1787,7 +1892,8 @@ async function main() {
             ok: true,
             state: recorder.state,
             mimeType: recorder.mimeType || mimeType || 'video/webm',
-            requestedFps: Math.max(1, Math.round(Number(fps) || 60)),
+            requestedFps: requestedCaptureFps,
+            outputFps,
             chunkCount: chunks.length,
             elapsedSeconds: (performance.now() - window.__MARBLE_RENDER_CANVAS_CAPTURE__.startedAt) / 1000,
             targetSeconds: Number(window.__MARBLE_RENDER_CANVAS_TARGET_SECONDS || captureTargetSeconds || 0) || captureTargetSeconds,
@@ -1875,6 +1981,7 @@ async function main() {
         return window.__MARBLE_RENDER_CANVAS_CAPTURE__.getInfo();
       }, {
         fps: config.fps,
+        captureFps: config.captureFps,
         width: config.captureWidth,
         height: config.captureHeight,
         videoCanvasLayout: config.videoCanvasLayout,

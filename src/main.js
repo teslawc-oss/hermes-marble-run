@@ -477,9 +477,10 @@ const STALL_ELIMINATION = {
 
 const POST_FIRST_FINISH_DNF_CUTOFF = {
   enabled: true,
-  delaySeconds: 28,
-  reason: 'post-first-finish-cutoff',
-  label: 'After the first marble finishes, wait 28 seconds, then mark every unfinished marble as DNF in the current race order to avoid long tail waiting without cutting normal racers too aggressively.',
+  triggerAfterFinishers: 5,
+  delaySeconds: 5,
+  reason: 'post-top-five-finish-cutoff',
+  label: 'On the final lap, once the first 5 marbles have finished, wait 5 seconds, then mark every marble that has not crossed the line as DNF.',
 };
 
 const GUIDE_POINT_POLICY = {
@@ -753,9 +754,9 @@ const BROADCAST_CAMERA = {
   finish: { forward: 3.3, height: 27.5, targetLift: 1.05, fov: 44 },
   toyParkFinish: {
     forward: 0,
-    height: 48,
+    height: 0,
     targetLift: 0.35,
-    fov: 34,
+    fov: 50,
     label: 'Toy Park final-lap finish camera: top-down finish-line bird-eye view that starts before the leader crosses and stays until every marble completes',
   },
   podium360: {
@@ -1368,6 +1369,10 @@ class MarbleRace {
       uiMsTotal: 0,
       renderMsTotal: 0,
       overlayMsTotal: 0,
+      cameraMotionSamples: [],
+      cameraMotionHistory: [],
+      lastCameraMotionSummary: null,
+      lastCameraMotionPoint: null,
       lastSummary: null,
     };
     this.lastNameLabelUpdate = 0;
@@ -18475,6 +18480,8 @@ class MarbleRace {
         windowSeconds: Number(seconds.toFixed(3)),
         uniqueFrames,
         uniqueFps: Number((uniqueFrames / seconds).toFixed(2)),
+        targetFps: 60,
+        duplicateOrMissingFrames: Math.max(0, Math.round((60 * seconds) - uniqueFrames)),
       };
       profiler.lastUniqueFrameSecondSummary = summary;
       profiler.uniqueFrameSecondHistory.push(summary);
@@ -18491,6 +18498,17 @@ class MarbleRace {
     profiler.overlayMsTotal += Number(sample.overlayMs || 0);
     const elapsedMs = Math.max(1, now - (profiler.windowStartedAt || now));
     if (elapsedMs >= 5000 || profiler.frames >= 300) {
+      const summarizeNumber = (values = []) => {
+        const clean = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+        if (!clean.length) return { avg: 0, p95: 0, max: 0 };
+        const avg = clean.reduce((sum, value) => sum + value, 0) / clean.length;
+        const p95 = clean[Math.min(clean.length - 1, Math.floor(clean.length * 0.95))];
+        return {
+          avg: Number(avg.toFixed(3)),
+          p95: Number(p95.toFixed(3)),
+          max: Number(clean[clean.length - 1].toFixed(3)),
+        };
+      };
       const sorted = [...profiler.frameMsSamples].sort((a, b) => a - b);
       const p95 = sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] : 0;
       const rafSorted = [...(profiler.rafIntervalMsSamples || [])].sort((a, b) => a - b);
@@ -18498,6 +18516,30 @@ class MarbleRace {
       const rafSamples = Math.max(1, rafSorted.length || 1);
       const frames = Math.max(1, profiler.frames);
       const latestUniqueFrameWindow = profiler.lastUniqueFrameSecondSummary || null;
+      const cameraMotionSamples = [...(profiler.cameraMotionSamples || [])];
+      const cameraMotionSummary = cameraMotionSamples.length ? {
+        samples: cameraMotionSamples.length,
+        positionStepPerFrame: summarizeNumber(cameraMotionSamples.map((entry) => entry.positionStep)),
+        targetStepPerFrame: summarizeNumber(cameraMotionSamples.map((entry) => entry.targetStep)),
+        fovStepPerFrame: summarizeNumber(cameraMotionSamples.map((entry) => entry.fovStep)),
+        verticalStepPerFrame: summarizeNumber(cameraMotionSamples.map((entry) => entry.verticalStep)),
+        desiredGap: summarizeNumber(cameraMotionSamples.map((entry) => entry.desiredGap)),
+        targetGap: summarizeNumber(cameraMotionSamples.map((entry) => entry.targetGap)),
+        modeSwitches: cameraMotionSamples.reduce((sum, entry) => sum + (entry.modeChanged ? 1 : 0), 0),
+        snapEvents: cameraMotionSamples.reduce((sum, entry) => sum + (entry.snapped ? 1 : 0), 0),
+        activeModes: [...new Set(cameraMotionSamples.map((entry) => entry.mode).filter(Boolean))],
+        last: cameraMotionSamples[cameraMotionSamples.length - 1] || null,
+        interpretation: {
+          positionStepPerFrame: 'camera world-position movement per rendered frame; high p95/max can look like frame jumps',
+          desiredGap: 'distance between actual smoothed camera and desired camera; high value means camera smoothing is lagging/chasing',
+          modeSwitches: 'camera director shot changes during this window; frequent switches can look jumpy',
+        },
+      } : null;
+      profiler.lastCameraMotionSummary = cameraMotionSummary;
+      if (cameraMotionSummary) {
+        profiler.cameraMotionHistory.push(cameraMotionSummary);
+        if (profiler.cameraMotionHistory.length > 60) profiler.cameraMotionHistory.shift();
+      }
       profiler.lastSummary = {
         capturedAt: new Date().toISOString(),
         windowSeconds: Number((elapsedMs / 1000).toFixed(2)),
@@ -18518,6 +18560,7 @@ class MarbleRace {
         avgUiMs: Number((profiler.uiMsTotal / frames).toFixed(2)),
         avgRenderMs: Number((profiler.renderMsTotal / frames).toFixed(2)),
         avgOverlayMs: Number((profiler.overlayMsTotal / frames).toFixed(2)),
+        cameraMotion: cameraMotionSummary,
         marbleCount: this.marbleData?.length || 0,
         worldBodies: this.world?.bodies?.length || 0,
         obstacleCounts: this.obstacleTypeCounts || null,
@@ -18547,6 +18590,7 @@ class MarbleRace {
       profiler.uiMsTotal = 0;
       profiler.renderMsTotal = 0;
       profiler.overlayMsTotal = 0;
+      profiler.cameraMotionSamples = [];
     }
     return profiler.lastSummary;
   }
@@ -18569,6 +18613,11 @@ class MarbleRace {
       },
       latestUniqueFrameWindow: profiler.lastUniqueFrameSecondSummary || null,
       uniqueFrameSecondHistory: history.slice(-20),
+      cameraMotion: {
+        lastSummary: profiler.lastCameraMotionSummary || lastSummary?.cameraMotion || null,
+        history: [...(profiler.cameraMotionHistory || [])].slice(-12),
+        currentSampleCount: profiler.cameraMotionSamples?.length || 0,
+      },
       captureChunkTiming: {
         last: profiler.lastCaptureChunkTiming || null,
         history: chunkHistory.slice(-20),
@@ -18582,6 +18631,7 @@ class MarbleRace {
         avgRenderMs: 'Three.js renderer.render cost per frame',
         avgOverlayMs: 'viewer/video overlay/composite draw cost per frame',
         captureChunkTiming: 'MediaRecorder dataavailable + blob/arrayBuffer/Playwright binding/write prep timing when canvas capture is active',
+        cameraMotion: 'camera position/target/FOV movement and shot switches; tune camera smoothing/height/FOV/director if this spikes while uniqueFps is healthy',
       },
     };
   }
@@ -20023,18 +20073,29 @@ class MarbleRace {
 
   applyPostFirstFinishDnfCutoff() {
     const policy = this.postFirstFinishDnfCutoff || POST_FIRST_FINISH_DNF_CUTOFF;
-    if (!policy.enabled || policy.triggered || this.state !== 'running' || !this.firstFinishTime) return 0;
+    if (!policy.enabled || policy.triggered || this.state !== 'running') return 0;
+    const finishedPodiumCount = this.finishers.filter((item) => item && !item.defeated && !item.removedFromRace).length;
+    const triggerAfterFinishers = Math.max(1, policy.triggerAfterFinishers ?? 1);
+    if (finishedPodiumCount < triggerAfterFinishers) return 0;
+    if (!policy.armedAt) {
+      this.postFirstFinishDnfCutoff = {
+        ...policy,
+        armedAt: this.elapsed,
+        armedAtRealTimeMs: performance.now(),
+        triggerFinishedCount: finishedPodiumCount,
+      };
+      return 0;
+    }
     const delaySeconds = policy.delaySeconds ?? 15;
-    const elapsedSinceFirstFinish = this.firstFinishRealTimeMs
-      ? (performance.now() - this.firstFinishRealTimeMs) / 1000
-      : this.elapsed - this.firstFinishTime;
-    if (elapsedSinceFirstFinish < delaySeconds) return 0;
+    const elapsedSinceArmed = policy.armedAtRealTimeMs
+      ? (performance.now() - policy.armedAtRealTimeMs) / 1000
+      : this.elapsed - policy.armedAt;
+    if (elapsedSinceArmed < delaySeconds) return 0;
     const unfinishedRanking = this.getRanking({ force: true }).filter((data) => !data.finished && !data.defeated);
     if (!unfinishedRanking.length) return 0;
-    const finishedPodiumCount = this.finishers.filter((item) => item && !item.defeated && !item.removedFromRace).length;
     unfinishedRanking.forEach((data, index) => {
       data.postFirstFinishDnfRank = finishedPodiumCount + index + 1;
-      this.eliminateStalledMarble(data, data.distance || data.driveDistance || 0, policy.reason || 'post-first-finish-cutoff', {
+      this.eliminateStalledMarble(data, data.distance || data.driveDistance || 0, policy.reason || 'post-top-five-finish-cutoff', {
         broadcast: false,
         dnfOrder: index + 1,
         suppressCompletionCheck: true,
@@ -20045,6 +20106,7 @@ class MarbleRace {
       triggered: true,
       triggeredAt: this.elapsed,
       triggeredAtRealTimeMs: performance.now(),
+      triggeredAfterFinishers: finishedPodiumCount,
       dnfCount: unfinishedRanking.length,
       unfinishedOrder: unfinishedRanking.map((data, index) => ({
         rank: finishedPodiumCount + index + 1,
@@ -20057,7 +20119,7 @@ class MarbleRace {
     };
     const names = unfinishedRanking.slice(0, 4).map((data) => data.name).join(', ');
     const suffix = unfinishedRanking.length > 4 ? ` +${unfinishedRanking.length - 4}` : '';
-    this.pushBroadcastEvent('DNF cutoff', `${unfinishedRanking.length} DNF after ${delaySeconds}s${names ? `: ${names}${suffix}` : ''}`, { kind: 'dnf', force: true, lines: [`${unfinishedRanking.length} DNF after ${delaySeconds}s`] });
+    this.pushBroadcastEvent('DNF cutoff', `${unfinishedRanking.length} DNF ${delaySeconds}s after top ${triggerAfterFinishers}${names ? `: ${names}${suffix}` : ''}`, { kind: 'dnf', force: true, lines: [`${unfinishedRanking.length} DNF after top ${triggerAfterFinishers}`] });
     this.cachedRanking = null;
     this.cachedRankingAt = 0;
     this.checkFinishers();
@@ -21135,8 +21197,13 @@ class MarbleRace {
         postFirstFinishCutoff: {
           ...this.postFirstFinishDnfCutoff,
           secondsSinceFirstFinish: this.firstFinishTime ? Number(Math.max(0, this.elapsed - this.firstFinishTime).toFixed(2)) : 0,
-          remainingSeconds: this.firstFinishTime && !this.postFirstFinishDnfCutoff?.triggered
-            ? Number(Math.max(0, (this.postFirstFinishDnfCutoff?.delaySeconds ?? 15) - (this.elapsed - this.firstFinishTime)).toFixed(2))
+          finishedPodiumCount: this.finishers.filter((item) => item && !item.defeated && !item.removedFromRace).length,
+          triggerAfterFinishers: this.postFirstFinishDnfCutoff?.triggerAfterFinishers ?? POST_FIRST_FINISH_DNF_CUTOFF.triggerAfterFinishers,
+          secondsSinceArmed: this.postFirstFinishDnfCutoff?.armedAt
+            ? Number(Math.max(0, this.elapsed - this.postFirstFinishDnfCutoff.armedAt).toFixed(2))
+            : 0,
+          remainingSeconds: this.postFirstFinishDnfCutoff?.armedAt && !this.postFirstFinishDnfCutoff?.triggered
+            ? Number(Math.max(0, (this.postFirstFinishDnfCutoff?.delaySeconds ?? 15) - (this.elapsed - this.postFirstFinishDnfCutoff.armedAt)).toFixed(2))
             : 0,
         },
         total: this.stallEliminationCount,
@@ -22647,7 +22714,13 @@ class MarbleRace {
             ? (BROADCAST_CAMERA.leadPack.targetSmoothing || 0.08)
             : (isLeadCloseMode ? 1 - Math.exp(-delta * (activeCameraMode === 'leadBattle' ? 4.2 : 2.8)) : 1 - Math.pow(0.001, delta)))));
     const cameraBlend = activeCameraMode === 'replayHighlight' ? 1 : (activeCameraMode === 'leadBattle' ? 0.78 : isToyParkBroadcast ? 1 : isCinematicLeadPack ? 0.84 : isCinematicLeader ? 0.82 : 0.72);
-    if (shouldSnapLapTransitionCamera || shouldSnapPostFirstFinishLeadPack || shouldSnapToyParkFinalApproachFinish) {
+    const cameraPositionBefore = this.camera.position.clone();
+    const cameraTargetBefore = this.controls.target.clone();
+    const cameraFovBefore = this.camera.fov;
+    const cameraDesiredBeforeLineOfSight = desired.clone();
+    const targetDesiredBeforeSmoothing = target.clone();
+    const cameraSnapRequested = shouldSnapLapTransitionCamera || shouldSnapPostFirstFinishLeadPack || shouldSnapToyParkFinalApproachFinish;
+    if (cameraSnapRequested) {
       this.camera.position.copy(desired);
       this.controls.target.copy(target);
       if (shouldSnapLapTransitionCamera) {
@@ -22688,6 +22761,50 @@ class MarbleRace {
       this.postFirstFinishCameraSnapState = this.postFirstFinishCameraSnapState ? { ...this.postFirstFinishCameraSnapState, active: false } : null;
       this.camera.position.lerp(desired, positionSmooth * cameraBlend);
       this.controls.target.lerp(target, targetSmooth);
+    }
+    const cameraPositionStep = this.camera.position.distanceTo(cameraPositionBefore);
+    const cameraTargetStep = this.controls.target.distanceTo(cameraTargetBefore);
+    const cameraVerticalStep = Math.abs(this.camera.position.y - cameraPositionBefore.y);
+    const cameraDesiredGap = this.camera.position.distanceTo(desired);
+    const cameraTargetGap = this.controls.target.distanceTo(targetDesiredBeforeSmoothing);
+    const cameraMotionSample = {
+      mode: activeCameraMode,
+      requestedMode,
+      elapsed: Number((this.elapsed || 0).toFixed(2)),
+      positionStep: Number(cameraPositionStep.toFixed(3)),
+      targetStep: Number(cameraTargetStep.toFixed(3)),
+      verticalStep: Number(cameraVerticalStep.toFixed(3)),
+      fovStep: Number(Math.abs(this.camera.fov - cameraFovBefore).toFixed(3)),
+      desiredGap: Number(cameraDesiredGap.toFixed(3)),
+      targetGap: Number(cameraTargetGap.toFixed(3)),
+      positionSmooth: Number((positionSmooth * cameraBlend).toFixed(4)),
+      targetSmooth: Number(targetSmooth.toFixed(4)),
+      snapped: Boolean(cameraSnapRequested),
+      modeChanged: previousActiveCameraMode !== activeCameraMode,
+      previousMode: previousActiveCameraMode,
+      lineOfSightBoost: this.cameraLineOfSightState?.active ? this.cameraLineOfSightState?.boost ?? null : 0,
+      desiredBeforeLineOfSightGap: Number(cameraDesiredBeforeLineOfSight.distanceTo(desired).toFixed(3)),
+      camera: {
+        x: Number(this.camera.position.x.toFixed(2)),
+        y: Number(this.camera.position.y.toFixed(2)),
+        z: Number(this.camera.position.z.toFixed(2)),
+      },
+      desired: {
+        x: Number(desired.x.toFixed(2)),
+        y: Number(desired.y.toFixed(2)),
+        z: Number(desired.z.toFixed(2)),
+      },
+      fov: Number(this.camera.fov.toFixed(2)),
+      desiredFov: Number(compensatedDesiredFov.toFixed(2)),
+      crop: this.videoCompositeCameraCropState || null,
+      cinematicLeader: activeCameraMode === 'cinematicLeader' ? this.cinematicLeaderCameraState || null : null,
+      finish: activeCameraMode === 'finish' ? this.finishCameraState || null : null,
+    };
+    if (this.frameProfiler) {
+      this.frameProfiler.lastCameraMotionPoint = cameraMotionSample;
+      if (!this.frameProfiler.cameraMotionSamples) this.frameProfiler.cameraMotionSamples = [];
+      this.frameProfiler.cameraMotionSamples.push(cameraMotionSample);
+      if (this.frameProfiler.cameraMotionSamples.length > 360) this.frameProfiler.cameraMotionSamples.shift();
     }
     this.camera.lookAt(this.controls.target);
   }
