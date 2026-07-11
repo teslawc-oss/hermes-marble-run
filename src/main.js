@@ -464,23 +464,23 @@ const STUCK_RESET = {
 
 const STALL_ELIMINATION = {
   enabled: true,
-  baseDelaySeconds: 16.0,
-  longTrackDelaySeconds: 38.0,
+  baseDelaySeconds: 48.0,
+  longTrackDelaySeconds: 120.0,
   longTrackReferenceMeters: 760,
   finalStageDelayMultiplier: 1.65,
   minForwardProgressMeters: 0.18,
   minForwardProgressPercentPerWindow: 0.0012,
   requireObservedMotionBeforeElimination: true,
   finishPlacement: 'defeated-after-active-finishers',
-  label: 'DNF waits longer for recording stability: timeout scales from 16s toward 38s by track length, final stage gets extra grace, and a marble must first make real forward progress before no-forward-progress elimination can fire',
+  label: 'DNF waits much longer for Toy Park recording stability: timeout scales from 48s toward 120s by track length, final stage gets extra grace, and a marble must first make real forward progress before no-forward-progress elimination can fire',
 };
 
 const POST_FIRST_FINISH_DNF_CUTOFF = {
   enabled: true,
-  triggerAfterFinishers: 5,
-  delaySeconds: 5,
-  reason: 'post-top-five-finish-cutoff',
-  label: 'On the final lap, once the first 5 marbles have finished, wait 5 seconds, then mark every marble that has not crossed the line as DNF.',
+  triggerAfterFinishers: 7,
+  delaySeconds: 20,
+  reason: 'post-field-finish-safety-cutoff',
+  label: 'Toy Park render-safe cutoff: only after seven of eight marbles finish, wait 20 video seconds before DNFing the final stalled racer so frame-sequence renders can still reach the final result.',
 };
 
 const GUIDE_POINT_POLICY = {
@@ -2918,6 +2918,10 @@ class MarbleRace {
 
   drawToyParkFinalResultCanvasCard({ ctx, x = 40, y = 120, width = 520, height = 300, vertical = false, ranking = [] } = {}) {
     if (!ctx || !this.isToyParkViewerOverlayActive?.() || this.state !== 'finished') return null;
+    // B2 frame-sequence captures full-page screenshots, so the DOM final-result
+    // showcase is already in the recorded frame. Drawing the canvas copy as well
+    // creates two overlapping FINAL RESULT cards. Keep only the larger DOM card.
+    if (this.__playwrightRenderVideoCapture === 'frame-sequence') return null;
     const rows = (ranking?.length ? ranking : this.getRanking({ force: true })).filter(Boolean).slice(0, 3);
     if (!rows.length) return null;
     const winner = rows[0];
@@ -4643,6 +4647,7 @@ class MarbleRace {
     this.finishers = [];
     this.firstFinishTime = 0;
     this.firstFinishRealTimeMs = 0;
+    this.raceFinishedAt = 0;
     this.postFirstFinishDnfCutoff = { ...POST_FIRST_FINISH_DNF_CUTOFF, triggered: false, triggeredAt: null, triggeredAtRealTimeMs: null, dnfCount: 0 };
     this.cachedRanking = null;
     this.cachedRankingAt = 0;
@@ -4721,6 +4726,7 @@ class MarbleRace {
     this.initialCameraRotationApplied = false;
     this.firstFinishTime = 0;
     this.firstFinishRealTimeMs = 0;
+    this.raceFinishedAt = 0;
     this.postFirstFinishDnfCutoff = { ...POST_FIRST_FINISH_DNF_CUTOFF, triggered: false, triggeredAt: null, triggeredAtRealTimeMs: null, dnfCount: 0 };
     this.resetFinishSlowMotion();
 
@@ -5276,6 +5282,7 @@ class MarbleRace {
     }
     this.firstFinishTime = 0;
     this.firstFinishRealTimeMs = 0;
+    this.raceFinishedAt = 0;
     this.postFirstFinishDnfCutoff = { ...POST_FIRST_FINISH_DNF_CUTOFF, triggered: false, triggeredAt: null, triggeredAtRealTimeMs: null, dnfCount: 0 };
     this.stuckResetCount = 0;
     this.stallEliminationCount = 0;
@@ -15812,7 +15819,7 @@ class MarbleRace {
       window.speechSynthesis?.cancel?.();
       try { this.localTtsBridge?.audioElement?.pause?.(); } catch {}
     } else {
-      const queueLimit = 3;
+      const queueLimit = this.state === 'finished' ? 1 : 2;
       const alreadyQueued = this.commentaryVoiceQueue.some((queued) => queued.line === normalized)
         || this.commentaryVoiceCurrentLine === normalized;
       if (alreadyQueued) return true;
@@ -18667,12 +18674,20 @@ class MarbleRace {
 
   animate() {
     requestAnimationFrame(() => this.animate());
-    const frameStartedAt = performance.now();
-    const rafIntervalMs = this.frameProfiler?.lastFrameStartedAt != null
-      ? frameStartedAt - this.frameProfiler.lastFrameStartedAt
-      : null;
-    if (this.frameProfiler) this.frameProfiler.lastFrameStartedAt = frameStartedAt;
+    if (this.offlineFrameStepping?.enabled) return;
     const rawDelta = Math.min(this.clock.getDelta(), 0.05);
+    this.stepSimulationFrame(rawDelta, { source: 'raf' });
+  }
+
+  stepSimulationFrame(rawDeltaInput = 1 / 60, { source = 'manual', rafIntervalMs = null, forceUi = false } = {}) {
+    const frameStartedAt = performance.now();
+    if (this.frameProfiler) {
+      if (rafIntervalMs == null && this.frameProfiler.lastFrameStartedAt != null) {
+        rafIntervalMs = frameStartedAt - this.frameProfiler.lastFrameStartedAt;
+      }
+      this.frameProfiler.lastFrameStartedAt = frameStartedAt;
+    }
+    const rawDelta = Math.max(0, Math.min(Number(rawDeltaInput) || 0, 0.25));
     const timeScale = this.getFinishSlowMotionTimeScale();
     if (this.finishSlowMotion) this.finishSlowMotion.timeScale = timeScale;
     const delta = rawDelta * timeScale;
@@ -18696,7 +18711,14 @@ class MarbleRace {
       this.applyMarbleDrive();
       driveMs = performance.now() - driveStartedAt;
       const physicsStartedAt = performance.now();
-      this.world.step(1 / 60, delta, this.performanceProfile?.runningMaxSubSteps ?? PERFORMANCE_TUNING.runningMaxSubSteps);
+      const maxSubSteps = source === 'offline-frame-step'
+        ? Math.max(
+          2,
+          Math.ceil(delta / (1 / 60)),
+          this.performanceProfile?.runningMaxSubSteps ?? PERFORMANCE_TUNING.runningMaxSubSteps,
+        )
+        : (this.performanceProfile?.runningMaxSubSteps ?? PERFORMANCE_TUNING.runningMaxSubSteps);
+      this.world.step(1 / 60, delta, maxSubSteps);
       physicsMs = performance.now() - physicsStartedAt;
       const syncStartedAt = performance.now();
       this.syncMarbles();
@@ -18717,24 +18739,24 @@ class MarbleRace {
     }
     this.updateCamera(delta);
     const labelStartedAt = performance.now();
-    this.updateMarbleNameLabels(delta);
+    this.updateMarbleNameLabels(delta, { forceRanking: forceUi });
     let uiMs = performance.now() - labelStartedAt;
     this.controls.enabled = true;
     if (!this.performanceProfile?.renderSkipOrbitControlsUpdate) this.controls.update();
     this.fpsFrames += 1;
-    this.fpsTime += delta;
+    this.fpsTime += Math.max(delta, rawDelta);
     if (this.fpsTime >= 0.5) {
       this.lastFps = Math.round(this.fpsFrames / this.fpsTime);
       this.ui.fps.textContent = String(this.lastFps);
       this.fpsFrames = 0;
       this.fpsTime = 0;
     }
-    if (performance.now() - this.lastLeaderboardUpdate > (this.performanceProfile?.leaderboardUpdateMs || 300)) {
+    const now = performance.now();
+    if (forceUi || now - this.lastLeaderboardUpdate > (this.performanceProfile?.leaderboardUpdateMs || 300)) {
       const leaderboardStartedAt = performance.now();
       this.updateLeaderboard(false);
       uiMs += performance.now() - leaderboardStartedAt;
     }
-    const now = performance.now();
     if (this.mediaRecorder?.state === 'recording' && now - this.lastRecordingStatusUpdate > 250) {
       this.lastRecordingStatusUpdate = now;
       const seconds = (now - this.recordingStartedAt) / 1000;
@@ -18756,7 +18778,7 @@ class MarbleRace {
       this.ui.recordStatus.textContent = `Recording ${seconds.toFixed(1)}s | ${scope}${audioSuffix}${mixSuffix}${ttsSuffix}`;
       this.updateTtsRecordingNotice();
     }
-    if (now - this.lastUIUpdate > (this.performanceProfile?.uiUpdateMs || 200)) {
+    if (forceUi || now - this.lastUIUpdate > (this.performanceProfile?.uiUpdateMs || 200)) {
       this.lastUIUpdate = now;
       const uiStartedAt = performance.now();
       this.updateUI();
@@ -18780,6 +18802,57 @@ class MarbleRace {
       overlayMs,
       rafIntervalMs,
     });
+    return {
+      ok: true,
+      source,
+      state: this.state,
+      elapsed: Number((this.elapsed || 0).toFixed(4)),
+      rawDelta: Number(rawDelta.toFixed(5)),
+      delta: Number(delta.toFixed(5)),
+      frameMs: Number((performance.now() - frameStartedAt).toFixed(2)),
+      raceDone: source === 'offline-frame-step'
+        ? this.state === 'finished'
+        : (this.continuousRecording
+          ? (this.state === 'finished'
+            && (!this.commentaryVoiceSpeaking && !this.commentaryVoicePreparing && !(this.commentaryVoiceQueue?.length))
+            && (this.elapsed - (this.raceFinishedAt || this.elapsed)) >= 8)
+          : this.state === 'finished'),
+      phase: this.continuousRecording?.phase || this.singleRecording?.phase || this.autoCupRecording?.phase || null,
+      racesCompleted: this.continuousRecording?.racesCompleted ?? null,
+      totalRaces: this.continuousRecording?.totalRaces ?? null,
+    };
+  }
+
+  enableOfflineFrameStepping({ fps = 30 } = {}) {
+    const stepFps = Math.max(1, Math.min(120, Math.round(Number(fps) || 30)));
+    this.offlineFrameStepping = {
+      enabled: true,
+      fps: stepFps,
+      stepSeconds: 1 / stepFps,
+      frames: 0,
+      startedAt: performance.now(),
+    };
+    try { this.clock.stop?.(); } catch {}
+    try { this.clock.start?.(); } catch {}
+    window.__MARBLE_RACE_OFFLINE_FRAME_STEPPING__ = this.offlineFrameStepping;
+    return { ok: true, ...this.offlineFrameStepping };
+  }
+
+  disableOfflineFrameStepping() {
+    if (this.offlineFrameStepping) this.offlineFrameStepping.enabled = false;
+    try { this.clock.start?.(); } catch {}
+    window.__MARBLE_RACE_OFFLINE_FRAME_STEPPING__ = this.offlineFrameStepping || { enabled: false };
+    return { ok: true, enabled: false };
+  }
+
+  stepOfflineFrame(stepSeconds = null) {
+    if (!this.offlineFrameStepping?.enabled) this.enableOfflineFrameStepping({ fps: stepSeconds ? 1 / stepSeconds : 30 });
+    const delta = Math.max(1 / 240, Math.min(1 / 15, Number(stepSeconds || this.offlineFrameStepping.stepSeconds || 1 / 30)));
+    const result = this.stepSimulationFrame(delta, { source: 'offline-frame-step', rafIntervalMs: delta * 1000, forceUi: true });
+    this.offlineFrameStepping.frames += 1;
+    this.offlineFrameStepping.simulatedSeconds = Number((this.offlineFrameStepping.frames * delta).toFixed(4));
+    window.__MARBLE_RACE_OFFLINE_FRAME_STEPPING__ = this.offlineFrameStepping;
+    return { ...result, offlineFrame: this.offlineFrameStepping.frames, simulatedSeconds: this.offlineFrameStepping.simulatedSeconds };
   }
 
   setCachedText(node, value, cacheKey = null) {
@@ -19827,6 +19900,21 @@ class MarbleRace {
         && this.elapsed - (data.lastDriveMovementTime ?? 0) >= (this.stallElimination.delaySeconds ?? this.stuckResetDelay)) {
         // DNF is a real stall rule, not a long-track pacing penalty: timeout scales by track length/stage
         // and only starts after the marble has made meaningful forward progress since the gate opened.
+        const renderSafeDnfGateActive = this.physicsMechanicKey === 'toyPark'
+          && (this.continuousRecording?.playwrightRender || this.singleRecording?.playwrightRender || this.autoCupRecording?.playwrightRender);
+        const renderTargetSeconds = Number(this.__playwrightRenderTargetSeconds || this.maxRaceSeconds || 0) || 0;
+        const renderDnfEarliestElapsed = renderTargetSeconds > 0 ? Math.max(90, renderTargetSeconds * 0.75) : 120;
+        const renderDnfLapReady = (data.completedLaps || 0) >= 1 || (data.raceProgress || 0) >= 0.5;
+        if (renderSafeDnfGateActive && (!renderDnfLapReady || this.elapsed < renderDnfEarliestElapsed)) {
+          data.renderSafeDnfSuppressed = {
+            at: Number((this.elapsed || 0).toFixed(3)),
+            completedLaps: data.completedLaps || 0,
+            raceProgress: Number((data.raceProgress || 0).toFixed(3)),
+            earliestElapsed: Number(renderDnfEarliestElapsed.toFixed(3)),
+            reason: 'toy-park-frame-sequence-dnf-must-not-fire-before-lap-one-or-late-race',
+          };
+          return;
+        }
         this.eliminateStalledMarble(data, closest.distance, 'no-forward-progress-timeout');
       }
     });
@@ -20087,15 +20175,13 @@ class MarbleRace {
       return 0;
     }
     const delaySeconds = policy.delaySeconds ?? 15;
-    const elapsedSinceArmed = policy.armedAtRealTimeMs
-      ? (performance.now() - policy.armedAtRealTimeMs) / 1000
-      : this.elapsed - policy.armedAt;
+    const elapsedSinceArmed = this.elapsed - policy.armedAt;
     if (elapsedSinceArmed < delaySeconds) return 0;
     const unfinishedRanking = this.getRanking({ force: true }).filter((data) => !data.finished && !data.defeated);
     if (!unfinishedRanking.length) return 0;
     unfinishedRanking.forEach((data, index) => {
       data.postFirstFinishDnfRank = finishedPodiumCount + index + 1;
-      this.eliminateStalledMarble(data, data.distance || data.driveDistance || 0, policy.reason || 'post-top-five-finish-cutoff', {
+      this.eliminateStalledMarble(data, data.distance || data.driveDistance || 0, policy.reason || 'post-field-finish-safety-cutoff', {
         broadcast: false,
         dnfOrder: index + 1,
         suppressCompletionCheck: true,
@@ -20119,7 +20205,7 @@ class MarbleRace {
     };
     const names = unfinishedRanking.slice(0, 4).map((data) => data.name).join(', ');
     const suffix = unfinishedRanking.length > 4 ? ` +${unfinishedRanking.length - 4}` : '';
-    this.pushBroadcastEvent('DNF cutoff', `${unfinishedRanking.length} DNF ${delaySeconds}s after top ${triggerAfterFinishers}${names ? `: ${names}${suffix}` : ''}`, { kind: 'dnf', force: true, lines: [`${unfinishedRanking.length} DNF after top ${triggerAfterFinishers}`] });
+    this.pushBroadcastEvent('DNF cutoff', `${unfinishedRanking.length} DNF ${delaySeconds}s after ${triggerAfterFinishers} finishers${names ? `: ${names}${suffix}` : ''}`, { kind: 'dnf', force: true, lines: [`${unfinishedRanking.length} DNF after ${triggerAfterFinishers} finishers`] });
     this.cachedRanking = null;
     this.cachedRankingAt = 0;
     this.checkFinishers();
@@ -20318,6 +20404,7 @@ class MarbleRace {
     });
     if (this.finishers.length === this.marbleData.length && this.marbleData.length > 0) {
       this.state = 'finished';
+      this.raceFinishedAt = this.elapsed;
       this.cameraMode = 'default';
       const finalRanking = this.getRanking({ force: true });
       this.handleCupRaceComplete(finalRanking);

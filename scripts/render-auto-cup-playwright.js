@@ -39,6 +39,7 @@ const toyParkRenderDefaults = isToyParkRenderUrl ? {
   cupSize: 8,
   targetSeconds: 180,
   maxRaceSeconds: 180,
+  finalResultHoldSeconds: 15,
   width: 720,
   height: 1280,
   videoCanvasLayout: 'vertical',
@@ -78,8 +79,8 @@ const config = {
     : (toyParkRenderDefaults.disableMouseOrbit ?? true),
   forceDefaultCamera: shouldForceDefaultCamera,
   audio: args.get('audio') !== 'false' && process.env.MARBLE_RENDER_AUDIO !== 'false',
-  videoCapture: ['playwright', 'canvas', 'none', 'off', 'false'].includes(rawVideoCapture)
-    ? ({ off: 'none', false: 'none' }[rawVideoCapture] || rawVideoCapture)
+  videoCapture: ['playwright', 'canvas', 'frame-sequence', 'frames', 'b2', 'none', 'off', 'false'].includes(rawVideoCapture)
+    ? ({ off: 'none', false: 'none', frames: 'frame-sequence', b2: 'frame-sequence' }[rawVideoCapture] || rawVideoCapture)
     : 'canvas',
   canvasTransport: String(args.get('canvas-transport') || process.env.MARBLE_RENDER_CANVAS_TRANSPORT || 'chunk').toLowerCase(),
   videoCanvasLayout: ['horizontal', 'vertical'].includes(String(args.get('video-canvas') || args.get('video-canvas-layout') || process.env.MARBLE_RENDER_VIDEO_CANVAS || toyParkRenderDefaults.videoCanvasLayout || 'horizontal').toLowerCase())
@@ -118,6 +119,8 @@ const config = {
   visualTheme: args.get('visual-theme') || args.get('theme') || process.env.MARBLE_RENDER_VISUAL_THEME || process.env.MARBLE_RENDER_THEME || '',
   survivorStateInput: args.get('survivor-state-input') || process.env.MARBLE_RENDER_SURVIVOR_STATE_INPUT || '',
   survivorStateOutput: args.get('survivor-state-output') || process.env.MARBLE_RENDER_SURVIVOR_STATE_OUTPUT || '',
+  frameSequenceQuality: Number(args.get('frame-sequence-quality') || process.env.MARBLE_RENDER_FRAME_SEQUENCE_QUALITY || 0.92),
+  finalResultHoldSeconds: Number(args.get('final-result-hold-seconds') || process.env.MARBLE_RENDER_FINAL_RESULT_HOLD_SECONDS || toyParkRenderDefaults.finalResultHoldSeconds || 0),
 };
 config.captureScale = Number.isFinite(config.captureScale) && config.captureScale > 0 ? config.captureScale : 1;
 config.targetSeconds = Number.isFinite(config.targetSeconds) ? Math.max(60, Math.min(7200, Math.round(config.targetSeconds))) : 600;
@@ -137,9 +140,13 @@ config.timeoutSeconds = hasExplicitTimeout && Number.isFinite(config.timeoutSeco
 if (config.videoCanvasLayout === 'vertical' && !args.has('width') && !process.env.MARBLE_RENDER_WIDTH) config.width = 720;
 if (config.videoCanvasLayout === 'vertical' && !args.has('height') && !process.env.MARBLE_RENDER_HEIGHT) config.height = 1280;
 const hasExplicitCaptureFps = args.has('capture-fps') || process.env.MARBLE_RENDER_CAPTURE_FPS != null;
+if (config.videoCapture === 'frame-sequence' && !isToyParkRenderUrl) {
+  console.error('[render:auto-cup] ERROR: B2 frame-sequence capture is only allowed for Toy Park /toypark renders.');
+  process.exit(1);
+}
 config.captureFps = Number.isFinite(config.captureFps) && config.captureFps > 0
   ? Math.max(1, Math.min(120, Math.round(config.captureFps)))
-  : (isToyParkRenderUrl && config.videoCanvasLayout === 'vertical' && config.videoCapture === 'canvas' ? 30 : config.fps);
+  : (isToyParkRenderUrl && config.videoCanvasLayout === 'vertical' && ['canvas', 'frame-sequence'].includes(config.videoCapture) ? 30 : config.fps);
 if (hasExplicitCaptureFps && config.captureFps > config.fps) config.captureFps = config.fps;
 config.youtubeKind = config.videoCanvasLayout === 'vertical' ? 'shorts' : 'long';
 config.outputAspectRatio = config.videoCanvasLayout === 'vertical' ? '9:16' : '16:9';
@@ -151,8 +158,13 @@ config.framePacingDiagnostics = args.get('frame-pacing-diagnostics') === 'true'
     && config.videoCanvasLayout === 'vertical');
 config.captureWidth = Math.round(config.width * config.captureScale);
 config.captureHeight = Math.round(config.height * config.captureScale);
+config.frameSequenceQuality = Number.isFinite(config.frameSequenceQuality) ? Math.max(0.4, Math.min(1, config.frameSequenceQuality)) : 0.92;
+config.finalResultHoldSeconds = Number.isFinite(config.finalResultHoldSeconds) ? Math.max(0, Math.min(60, config.finalResultHoldSeconds)) : 0;
 config.thumbnailMaxWords = Number.isFinite(config.thumbnailMaxWords) ? Math.max(2, Math.min(10, Math.round(config.thumbnailMaxWords))) : 6;
 config.eventMarkerIntervalSeconds = Number.isFinite(config.eventMarkerIntervalSeconds) ? Math.max(1, Math.min(60, Math.round(config.eventMarkerIntervalSeconds))) : 5;
+if (isToyParkRenderUrl && config.videoCapture === 'frame-sequence' && config.audio) {
+  console.log('B2 frame-sequence render: using offline-synced macOS say TTS mux instead of live page audio capture.');
+}
 config.eventMarkersOutput = config.eventMarkersOutput ? path.resolve(config.eventMarkersOutput) : '';
 config.youtubeTitleHistoryLimit = Number.isFinite(config.youtubeTitleHistoryLimit) ? Math.max(0, Math.min(50, Math.round(config.youtubeTitleHistoryLimit))) : 10;
 config.youtubeTitleHistory = String(config.youtubeTitleHistory || '').trim();
@@ -326,6 +338,308 @@ const run = (command, args, options = {}) => {
   const result = spawnSync(command, args, { cwd: rootDir, stdio: 'inherit', ...options });
   if (result.status !== 0) fail(`${command} failed with exit code ${result.status ?? result.signal}`);
 };
+
+const bufferFromDataUrl = (dataUrl) => {
+  const match = String(dataUrl || '').match(/^data:[^;]+;base64,(.*)$/s);
+  return match ? Buffer.from(match[1], 'base64') : Buffer.alloc(0);
+};
+
+async function captureToyParkFrameSequence(page, framesDir, summary = {}, options = {}) {
+  if (config.videoCapture !== 'frame-sequence') return null;
+  if (!isToyParkRenderUrl) fail('B2 frame-sequence capture is only allowed for Toy Park /toypark renders.');
+  rmSync(framesDir, { recursive: true, force: true });
+  mkdirSync(framesDir, { recursive: true });
+  const stopSignal = options.stopSignal || null;
+  const requestedSeconds = Math.max(1, Number(options.maxSeconds || 0) || Number(config.smokeSeconds || 0) || Number(config.targetSeconds || 0) || 1);
+  const requestedFrames = Math.max(1, Math.ceil(requestedSeconds * config.captureFps));
+  const finalResultHoldFrames = Math.max(0, Math.ceil((config.finalResultHoldSeconds || 0) * config.captureFps));
+  const hardMaxFrames = requestedFrames + finalResultHoldFrames;
+  const stepSeconds = 1 / config.captureFps;
+  const startedAt = Date.now();
+  const stats = { frames: 0, bytes: 0, stepMsTotal: 0, screenshotMsTotal: 0, writeMsTotal: 0, maxStepMs: 0, maxScreenshotMs: 0, maxWriteMs: 0, lastStepState: null, ttsEvents: [] };
+  const ttsEventKeys = new Set();
+  log('[progress] frame-sequence-capture-start', safeJson({ framesDir, requestedFrames, requestedSeconds: Number(requestedSeconds.toFixed(3)), finalResultHoldFrames, finalResultHoldSeconds: Number((config.finalResultHoldSeconds || 0).toFixed(3)), hardMaxFrames, fps: config.captureFps, quality: config.frameSequenceQuality, summary: sanitizeRenderCompletion(summary), mode: 'deterministic-offline-step' }));
+  const setup = await page.evaluate(({ fps }) => {
+    const app = window.__MARBLE_RACE_APP__;
+    if (!app) return { ok: false, reason: 'app-missing' };
+    if (app.setVideoCanvasLayout) app.setVideoCanvasLayout('vertical');
+    if (!app.enableOfflineFrameStepping || !app.stepOfflineFrame) return { ok: false, reason: 'offline-step-api-missing' };
+    return app.enableOfflineFrameStepping({ fps });
+  }, { fps: config.captureFps });
+  if (!setup?.ok) fail(`B2 deterministic frame stepping unavailable: ${safeJson(setup)}`);
+  let raceDoneFrame = null;
+  while (stats.frames < hardMaxFrames) {
+    const stepStartedAt = Date.now();
+    const appState = await page.evaluate(({ stepSeconds }) => {
+      const app = window.__MARBLE_RACE_APP__;
+      if (!app?.stepOfflineFrame) return { ok: false, reason: 'stepOfflineFrame-missing' };
+      const result = app.stepOfflineFrame(stepSeconds);
+      const commentary = app.activeCommentary ? {
+        line: app.activeCommentary.line || '',
+        kind: app.activeCommentary.kind || 'commentary',
+        time: Number(app.activeCommentary.time ?? app.elapsed ?? 0) || 0,
+        eventTitle: app.activeCommentary.eventTitle || '',
+      } : null;
+      const ranking = app.getRanking?.() || [];
+      const topFinishers = ranking
+        .filter((data) => data?.finished)
+        .slice(0, 3)
+        .map((data, index) => ({
+          rank: index + 1,
+          name: data.name || `Racer ${index + 1}`,
+          finishTime: Number(data.finishTime || 0),
+        }));
+      return { ...result, activeCommentary: commentary, topFinishers };
+    }, { stepSeconds });
+    const stepMs = Date.now() - stepStartedAt;
+    if (!appState?.ok) fail(`B2 deterministic frame step failed at frame ${stats.frames + 1}: ${safeJson(appState)}`);
+    const screenshotStartedAt = Date.now();
+    const bytes = await page.screenshot({
+      type: 'jpeg',
+      quality: Math.max(1, Math.min(100, Math.round(config.frameSequenceQuality * 100))),
+      fullPage: false,
+      scale: 'css',
+    });
+    const screenshotMs = Date.now() - screenshotStartedAt;
+    if (!bytes.length) fail(`B2 frame-sequence capture produced empty frame ${stats.frames + 1}`);
+    const framePath = path.join(framesDir, `frame_${String(stats.frames + 1).padStart(6, '0')}.jpg`);
+    const writeStartedAt = Date.now();
+    writeFileSync(framePath, bytes);
+    const writeMs = Date.now() - writeStartedAt;
+    stats.frames += 1;
+    stats.bytes += bytes.length;
+    stats.stepMsTotal += stepMs;
+    stats.screenshotMsTotal += screenshotMs;
+    stats.writeMsTotal += writeMs;
+    stats.maxStepMs = Math.max(stats.maxStepMs, stepMs);
+    stats.maxScreenshotMs = Math.max(stats.maxScreenshotMs, screenshotMs);
+    stats.maxWriteMs = Math.max(stats.maxWriteMs, writeMs);
+    stats.lastStepState = appState;
+    const visualFrameTime = Number(((stats.frames - 1) / config.captureFps).toFixed(3));
+    if (config.audio && appState.activeCommentary?.line) {
+      const event = appState.activeCommentary;
+      const eventTime = visualFrameTime;
+      const key = `${Math.round(eventTime * 2) / 2}|${String(event.line).toLowerCase()}`;
+      if (!ttsEventKeys.has(key)) {
+        ttsEventKeys.add(key);
+        stats.ttsEvents.push({
+          time: Number(eventTime.toFixed(3)),
+          sourceTime: Number(Math.max(0, Number(event.time ?? appState.elapsed ?? 0) || 0).toFixed(3)),
+          visualFrameTime,
+          line: sanitizeSingleLine(event.line).slice(0, 180),
+          kind: sanitizeSingleLine(event.kind || 'commentary').slice(0, 32),
+          eventTitle: sanitizeSingleLine(event.eventTitle || '').slice(0, 80),
+          frame: stats.frames,
+        });
+      }
+    }
+    if (appState.raceDone && raceDoneFrame == null) {
+      raceDoneFrame = stats.frames;
+      if (config.audio) {
+        const podium = Array.isArray(appState.topFinishers) ? appState.topFinishers : [];
+        const winner = podium[0];
+        const line = winner
+          ? `Final result. ${winner.name} wins in ${Number(winner.finishTime || 0).toFixed(2)} seconds.${podium[1] ? ` ${podium[1].name} takes second.` : ''}${podium[2] ? ` ${podium[2].name} takes third.` : ''}`
+          : 'Final result is on screen.';
+        const key = `final-result|${String(line).toLowerCase()}`;
+        if (!ttsEventKeys.has(key)) {
+          ttsEventKeys.add(key);
+          stats.ttsEvents.push({
+            time: visualFrameTime,
+            sourceTime: Number(Math.max(0, Number(appState.elapsed || 0) || 0).toFixed(3)),
+            visualFrameTime,
+            line: sanitizeSingleLine(line).slice(0, 220),
+            kind: 'final-result',
+            eventTitle: 'Final Result',
+            frame: stats.frames,
+            forced: true,
+          });
+        }
+      }
+    }
+    const finalHoldFramesCaptured = raceDoneFrame == null ? 0 : Math.max(0, stats.frames - raceDoneFrame);
+    const finalHoldComplete = raceDoneFrame != null && finalHoldFramesCaptured >= finalResultHoldFrames;
+    if (stats.frames === 1 || stats.frames % Math.max(1, config.captureFps * 10) === 0 || stats.frames === requestedFrames || appState.raceDone) {
+      log('[progress] frame-sequence-capture', safeJson({
+        frames: stats.frames,
+        requestedFrames,
+        hardMaxFrames,
+        finalResultHoldFrames,
+        finalHoldFramesCaptured,
+        finalHoldComplete,
+        simulatedSeconds: Number((stats.frames / config.captureFps).toFixed(3)),
+        appElapsed: appState.elapsed,
+        offlineFrame: appState.offlineFrame,
+        raceDone: appState.raceDone,
+        state: appState.state,
+        phase: appState.phase,
+        mb: Number((stats.bytes / 1048576).toFixed(1)),
+        avgStepMs: Number((stats.stepMsTotal / stats.frames).toFixed(1)),
+        maxStepMs: stats.maxStepMs,
+        avgScreenshotMs: Number((stats.screenshotMsTotal / stats.frames).toFixed(1)),
+        maxScreenshotMs: stats.maxScreenshotMs,
+        avgWriteMs: Number((stats.writeMsTotal / stats.frames).toFixed(1)),
+        maxWriteMs: stats.maxWriteMs,
+        wallSeconds: Number(((Date.now() - startedAt) / 1000).toFixed(1)),
+      }));
+    }
+    if (stopSignal?.stopRequested && stats.frames > 0 && appState.raceDone && finalHoldComplete) break;
+    if (appState.raceDone && finalHoldComplete && !config.smokeSeconds) break;
+  }
+  const actualSeconds = stats.frames / config.captureFps;
+  const result = {
+    ok: true,
+    framesDir,
+    frames: stats.frames,
+    captures: stats.frames,
+    duplicateFrames: 0,
+    duplicateFrameRatio: 0,
+    deterministicStep: true,
+    fps: config.captureFps,
+    seconds: Number(actualSeconds.toFixed(3)),
+    appElapsed: stats.lastStepState?.elapsed ?? null,
+    raceDone: Boolean(stats.lastStepState?.raceDone),
+    mb: Number((stats.bytes / 1048576).toFixed(1)),
+    avgStepMs: Number((stats.stepMsTotal / Math.max(1, stats.frames)).toFixed(1)),
+    maxStepMs: stats.maxStepMs,
+    avgScreenshotMs: Number((stats.screenshotMsTotal / Math.max(1, stats.frames)).toFixed(1)),
+    maxScreenshotMs: stats.maxScreenshotMs,
+    avgWriteMs: Number((stats.writeMsTotal / Math.max(1, stats.frames)).toFixed(1)),
+    maxWriteMs: stats.maxWriteMs,
+    wallSeconds: Number(((Date.now() - startedAt) / 1000).toFixed(1)),
+    ttsEvents: stats.ttsEvents,
+    ttsEventCount: stats.ttsEvents.length,
+  };
+  log('[progress] frame-sequence-capture-done', safeJson(result));
+  await page.evaluate(() => window.__MARBLE_RACE_APP__?.disableOfflineFrameStepping?.()).catch(() => null);
+  return result;
+}
+
+function encodeFrameSequenceToMp4(framesDir, output) {
+  const ffmpegArgs = [
+    '-y',
+    '-framerate', String(config.captureFps),
+    '-i', path.join(framesDir, 'frame_%06d.jpg'),
+    '-vf', `fps=${config.fps},scale=${config.width}:${config.height}:flags=lanczos,format=yuv420p`,
+    '-c:v', 'libx264',
+    '-preset', config.videoPreset,
+    '-crf', String(config.videoCrf),
+    '-movflags', '+faststart',
+    output,
+  ];
+  progress('ffmpeg-frame-sequence-mp4', output);
+  run('ffmpeg', ffmpegArgs);
+}
+
+function normalizeFrameSequenceTtsEvents(events = [], durationSeconds = 0) {
+  const normalized = [];
+  const seen = new Set();
+  const lastLineTime = new Map();
+  for (const event of Array.isArray(events) ? events : []) {
+    const maxLen = event?.kind === 'final-result' ? 240 : 180;
+    const line = sanitizeSingleLine(event?.line || event?.detail || event?.title || '').slice(0, maxLen);
+    if (!line) continue;
+    const time = Math.max(0, Math.min(Math.max(0, Number(durationSeconds) || 0), Number(event?.time ?? event?.visualFrameTime ?? event?.elapsed ?? 0) || 0));
+    const key = `${event?.kind === 'final-result' ? 'final' : Math.round(time * 2) / 2}|${line.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    const lineKey = line.toLowerCase();
+    const lastSameLineAt = lastLineTime.get(lineKey);
+    if (lastSameLineAt != null && time - lastSameLineAt < 4.2) continue;
+    seen.add(key);
+    lastLineTime.set(lineKey, time);
+    normalized.push({
+      line,
+      time: Number(time.toFixed(3)),
+      sourceTime: Number(Number(event?.sourceTime ?? event?.elapsed ?? time).toFixed(3)),
+      visualFrameTime: Number(Number(event?.visualFrameTime ?? time).toFixed(3)),
+      kind: sanitizeSingleLine(event?.kind || 'commentary').slice(0, 32),
+      frame: event?.frame ?? null,
+      forced: Boolean(event?.forced),
+    });
+  }
+  if (!normalized.length && durationSeconds > 4) {
+    normalized.push(
+      { time: 1.2, sourceTime: 1.2, visualFrameTime: 1.2, kind: 'fallback-start', line: 'Toy Park marble race is underway.' },
+      { time: Math.max(4, Math.min(durationSeconds - 10, durationSeconds * 0.78)), sourceTime: null, visualFrameTime: null, kind: 'fallback-finish', line: 'Final result is on screen.' },
+    );
+  }
+  return normalized.sort((a, b) => a.time - b.time);
+}
+
+function getAudioDurationSeconds(filePath) {
+  try {
+    const probe = ffprobeJson(filePath);
+    const duration = Number(probe?.format?.duration);
+    return Number.isFinite(duration) ? duration : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function synthesizeFrameSequenceTtsAudio(events, outputPath, durationSeconds) {
+  let timeline = normalizeFrameSequenceTtsEvents(events, durationSeconds);
+  if (!config.audio || !timeline.length) return { ok: false, reason: 'no-tts-events', events: 0 };
+  if (!commandExists('say')) return { ok: false, reason: 'say-command-missing', events: timeline.length };
+  const audioDuration = Math.max(1, Number(durationSeconds || 0) || 1);
+  const finalEventTime = timeline.find((event) => event.kind === 'final-result')?.time;
+  if (Number.isFinite(finalEventTime)) {
+    // The final-result narration is mandatory. Drop late non-critical chatter near the
+    // final card so the final line can start while the card is still held on screen.
+    timeline = timeline.filter((event) => event.kind === 'final-result' || event.kind === 'winner' || event.time < finalEventTime - 5);
+  }
+  const ttsDir = path.join(path.dirname(outputPath), `.frame-sequence-tts-${defaultStamp}`);
+  rmSync(ttsDir, { recursive: true, force: true });
+  mkdirSync(ttsDir, { recursive: true });
+  const synthesized = timeline.map((event, index) => {
+    const aiffPath = path.join(ttsDir, `line_${String(index + 1).padStart(3, '0')}.aiff`);
+    execFileSync('say', ['-v', config.ttsVoice || 'Alex', '-o', aiffPath, event.line], { cwd: rootDir, stdio: 'ignore' });
+    return { ...event, path: aiffPath, speechSeconds: Number(Math.max(0.4, getAudioDurationSeconds(aiffPath)).toFixed(3)) };
+  });
+  const scheduleInputs = (items) => {
+    const scheduled = [];
+    let cursor = 0;
+    const maxNonFinalShiftSeconds = 2.5;
+    for (const item of items) {
+      const startTime = Number(Math.max(item.time, cursor).toFixed(3));
+      const shiftedSeconds = Number((startTime - item.time).toFixed(3));
+      if (item.kind !== 'final-result' && shiftedSeconds > maxNonFinalShiftSeconds) continue;
+      cursor = startTime + item.speechSeconds + 0.22;
+      if (startTime < audioDuration - 0.25) scheduled.push({ ...item, requestedTime: item.time, time: startTime, shiftedSeconds });
+    }
+    return scheduled;
+  };
+  let schedulable = synthesized;
+  let inputs = scheduleInputs(schedulable);
+  for (let attempts = 0; attempts < 12; attempts += 1) {
+    const finalInput = inputs.find((event) => event.kind === 'final-result');
+    if (!finalInput || finalInput.time + finalInput.speechSeconds <= audioDuration - 0.2) break;
+    const finalIndex = schedulable.findIndex((event) => event.kind === 'final-result');
+    let removeIndex = -1;
+    for (let index = finalIndex - 1; index >= 0; index -= 1) {
+      const event = schedulable[index];
+      if (event && !event.forced && event.kind !== 'winner') { removeIndex = index; break; }
+    }
+    if (removeIndex < 0) break;
+    schedulable = schedulable.filter((_, index) => index !== removeIndex);
+    inputs = scheduleInputs(schedulable);
+  }
+  if (!inputs.length) return { ok: false, reason: 'all-tts-events-after-video-end', events: timeline.length };
+  const ffmpegArgs = ['-y', '-f', 'lavfi', '-t', audioDuration.toFixed(3), '-i', 'anullsrc=r=44100:cl=mono'];
+  inputs.forEach((input) => ffmpegArgs.push('-i', input.path));
+  const delayed = inputs.map((input, index) => {
+    const label = `a${index + 1}`;
+    const delayMs = Math.max(0, Math.round(input.time * 1000));
+    return `[${index + 1}:a]adelay=${delayMs}:all=1,volume=1.25[${label}]`;
+  });
+  const mixInputs = ['[0:a]', ...inputs.map((_, index) => `[a${index + 1}]`)].join('');
+  const filter = `${delayed.join(';')};${mixInputs}amix=inputs=${inputs.length + 1}:duration=first:dropout_transition=0,alimiter=limit=0.95,atrim=0:${audioDuration.toFixed(3)},asetpts=N/SR/TB[out]`;
+  ffmpegArgs.push('-filter_complex', filter, '-map', '[out]', '-c:a', 'pcm_s16le', outputPath);
+  progress('frame-sequence-tts-synth', `${inputs.length} lines -> ${outputPath}`);
+  run('ffmpeg', ffmpegArgs);
+  const manifestPath = path.resolve(`${outputPath.replace(/\.[^.]+$/, '')}.tts.json`);
+  writeFileSync(manifestPath, `${JSON.stringify({ ok: true, voice: config.ttsVoice, durationSeconds: audioDuration, output: outputPath, events: inputs }, null, 2)}\n`);
+  return { ok: existsSync(outputPath) && statSync(outputPath).size > 44, events: inputs.length, output: outputPath, manifest: manifestPath, durationSeconds: audioDuration };
+}
 
 function readJsonFileIfExists(filePath, label) {
   if (!filePath || !existsSync(filePath)) return null;
@@ -961,7 +1275,9 @@ async function main() {
   }
 
   const videoDir = path.join(recordingsDir, `.playwright-${defaultStamp}`);
+  const frameSequenceDir = path.join(recordingsDir, `.frame-sequence-${defaultStamp}`);
   rmSync(videoDir, { recursive: true, force: true });
+  rmSync(frameSequenceDir, { recursive: true, force: true });
   mkdirSync(videoDir, { recursive: true });
 
   const requestedCanvasTransport = ['buffered', 'browser-buffered-final-export', 'auto-buffered'].includes(config.canvasTransport)
@@ -1455,6 +1771,9 @@ async function main() {
   let finalRaceCanvasStopLogged = false;
   let scheduleFinalRaceCanvasStop = async () => null;
   let eventMarkerState = { samples: [], eventsByKey: new Map(), lastSampleAt: 0 };
+  let frameSequenceInfo = null;
+  const frameSequenceStopSignal = { stopRequested: false };
+  let frameSequenceCapturePromise = null;
   try {
     progress('browser-open', config.url);
     log(`Opening ${config.url}`);
@@ -1994,7 +2313,7 @@ async function main() {
     }
 
     progress('app-start', `${config.mode}, races=${config.multipleRaceCount}, marbles=${config.cupSize}`);
-    const started = await page.evaluate(({ mode, multipleRaceCount, cupSize, trackLength, targetSeconds, lengthMode, smokeSeconds, maxRaceSeconds, finalRaceCompletionBufferSeconds, cupName, ttsVoice, obstaclePreset, obstacleDistribution, obstacleTypes, visualTheme, showLeftUi, showRightUi, disableMouseOrbit, forceDefaultCamera, renderPerformanceMode, renderPerformanceProfile, survivorStateInput }) => {
+    const started = await page.evaluate(({ mode, multipleRaceCount, cupSize, trackLength, targetSeconds, lengthMode, smokeSeconds, maxRaceSeconds, finalRaceCompletionBufferSeconds, cupName, ttsVoice, obstaclePreset, obstacleDistribution, obstacleTypes, visualTheme, showLeftUi, showRightUi, disableMouseOrbit, forceDefaultCamera, renderPerformanceMode, renderPerformanceProfile, survivorStateInput, videoCapture }) => {
       const app = window.__MARBLE_RACE_APP__;
       if (!app) return { ok: false, reason: 'app-missing' };
       const prepareRenderCamera = () => {
@@ -2022,6 +2341,7 @@ async function main() {
       app.__playwrightRenderTrackLength = trackLength;
       app.__playwrightRenderTargetSeconds = targetSeconds;
       app.__playwrightRenderLengthMode = lengthMode;
+      app.__playwrightRenderVideoCapture = videoCapture;
       const unifiedCupTiming = app.getCupVideoTimingEstimate?.() || {};
       app.getCupVideoTimingEstimate = () => ({
         ...unifiedCupTiming,
@@ -2039,9 +2359,12 @@ async function main() {
       };
       app.unlockAudio?.();
       app.setCommentaryEnabled?.(true);
-      app.setCommentaryVoiceEnabled?.(true);
+      // Frame-sequence uses deterministic offline stepping. Keep commentary text
+      // events enabled, but do not play live browser/TTS audio in page time;
+      // Node synthesizes those lines afterward and muxes them on the video timeline.
+      app.setCommentaryVoiceEnabled?.(videoCapture === 'frame-sequence' ? false : true);
       app.setTtsVoice?.(ttsVoice, { resetQueue: false, updateStatus: true });
-      app.checkLocalTtsBridge?.();
+      if (videoCapture !== 'frame-sequence') app.checkLocalTtsBridge?.();
       if (visualTheme && app.ui?.visualTheme) {
         app.ui.visualTheme.value = visualTheme;
         app.updateVisualTheme?.({ themeKey: visualTheme, regenerateMarbles: true, source: 'playwright-render' });
@@ -2170,7 +2493,7 @@ async function main() {
           pendingTimer: null,
           playwrightRender: true,
         };
-        if (maxRaceSeconds > 0) {
+        if (maxRaceSeconds > 0 && videoCapture !== 'frame-sequence') {
           const originalStartSingleRecordingRace = app.startSingleRecordingRace?.bind(app);
           if (originalStartSingleRecordingRace && !app.__playwrightSingleRaceTimeoutWrapped) {
             app.startSingleRecordingRace = (...args) => {
@@ -2271,7 +2594,7 @@ async function main() {
           };
           app.__playwrightContinuousFinalRaceSignalWrapped = true;
         }
-        if (maxRaceSeconds > 0) {
+        if (maxRaceSeconds > 0 && videoCapture !== 'frame-sequence') {
           const originalStartContinuousRecordingRace = app.startContinuousRecordingRace?.bind(app);
           if (originalStartContinuousRecordingRace && !app.__playwrightContinuousRaceTimeoutWrapped) {
             app.startContinuousRecordingRace = (...args) => {
@@ -2401,7 +2724,7 @@ async function main() {
           };
           app.__playwrightSurvivorRaceCompleteWrapped = true;
         }
-        if (maxRaceSeconds > 0) {
+        if (maxRaceSeconds > 0 && videoCapture !== 'frame-sequence') {
           const originalStartSurvivorLeagueRaceWithSpotlight = app.startSurvivorLeagueRaceWithSpotlight?.bind(app);
           if (originalStartSurvivorLeagueRaceWithSpotlight && !app.__playwrightSurvivorRaceTimeoutWrapped) {
             app.startSurvivorLeagueRaceWithSpotlight = (...args) => {
@@ -2447,7 +2770,7 @@ async function main() {
       if (timing.replayHighlightSeconds != null) {
         app.autoCupRecording.playwrightReplayHoldSeconds = timing.replayHighlightSeconds;
       }
-      if (maxRaceSeconds > 0) {
+      if (maxRaceSeconds > 0 && videoCapture !== 'frame-sequence') {
         app.autoCupRecording.maxRaceSeconds = maxRaceSeconds;
         const originalStartAutoCupRace = app.startAutoCupRace?.bind(app);
         if (originalStartAutoCupRace && !app.__playwrightAutoCupRaceTimeoutWrapped) {
@@ -2543,9 +2866,16 @@ async function main() {
       renderPerformanceMode: config.renderPerformanceMode,
       renderPerformanceProfile: config.renderPerformanceProfile,
       survivorStateInput,
+      videoCapture: config.videoCapture,
     });
     if (!started.ok) fail(`Could not start Playwright auto cup: ${started.reason || 'unknown'}`);
     log('Auto cup started:', JSON.stringify(started));
+    if (config.videoCapture === 'frame-sequence') {
+      frameSequenceCapturePromise = captureToyParkFrameSequence(page, frameSequenceDir, {}, {
+        stopSignal: frameSequenceStopSignal,
+        maxSeconds: Math.max(config.smokeSeconds || config.targetSeconds || 0, 1),
+      });
+    }
     progress('race-running', `${config.mode}, target=${config.targetSeconds}s, timeout=${config.timeoutSeconds}s`);
 
     await collectEventMarkerSnapshot(page);
@@ -2660,7 +2990,21 @@ async function main() {
       logRenderProgressSnapshot(page, 'periodic').catch(() => {});
     }, 30000);
 
-    if (config.smokeSeconds > 0) {
+    if (config.videoCapture === 'frame-sequence') {
+      frameSequenceInfo = frameSequenceCapturePromise ? await frameSequenceCapturePromise : null;
+      frameSequenceStopSignal.stopRequested = true;
+      log('Auto cup completed:', safeJson(sanitizeRenderCompletion({
+        ok: true,
+        done: true,
+        mode: config.mode,
+        phase: 'frame-sequence-complete',
+        reason: 'frame-sequence-capture-complete',
+        frames: frameSequenceInfo?.frames ?? null,
+        seconds: frameSequenceInfo?.seconds ?? null,
+        stoppedBecauseRaceDone: Boolean(frameSequenceInfo?.stoppedBecauseRaceDone),
+        lastAppState: frameSequenceInfo?.lastAppState || null,
+      })));
+    } else if (config.smokeSeconds > 0) {
       await page.waitForTimeout(config.smokeSeconds * 1000);
       const smokeState = await page.evaluate(() => {
         const app = window.__MARBLE_RACE_APP__;
@@ -2881,6 +3225,11 @@ async function main() {
     }).catch(() => null);
     if (runtimeFpsSummary) log('Runtime FPS summary:', JSON.stringify(runtimeFpsSummary));
     let canvasSourceWebm = null;
+    if (config.videoCapture === 'frame-sequence') {
+      progress('frame-sequence-finalize', `fps=${config.captureFps}`);
+      frameSequenceStopSignal.stopRequested = true;
+      frameSequenceInfo = frameSequenceInfo || (frameSequenceCapturePromise ? await frameSequenceCapturePromise : null);
+    }
     if (config.videoCapture === 'canvas') {
       progress('canvas-stop');
       if (canvasCaptureStopRequestedAt === null) {
@@ -2927,7 +3276,7 @@ async function main() {
       if (!existsSync(canvasSourceWebm) || statSync(canvasSourceWebm).size <= 0) fail(`Canvas stream output was not written: ${canvasSourceWebm}`);
       log('Canvas video captured:', JSON.stringify({ ...canvasResult, webm: canvasSourceWebm, bytes: statSync(canvasSourceWebm).size }));
     }
-    if (config.audio) {
+    if (config.audio && config.videoCapture !== 'frame-sequence') {
       progress('audio-finalize');
       const audioResult = await page.evaluate(() => {
         const capture = window.__MARBLE_RENDER_AUDIO_CAPTURE__;
@@ -2972,6 +3321,52 @@ async function main() {
   }
 
   let sourceWebm = null;
+  if (config.videoCapture === 'frame-sequence') {
+    const outputExt = '.mp4';
+    const requestedOutputExt = path.extname(config.output).toLowerCase();
+    const finalOutput = requestedOutputExt === outputExt
+      ? config.output
+      : path.join(path.dirname(config.output), `${path.basename(config.output, path.extname(config.output))}.mp4`);
+    mkdirSync(path.dirname(finalOutput), { recursive: true });
+    if (!existsSync(frameSequenceDir) || !readdirSync(frameSequenceDir).some((entry) => /^frame_\d{6}\.jpg$/i.test(entry))) {
+      fail(`No B2 frame sequence images found in ${frameSequenceDir}`);
+    }
+    const audioOutputPath = resolveAudioOutputPath({ syncToOutput: true });
+    if (config.audio) {
+      const ttsResult = synthesizeFrameSequenceTtsAudio(frameSequenceInfo?.ttsEvents || [], audioOutputPath, frameSequenceInfo?.seconds || 0);
+      log('Frame-sequence TTS audio:', safeJson(ttsResult));
+    }
+    const hasAudio = config.audio && existsSync(audioOutputPath) && statSync(audioOutputPath).size > 44;
+    if (hasAudio) {
+      const videoOnlyOutput = path.resolve(`${finalOutput.replace(/\.[^.]+$/, '')}.video-only.mp4`);
+      encodeFrameSequenceToMp4(frameSequenceDir, videoOnlyOutput);
+      log(`Muxing B2 frame-sequence MP4 and captured audio ${videoOnlyOutput} + ${audioOutputPath} -> ${finalOutput}`);
+      progress('ffmpeg-frame-sequence-audio-mux', finalOutput);
+      run('ffmpeg', [
+        '-y',
+        '-i', videoOnlyOutput,
+        '-i', audioOutputPath,
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        '-shortest',
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '160k',
+        '-movflags', '+faststart',
+        finalOutput,
+      ]);
+    } else {
+      encodeFrameSequenceToMp4(frameSequenceDir, finalOutput);
+    }
+    try {
+      log('Final MP4 probe:', JSON.stringify(ffprobeJson(finalOutput)));
+    } catch (error) {
+      console.warn('[render:auto-cup] Could not ffprobe final MP4:', error?.message || error);
+    }
+    progress('done', finalOutput);
+    log(`Done: ${finalOutput}`);
+    return;
+  }
   if (config.videoCapture === 'none') {
     log('No video capture requested; skipping source WebM probe and ffmpeg mux/encode.');
     mkdirSync(path.dirname(config.output), { recursive: true });

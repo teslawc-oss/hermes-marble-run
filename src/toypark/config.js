@@ -1,16 +1,24 @@
 export const TOY_PARK_TRACK_WIDTH_SCALE = 0.42;
 
+export const TOY_PARK_TILE_RENDER_STATUS = {
+  renderReady: 'render-ready',
+  draft: 'draft-upcoming',
+  cancelled: 'cancelled',
+};
+
 export const TOY_PARK_TRACK_TILE_LIBRARY = {
   start: {
     key: 'toy-park-start-board',
     label: '開始板塊',
     role: 'start',
+    renderStatus: TOY_PARK_TILE_RENDER_STATUS.renderReady,
     status: 'existing-flat-start-board-module',
   },
   straight: {
     key: 'toy-park-straight-road-tile',
     label: '直路板塊',
     role: 'straight',
+    renderStatus: TOY_PARK_TILE_RENDER_STATUS.renderReady,
     length: 14,
     prototypeLoopLength: 7,
     turnDegrees: 0,
@@ -20,6 +28,7 @@ export const TOY_PARK_TRACK_TILE_LIBRARY = {
     key: 'toy-park-candy-pop-straight-obstacle-tile',
     label: 'Candy Pop直線障礙物板塊',
     role: 'straight-obstacle',
+    renderStatus: TOY_PARK_TILE_RENDER_STATUS.renderReady,
     length: 14,
     prototypeLoopLength: 7,
     turnDegrees: 0,
@@ -32,6 +41,7 @@ export const TOY_PARK_TRACK_TILE_LIBRARY = {
     key: 'toy-park-windmill-spinner-circle-tile',
     label: 'Toy Windmill Spinner圓形板塊',
     role: 'circle-obstacle',
+    renderStatus: TOY_PARK_TILE_RENDER_STATUS.renderReady,
     length: 6.3,
     prototypeLoopLength: 6.3,
     turnDegrees: 0,
@@ -51,6 +61,7 @@ export const TOY_PARK_TRACK_TILE_LIBRARY = {
     bridgeHeight: 0,
     surfaceMarker: null,
     disabled: true,
+    renderStatus: TOY_PARK_TILE_RENDER_STATUS.cancelled,
     status: 'cancelled-by-user-request-generator-uses-road-footprint-avoidance-instead-of-ramp-bridge',
   },
   elevatedStraight: {
@@ -63,6 +74,7 @@ export const TOY_PARK_TRACK_TILE_LIBRARY = {
     bridgeHeight: 0,
     surfaceMarker: null,
     disabled: true,
+    renderStatus: TOY_PARK_TILE_RENDER_STATUS.cancelled,
     status: 'cancelled-by-user-request-generator-uses-road-footprint-avoidance-instead-of-elevated-bridge',
   },
   rampDown: {
@@ -75,12 +87,14 @@ export const TOY_PARK_TRACK_TILE_LIBRARY = {
     bridgeHeight: 0,
     surfaceMarker: null,
     disabled: true,
+    renderStatus: TOY_PARK_TILE_RENDER_STATUS.cancelled,
     status: 'cancelled-by-user-request-generator-uses-road-footprint-avoidance-instead-of-ramp-bridge',
   },
   variableBend: {
     key: 'toy-park-variable-angle-bend-tile',
     label: '可變角度彎位板塊',
     role: 'corner',
+    renderStatus: TOY_PARK_TILE_RENDER_STATUS.renderReady,
     length: 11,
     prototypeLoopLength: 4,
     defaultTurnDegrees: 60,
@@ -102,6 +116,7 @@ export const TOY_PARK_TRACK_TILE_LIBRARY = {
     label: '45度彎位板塊（已取消）',
     role: 'disabled-corner',
     disabled: true,
+    renderStatus: TOY_PARK_TILE_RENDER_STATUS.cancelled,
     replacedBy: ['toy-park-variable-angle-bend-tile'],
     status: 'cancelled-by-user-request',
   },
@@ -109,11 +124,23 @@ export const TOY_PARK_TRACK_TILE_LIBRARY = {
     key: 'toy-park-finish-board',
     label: '終點板塊',
     role: 'finish',
+    renderStatus: TOY_PARK_TILE_RENDER_STATUS.renderReady,
     length: 4.8,
     status: 'new-flat-finish-board-module',
   },
 };
 
+export const isToyParkTileRenderReady = (tile) => Boolean(tile)
+  && tile.disabled !== true
+  && tile.renderStatus === TOY_PARK_TILE_RENDER_STATUS.renderReady;
+
+export const getToyParkRenderReadyTrackTiles = () => Object.fromEntries(
+  Object.entries(TOY_PARK_TRACK_TILE_LIBRARY).filter(([, tile]) => isToyParkTileRenderReady(tile))
+);
+
+export const getToyParkDraftTrackTiles = () => Object.fromEntries(
+  Object.entries(TOY_PARK_TRACK_TILE_LIBRARY).filter(([, tile]) => tile?.renderStatus === TOY_PARK_TILE_RENDER_STATUS.draft)
+);
 
 export const TOY_PARK_START_GATE_OVERRIDES = {
   style: 'track-aligned-gravity-staging-chute-with-optional-toy-park-racing-grid-start',
@@ -316,10 +343,10 @@ export function buildToyParkPhysicsMechanicProfile(noRollingSlowdown) {
     renderSafeDefault: false,
     isolatedPreviewOnly: true,
     worldGravityY: -16,
-    speedScale: 1.0368,
-    accelScale: 0.9792,
+    speedScale: 1.3478,
+    accelScale: 1.273,
     startImpulseScale: 0,
-    maxSpeedScale: 0.6912,
+    maxSpeedScale: 0.8986,
     unstuckScale: 0,
     marbleMassScale: 0.92,
     marbleRadiusScale: 1.0,

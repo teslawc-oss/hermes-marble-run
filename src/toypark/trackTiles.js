@@ -1,4 +1,7 @@
-import { TOY_PARK_TRACK_TILE_LIBRARY } from './config.js';
+import {
+  TOY_PARK_TRACK_TILE_LIBRARY,
+  isToyParkTileRenderReady,
+} from './config.js';
 
 const degreesToRadians = (degrees) => degrees * (Math.PI / 180);
 
@@ -450,8 +453,12 @@ const applyBridgeModuleSetToPieces = (pieces) => {
 
 const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, attempt, generator }) => {
   const straightTile = TOY_PARK_TRACK_TILE_LIBRARY.straight;
-  const candyPopStraightObstacleTile = TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle;
-  const windmillSpinnerCircleTile = TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle;
+  const candyPopStraightObstacleTile = isToyParkTileRenderReady(TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle)
+    ? TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle
+    : null;
+  const windmillSpinnerCircleTile = isToyParkTileRenderReady(TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle)
+    ? TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle
+    : null;
   const variableBendTile = TOY_PARK_TRACK_TILE_LIBRARY.variableBend;
   const pieces = [];
   const pickStraightTile = (straightIndex, length) => {
