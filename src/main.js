@@ -338,7 +338,10 @@ const FALL_RESPAWN_POLICY = {
   trackEdgeMarginMeters: 0.85,
   maxVerticalClearanceMeters: 2.4,
   verticalDropMeters: 5,
-  label: 'Out-of-bounds respawn uses last confirmed on-track progress only; lateral fall detection uses local track edge plus margin so off-track marbles respawn before drifting far away.',
+  repeatedRepositionDnfWindowSeconds: 10,
+  repeatedRepositionDnfThreshold: 3,
+  repeatedRepositionDnfReason: 'repeated-reposition-dnf',
+  label: 'Out-of-bounds respawn uses last confirmed on-track progress only; lateral fall detection uses local track edge plus margin so off-track marbles respawn before drifting far away; if one marble needs 3 reposition resets within 10 seconds, DNF it instead of looping.',
 };
 
 const FINISH_LINE_RULE = {
@@ -623,9 +626,12 @@ const BROADCAST_CAMERA = {
   toyParkDefaultAlternatingSequence: ['cinematicLeader'],
   toyParkDefaultAlternatingLabel: 'Toy Park Default Auto stays on cinematicLeader through non-final-lap finish-line crossings; the finish-line camera is reserved for after the final-lap winner crosses the line.',
   toyParkFinalApproachProgress: 0.94,
-  toyParkFinalApproachDistance: 22,
-  toyParkFinalApproachMode: 'final-lap-pre-finish-through-all-finished',
-  toyParkFinalApproachLabel: 'Toy Park final approach is gated to the final lap: non-final laps stay cinematicLeader through the finish line, while the final-lap leader switches to a top-down finish-line bird-eye shot before crossing and holds it until every marble finishes.',
+  toyParkFinalApproachDistance: 18,
+  toyParkFinalCameraVisibilityLeadDistance: 42,
+  toyParkFinalCameraVisibilityMinProgress: 0.9,
+  toyParkFinalCameraVisibilityMargin: 0.04,
+  toyParkFinalApproachMode: 'final-lap-pre-finish-through-all-finished-with-visibility-precheck',
+  toyParkFinalApproachLabel: 'Toy Park final approach is gated to the final lap: non-final laps stay cinematicLeader through the finish line; on final lap, the director precomputes the finish camera framing and swaps early once the leader is visible from the finish bird-eye shot, otherwise falls back to progress/distance triggers and holds finish until every marble completes.',
   finishSlowMotionCameraHoldSeconds: 3.4,
   finishSlowMotionCameraLabel: 'when final-lap finish slow motion triggers near/crossing the line, Default Auto holds the finish-line shot through the slow-mo window so the slow finish camera remains visible before returning to race/podium coverage; intermediate lap crossings do not start finish slow motion',
   lapTransitionCamera: {
@@ -753,11 +759,11 @@ const BROADCAST_CAMERA = {
   unfinished: { back: -2.6, side: 0.8, height: 27.0 },
   finish: { forward: 3.3, height: 27.5, targetLift: 1.05, fov: 44 },
   toyParkFinish: {
-    forward: 0,
-    height: 0,
-    targetLift: 0.35,
-    fov: 50,
-    label: 'Toy Park final-lap finish camera: top-down finish-line bird-eye view that starts before the leader crosses and stays until every marble completes',
+    forward: 8,
+    height: 40,
+    targetLift: 0.65,
+    fov: 60,
+    label: 'Toy Park final-lap finish camera: steady near-track high bird-eye finish view that prechecks leader visibility late, snaps once, and holds a fixed zoom until every marble completes',
   },
   podium360: {
     enabled: true,
@@ -3850,6 +3856,14 @@ class MarbleRace {
     const mechanic = String(params.get('physicsMechanic') || '').trim();
     const toyParkPreview = pathKey === 'toypark' || mechanic.toLowerCase() === 'toypark';
     this.toyParkPreviewEndpoint = toyParkPreview;
+    const explicitToyParkPreviewTileKey = toyParkPreview ? String(params.get('toyParkPreviewTile') || params.get('previewTile') || '').trim() : '';
+    const toyParkRenderRequest = toyParkPreview && ['1', 'true', 'yes'].includes(String(params.get('render') || params.get('capture') || '').toLowerCase());
+    const defaultPreviewTileKey = TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.renderStatus === 'draft-upcoming'
+      ? TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.key || ''
+      : '';
+    this.toyParkPreviewTileKey = explicitToyParkPreviewTileKey
+      || (toyParkPreview && !toyParkRenderRequest ? defaultPreviewTileKey : '');
+    this.toyParkPreviewTileSource = explicitToyParkPreviewTileKey ? 'query-param' : (this.toyParkPreviewTileKey ? 'web-ui-draft-preview-default' : null);
     document.body?.classList.toggle('toypark-preview-endpoint', toyParkPreview);
     if (toyParkPreview) {
       const requestedProfile = String(params.get('renderPerformanceProfile') || params.get('performanceProfile') || 'turbo60').trim();
@@ -3905,6 +3919,9 @@ class MarbleRace {
       toyParkPreview,
       toyParkDefaultCount: toyParkPreview && this.ui.count ? this.ui.count.dataset.toyParkDefaultCount || null : null,
       visualThemeKey: this.visualThemeKey,
+      toyParkPreviewTileKey: this.toyParkPreviewTileKey || null,
+      toyParkPreviewTileSource: this.toyParkPreviewTileSource || null,
+      toyParkRenderRequest,
       obstaclePresetIndex: this.ui.obstacle ? Number(this.ui.obstacle.value) : this.obstacleIndex,
       obstacleTypes: [...(this.enabledObstacleTypes || new Set())],
       activePhysicsMechanic: this.getPhysicsMechanicDebug(),
@@ -4096,6 +4113,7 @@ class MarbleRace {
     this.leadBattleInitialized = false;
     this.leadBattleState = null;
     this.defaultCameraFocusId = null;
+    this.toyParkFinalCameraVisibilityState = null;
     if (!preservePhase) this.defaultCameraPhaseUntil = 0;
     if (!preservePhase) {
       this.lapTransitionCameraUntil = 0;
@@ -6055,7 +6073,7 @@ class MarbleRace {
       // Toy Park random loop: start board -> random straight + left/right 45° bend road tiles -> finish board,
       // with the finish module connecting back to the start-board entrance. Keep scoped to Toy Park.
       // Generate once here and reuse the same piece list in buildPath so length/topology/debug stay in sync.
-      this.toyParkGeneratedTilePieces = buildToyParkDefaultTilePieces({ rng: this.rng });
+      this.toyParkGeneratedTilePieces = buildToyParkDefaultTilePieces({ rng: this.rng, previewTileKey: this.toyParkPreviewTileKey || null });
       this.toyParkRandomLoopSummary = this.toyParkGeneratedTilePieces.randomLoopSummary || null;
       this.trackLength = getToyParkTrackRoadLength(this.toyParkGeneratedTilePieces);
     } else {
@@ -6181,6 +6199,7 @@ class MarbleRace {
     if (this.physicsMechanicKey === 'toyPark') {
       this.createToyParkCandyPopStraightObstacleTiles();
       this.createToyParkWindmillSpinnerCircleTiles();
+      this.createToyParkMintSpikeBend45DraftTiles();
     }
     this.createDecorations();
   }
@@ -6670,7 +6689,7 @@ class MarbleRace {
       pieces.push({ type, length, turnDegrees, tileKey, angleRadians: THREE.MathUtils.degToRad(turnDegrees) });
     };
     const modularPieces = toyParkFlatTrack
-      ? (this.toyParkGeneratedTilePieces || buildToyParkDefaultTilePieces({ rng: this.rng }))
+      ? (this.toyParkGeneratedTilePieces || buildToyParkDefaultTilePieces({ rng: this.rng, previewTileKey: this.toyParkPreviewTileKey || null }))
       : [];
     if (!toyParkFlatTrack) addPiece(modularPieces, 'straight', 16 + this.rng() * 8, 0);
     const targetLength = this.trackLength;
@@ -9620,6 +9639,221 @@ class MarbleRace {
     return obstacle;
   }
 
+  createToyParkMintSpikeObstacle(trackSurface, yaw, pitch, options = {}) {
+    const trackWidth = options.trackWidth || this.trackWidth || 4;
+    const marbleRadiusReference = 0.46;
+    const coneRadius = marbleRadiusReference;
+    const coneHeight = marbleRadiusReference * 1.85;
+    const material = new THREE.MeshPhysicalMaterial({
+      color: 0x5a2f1b,
+      roughness: 0.42,
+      metalness: 0.02,
+      clearcoat: 0.36,
+      clearcoatRoughness: 0.28,
+      transparent: false,
+      opacity: 1,
+    });
+    material.userData = { type: 'toy-park-chocolate-pop-up-cone-spike-material', marbleSized: true, draftTile: false, renderReadyTile: true, chocolateSpike: true, chocolateColor: '#5a2f1b' };
+    const markerMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xf7fff4,
+      roughness: 0.34,
+      metalness: 0.18,
+      clearcoat: 0.72,
+      clearcoatRoughness: 0.16,
+      emissive: 0xb9ffe1,
+      emissiveIntensity: 0.12,
+      transparent: false,
+      opacity: 1,
+    });
+    markerMaterial.userData = { type: 'toy-park-spike-position-circle-marker-material', draftTile: false, renderReadyTile: true, marksSpikePosition: true };
+    const group = new THREE.Group();
+    group.name = `TOY_PARK_MINT_SPIKE_POP_UP_CONE_${options.pieceIndex ?? 0}_${options.spikeIndex ?? 0}`;
+    group.position.copy(trackSurface);
+    this.applyTrackSlopeRotation?.(group, yaw, pitch);
+
+    const marker = new THREE.Mesh(new THREE.TorusGeometry(coneRadius * 1.42, 0.045, 8, 36), markerMaterial);
+    marker.name = `${group.name}_TRACK_CIRCLE_MARKER`;
+    marker.rotation.x = Math.PI / 2;
+    marker.position.y = 0.04;
+    marker.castShadow = false;
+    marker.receiveShadow = PERFORMANCE_TUNING.shadows;
+    marker.userData = {
+      type: 'toy-park-spike-position-circle-marker',
+      marksSpikePosition: true,
+      draftTile: false,
+      renderReadyTile: true,
+      tileKey: options.tileKey || null,
+      spikeIndex: options.spikeIndex ?? null,
+      patternRow: options.patternRow ?? null,
+      patternColumn: options.patternColumn ?? null,
+    };
+    group.add(marker);
+
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(coneRadius, coneHeight, 24), material);
+    cone.name = `${group.name}_VISUAL`;
+    cone.position.y = -coneHeight * 0.5;
+    cone.castShadow = PERFORMANCE_TUNING.shadows;
+    cone.receiveShadow = PERFORMANCE_TUNING.shadows;
+    cone.userData = {
+      type: 'toy-park-chocolate-pop-up-cone-spike-visual',
+      draftTile: false,
+      renderReadyTile: true,
+      marbleSizedConeSpike: true,
+      chocolateSpike: true,
+      chocolateColor: '#5a2f1b',
+      oneSecondUpOneSecondDown: true,
+      tileKey: options.tileKey || null,
+      spikePositionMarkedByCircle: true,
+      patternRow: options.patternRow ?? null,
+      patternColumn: options.patternColumn ?? null,
+    };
+    group.add(cone);
+    this.trackGroup.add(group);
+
+    const body = new CANNON.Body({ mass: 0, material: this.obstacleMaterial });
+    body.type = CANNON.Body.KINEMATIC;
+    body.addShape(new CANNON.Cylinder(coneRadius * 0.35, coneRadius, coneHeight, 16));
+    const center = trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, -coneHeight * 0.5, 0, yaw, pitch));
+    this.setSlopeBodyTransform(body, center, yaw, pitch);
+    body.userData = {
+      ...(body.userData || {}),
+      name: `${group.name}_KINEMATIC_BODY`,
+      toyParkMintSpikeBend45Draft: true,
+      tileKey: options.tileKey || null,
+      spikeIndex: options.spikeIndex ?? null,
+      patternRow: options.patternRow ?? null,
+      patternColumn: options.patternColumn ?? null,
+    };
+    this.addObstacleBody(body, group);
+
+    const obstacle = {
+      type: 'toyParkMintSpikePopUpCone',
+      kind: 'toyParkMintSpikePopUpCone',
+      visualStyle: 'toy-park-chocolate-pop-up-cone-spike-with-circle-marker',
+      trackSurface: trackSurface.clone(),
+      center,
+      radius: coneRadius * 1.3,
+      impulse: PINBALL_PHYSICS.pinBumperImpulse * 0.18,
+      cooldown: new Map(),
+      cooldownSeconds: 0.18,
+      group,
+      cone,
+      body,
+      trackSlopePitch: pitch,
+      trackYaw: yaw,
+      coneHeight,
+      closedY: -coneHeight * 0.5,
+      openY: coneHeight * 0.42,
+      cycleSeconds: 2,
+      phaseOffset: options.phaseOffset || 0,
+      placementDistance: options.distance ?? null,
+      tileKey: options.tileKey || null,
+      pieceIndex: options.pieceIndex ?? null,
+      spikeIndex: options.spikeIndex ?? null,
+      patternRow: options.patternRow ?? null,
+      patternColumn: options.patternColumn ?? null,
+      spikePatternSymbol: 'x',
+      spikePositionMarkedByCircle: true,
+      draftTile: false,
+      renderReadyTile: true,
+      category: 'normal',
+      categoryLabel: OBSTACLE_CATEGORIES.normal?.label || '普通障礙物',
+      distributionMode: 'toy-park-render-ready-mint-chocolate-spike-45-bend-oxo-xox-grid',
+      mintSpikeDimensions: {
+        coneRadius: Number(coneRadius.toFixed(3)),
+        coneHeight: Number(coneHeight.toFixed(3)),
+        marbleDiameter: Number((marbleRadiusReference * 2).toFixed(3)),
+        trackWidth: Number(trackWidth.toFixed(3)),
+      },
+    };
+    this.pinballObstacles.push(obstacle);
+    return obstacle;
+  }
+
+  createToyParkMintSpikeBend45DraftTiles() {
+    if (this.physicsMechanicKey !== 'toyPark' || !Array.isArray(this.trackPieces)) return [];
+    const tileKey = TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.key;
+    if (!tileKey) return [];
+    const pieces = this.trackPieces.filter((piece) => piece.tileKey === tileKey);
+    if (!pieces.length) {
+      this.trackStats.toyParkMintSpikeBend45DraftTiles = { enabled: true, draftTile: false, renderReadyTile: true, tileCount: 0, spikeCount: 0, renderExcluded: false };
+      return [];
+    }
+    const created = [];
+    const summary = [];
+    const patternRows = ['oxo', 'xox', 'oxo', 'xox'];
+    pieces.forEach((piece, pieceIndex) => {
+      const rowCount = Math.max(4, Math.round((piece.endD - piece.startD) / 2));
+      const usableTrackWidth = this.getTrackWidthAt((piece.startD + piece.endD) / 2);
+      const laneOffsets = [-usableTrackWidth * 0.28, 0, usableTrackWidth * 0.28];
+      const pieceSpikes = [];
+      for (let row = 0; row < rowCount; row += 1) {
+        const rowPattern = patternRows[row % patternRows.length];
+        const t = (row + 1) / (rowCount + 1);
+        const distance = clamp(piece.startD + (piece.endD - piece.startD) * t, 0, this.trackLength);
+        const frame = this.getTrackFrameAt(distance);
+        const yaw = Math.atan2(frame.tangent.x, frame.tangent.z);
+        const pitch = Math.atan2(frame.tangent.y, Math.max(0.0001, Math.hypot(frame.tangent.x, frame.tangent.z)));
+        for (let col = 0; col < 3; col += 1) {
+          if (rowPattern[col] !== 'x') continue;
+          const laneOffset = laneOffsets[col];
+          const trackSurface = new THREE.Vector3(frame.p.x, frame.p.y, frame.p.z)
+            .add(this.localToWorldOffsetOnSlope(laneOffset, 0, 0, yaw, pitch));
+          const obstacle = this.createToyParkMintSpikeObstacle(trackSurface, yaw, pitch, {
+            distance,
+            trackWidth: this.getTrackWidthAt(distance),
+            tileKey,
+            pieceIndex: piece.index ?? pieceIndex,
+            spikeIndex: created.length,
+            patternRow: row,
+            patternColumn: col,
+            laneOffset,
+            phaseOffset: (row * 0.17) + (col * 0.09),
+          });
+          created.push(obstacle);
+          pieceSpikes.push({
+            row,
+            column: col,
+            symbol: 'x',
+            distance: Number(distance.toFixed(2)),
+            laneOffset: Number(laneOffset.toFixed(2)),
+          });
+        }
+      }
+      summary.push({
+        pieceIndex: piece.index ?? pieceIndex,
+        tileKey,
+        startD: Number(piece.startD.toFixed(2)),
+        endD: Number(piece.endD.toFixed(2)),
+        length: Number((piece.endD - piece.startD).toFixed(2)),
+        turnDegrees: piece.turnDegrees || 45,
+        rowCount,
+        spikeCount: pieceSpikes.length,
+        patternRows: Array.from({ length: rowCount }, (_, row) => patternRows[row % patternRows.length]),
+        spikes: pieceSpikes,
+      });
+    });
+    this.trackStats.toyParkMintSpikeBend45DraftTiles = {
+      enabled: true,
+      draftTile: false,
+      renderReadyTile: true,
+      renderExcluded: false,
+      approvalRequiredBeforeRenderReady: false,
+      formalizedReason: 'user-approved-render-ready-spike-tile-set',
+      tileKey,
+      tileCount: pieces.length,
+      spikeCount: created.length,
+      circleMarkerCount: created.length,
+      surfaceAndRailColor: 'mint-green',
+      spikeColor: 'chocolate-brown',
+      spikePositionMarker: 'circle-on-track-at-each-spike-position',
+      obstaclePattern: 'oxo/xox/oxo/xox repeating 3-lane spike grid; x has a chocolate-brown pop-up cone with a circle marker',
+      patternLegend: { x: 'chocolate-brown pop-up cone spike with circle marker', o: 'open lane' },
+      pieces: summary,
+    };
+    return created;
+  }
+
   createToyParkWindmillSpinnerCircleTiles() {
     if (this.physicsMechanicKey !== 'toyPark' || !Array.isArray(this.trackPieces)) return [];
     const tileKey = TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle?.key;
@@ -11551,6 +11785,21 @@ class MarbleRace {
         obstacle.bladeGlows?.forEach((glow, index) => {
           if (glow.material) glow.material.opacity = 0.12 + 0.08 * Math.sin(obstacle.spinAngle * 1.7 + index);
         });
+      }
+      if (animationActive && obstacle.type === 'toyParkMintSpikePopUpCone') {
+        const cycleSeconds = Math.max(0.5, obstacle.cycleSeconds || 2);
+        const localTime = ((this.elapsed + (obstacle.phaseOffset || 0)) % cycleSeconds) / cycleSeconds;
+        const rising = localTime < 0.5;
+        const halfT = rising ? localTime / 0.5 : (localTime - 0.5) / 0.5;
+        const smooth = THREE.MathUtils.smoothstep(rising ? halfT : 1 - halfT, 0, 1);
+        const coneY = THREE.MathUtils.lerp(obstacle.closedY ?? -0.42, obstacle.openY ?? 0.39, smooth);
+        obstacle.spikeOpenAmount = smooth;
+        if (obstacle.cone) obstacle.cone.position.y = coneY;
+        if (obstacle.body) {
+          obstacle.center.copy(obstacle.trackSurface.clone().add(this.localToWorldOffsetOnSlope(0, coneY, 0, obstacle.trackYaw || 0, obstacle.trackSlopePitch || 0)));
+          this.setSlopeBodyTransform(obstacle.body, obstacle.center, obstacle.trackYaw || 0, obstacle.trackSlopePitch || 0);
+          obstacle.body.aabbNeedsUpdate = true;
+        }
       }
       if (animationActive && obstacle.type === 'pendulumHammer') {
         const dimensions = obstacle.pendulumHammerDimensions || {};
@@ -16802,6 +17051,7 @@ class MarbleRace {
         finalApproachAssistCount: 0,
         slopeDriveForceCount: 0,
         timePenalty: 0, fallPenaltyCount: 0,
+        repositionResetTimes: [], repeatedRepositionDnfState: null,
         visualQuaternion: mesh.quaternion.clone(), lastVisualPosition: mesh.position.clone(),
         trail: this.createMarbleTrail(color, radius),
         dropTargetBoostAura: null,
@@ -20047,6 +20297,29 @@ class MarbleRace {
 
   resetStuckMarble(data, currentDistance = 0, reason = 'stuck') {
     if (data.finished) return;
+    if (reason === 'out-of-bounds') {
+      const windowSeconds = FALL_RESPAWN_POLICY.repeatedRepositionDnfWindowSeconds ?? 10;
+      const threshold = Math.max(1, FALL_RESPAWN_POLICY.repeatedRepositionDnfThreshold ?? 3);
+      const now = Number(this.elapsed) || 0;
+      const recentTimes = Array.isArray(data.repositionResetTimes)
+        ? data.repositionResetTimes.filter((time) => Number.isFinite(time) && now - time <= windowSeconds)
+        : [];
+      recentTimes.push(now);
+      data.repositionResetTimes = recentTimes;
+      data.repeatedRepositionDnfState = {
+        active: recentTimes.length >= threshold,
+        count: recentTimes.length,
+        threshold,
+        windowSeconds,
+        times: recentTimes.map((time) => Number(time.toFixed(3))),
+        reason: FALL_RESPAWN_POLICY.repeatedRepositionDnfReason,
+      };
+      if (recentTimes.length >= threshold) {
+        data.pendingFallRespawn = null;
+        this.eliminateStalledMarble(data, currentDistance, FALL_RESPAWN_POLICY.repeatedRepositionDnfReason || 'repeated-reposition-dnf');
+        return;
+      }
+    }
     const safeDistance = Math.max(0, currentDistance);
     const respawnDistance = Math.max(0, safeDistance - this.stuckResetPenalty);
     const penaltyDistance = reason === 'out-of-bounds' ? safeDistance : respawnDistance;
@@ -20099,6 +20372,12 @@ class MarbleRace {
     // segment, which can immediately classify the freshly reset marble as
     // off-track again and schedule an endless reset loop.
     data.distance = boundedPenaltyDistance;
+    data.driveDistance = boundedPenaltyDistance;
+    data.closestProgressDistance = boundedPenaltyDistance;
+    data.rawClosestProgressDistance = boundedPenaltyDistance;
+    data.windowedClosestProgressDistance = boundedPenaltyDistance;
+    data.overlapSafeProjection = false;
+    data.overlapProjectionJump = 0;
     data.lastSafeDistanceBeforeFall = boundedPenaltyDistance;
     const completedLaps = Math.max(0, Math.floor(Number(data.completedLaps) || 0));
     const lapLength = this.trackLapLength || this.trackLength || 0;
@@ -22216,6 +22495,109 @@ class MarbleRace {
     };
   }
 
+  canToyParkFinalCameraSeeLeader(leader) {
+    if (!leader || !this.isToyParkViewerOverlayActive?.() || !this.camera) {
+      this.toyParkFinalCameraVisibilityState = null;
+      return false;
+    }
+    const totalLaps = this.getToyParkOverlayTotalLaps?.() || this.raceTotalLaps || 1;
+    const leaderCurrentLap = this.getMarbleCurrentLap?.(leader, totalLaps) || leader?.currentLap || 1;
+    const finalLapActive = leaderCurrentLap >= totalLaps;
+    const lapLength = this.trackLapLength || this.trackLength || 0;
+    const leaderDistance = leader.distance || 0;
+    const distanceToFinish = Math.max(0, lapLength - leaderDistance);
+    const leaderProgress = lapLength ? clamp(leaderDistance / lapLength, 0, 1) : 0;
+    const leadDistance = BROADCAST_CAMERA.toyParkFinalCameraVisibilityLeadDistance ?? 72;
+    const minProgress = BROADCAST_CAMERA.toyParkFinalCameraVisibilityMinProgress ?? 0.78;
+    const margin = BROADCAST_CAMERA.toyParkFinalCameraVisibilityMargin ?? 0.08;
+    const candidate = Boolean(finalLapActive && distanceToFinish <= leadDistance && leaderProgress >= minProgress);
+    if (!candidate) {
+      this.toyParkFinalCameraVisibilityState = {
+        active: false,
+        candidate,
+        finalLapActive,
+        leaderCurrentLap,
+        totalLaps,
+        leaderProgress: Number(leaderProgress.toFixed(3)),
+        distanceToFinish: Number(distanceToFinish.toFixed(2)),
+        leadDistance,
+        minProgress,
+        reason: finalLapActive ? 'outside-final-camera-precheck-window' : 'not-final-lap',
+      };
+      return false;
+    }
+    if (this.toyParkFinalCameraVisibilityState?.active && finalLapActive && distanceToFinish <= leadDistance) {
+      this.toyParkFinalCameraVisibilityState = {
+        ...this.toyParkFinalCameraVisibilityState,
+        active: true,
+        candidate,
+        finalLapActive,
+        leaderCurrentLap,
+        totalLaps,
+        leaderProgress: Number(leaderProgress.toFixed(3)),
+        distanceToFinish: Number(distanceToFinish.toFixed(2)),
+        leadDistance,
+        minProgress,
+        margin,
+        reason: 'leader-previously-visible-finish-camera-latched',
+      };
+      return true;
+    }
+    const cfg = BROADCAST_CAMERA.toyParkFinish || BROADCAST_CAMERA.finish;
+    const frame = this.getTrackFrameAt(this.trackLength);
+    const target = new THREE.Vector3(frame.p.x, frame.p.y + (cfg.targetLift ?? 0.35), frame.p.z);
+    const finishUp = frame.up?.clone?.().normalize?.() || new THREE.Vector3(0, 1, 0);
+    const desired = target.clone()
+      .add(frame.tangent.clone().multiplyScalar(cfg.forward ?? 0))
+      .add(finishUp.multiplyScalar(cfg.height ?? 0));
+    const camera = this.camera;
+    const previousPosition = camera.position.clone();
+    const previousQuaternion = camera.quaternion.clone();
+    const previousFov = camera.fov;
+    const previousAspect = camera.aspect;
+    const targetPosition = leader.mesh?.position || leader.body?.position || leader.position;
+    const worldPosition = targetPosition
+      ? new THREE.Vector3(targetPosition.x, targetPosition.y, targetPosition.z)
+      : null;
+    let ndc = null;
+    let visible = false;
+    if (worldPosition) {
+      camera.position.copy(desired);
+      camera.aspect = Math.max(0.1, window.innerWidth / Math.max(1, window.innerHeight));
+      camera.fov = cfg.fov || BROADCAST_CAMERA.finish.fov || previousFov;
+      camera.lookAt(target);
+      camera.updateMatrixWorld(true);
+      camera.updateProjectionMatrix();
+      const projected = worldPosition.clone().project(camera);
+      ndc = { x: projected.x, y: projected.y, z: projected.z };
+      visible = projected.z > -1 && projected.z < 1
+        && Math.abs(projected.x) <= 1 - margin
+        && Math.abs(projected.y) <= 1 - margin;
+      camera.position.copy(previousPosition);
+      camera.quaternion.copy(previousQuaternion);
+      camera.fov = previousFov;
+      camera.aspect = previousAspect;
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld(true);
+    }
+    this.toyParkFinalCameraVisibilityState = {
+      active: visible,
+      candidate,
+      finalLapActive,
+      leaderCurrentLap,
+      totalLaps,
+      leaderProgress: Number(leaderProgress.toFixed(3)),
+      distanceToFinish: Number(distanceToFinish.toFixed(2)),
+      leadDistance,
+      minProgress,
+      margin,
+      ndc: ndc ? { x: Number(ndc.x.toFixed(3)), y: Number(ndc.y.toFixed(3)), z: Number(ndc.z.toFixed(3)) } : null,
+      fov: cfg.fov || BROADCAST_CAMERA.finish.fov || previousFov,
+      reason: visible ? 'leader-visible-from-finish-camera' : 'leader-not-yet-in-finish-camera-frame',
+    };
+    return visible;
+  }
+
   getDefaultCameraMode() {
     const lapTransitionState = this.lapTransitionCameraSnapState;
     if (lapTransitionState?.active && this.state === 'running') {
@@ -22261,9 +22643,10 @@ class MarbleRace {
       const leaderCurrentLap = this.getMarbleCurrentLap?.(leader, totalLaps) || leader?.currentLap || 1;
       const finalLapActive = leaderCurrentLap >= totalLaps;
       const distanceToFinish = Math.max(0, (this.trackLapLength || this.trackLength || 0) - (leader?.distance || 0));
-      const finalApproachByProgress = leaderProgress >= (BROADCAST_CAMERA.toyParkFinalApproachProgress ?? 0.94);
-      const finalApproachByDistance = distanceToFinish <= (BROADCAST_CAMERA.toyParkFinalApproachDistance ?? 22);
-      if (leader && finalLapActive && (finalApproachByProgress || finalApproachByDistance)) return 'finish';
+      const finalCameraLeaderVisible = this.canToyParkFinalCameraSeeLeader(leader);
+      const finalApproachByProgress = leaderProgress >= (BROADCAST_CAMERA.toyParkFinalApproachProgress ?? 0.9);
+      const finalApproachByDistance = distanceToFinish <= (BROADCAST_CAMERA.toyParkFinalApproachDistance ?? 48);
+      if (leader && finalLapActive && (finalCameraLeaderVisible || finalApproachByProgress || finalApproachByDistance)) return 'finish';
       const phaseSize = Math.max(0.01, BROADCAST_CAMERA.toyParkDefaultAlternatingPhaseSize || 0.2);
       const sequence = Array.isArray(BROADCAST_CAMERA.toyParkDefaultAlternatingSequence) && BROADCAST_CAMERA.toyParkDefaultAlternatingSequence.length
         ? BROADCAST_CAMERA.toyParkDefaultAlternatingSequence
@@ -22657,6 +23040,7 @@ class MarbleRace {
         finalApproachMode: this.isToyParkViewerOverlayActive() ? BROADCAST_CAMERA.toyParkFinalApproachMode : null,
         finalApproachDistance: this.isToyParkViewerOverlayActive() ? BROADCAST_CAMERA.toyParkFinalApproachDistance : null,
         finalApproachProgress: this.isToyParkViewerOverlayActive() ? BROADCAST_CAMERA.toyParkFinalApproachProgress : null,
+        finalCameraVisibilityPrecheck: this.isToyParkViewerOverlayActive() ? (this.toyParkFinalCameraVisibilityState || null) : null,
         birdEyeActive: Boolean(this.isToyParkViewerOverlayActive()),
         holdUntilAllFinished: Boolean(this.isToyParkViewerOverlayActive()),
         label: cfg.label || null,
@@ -22688,7 +23072,9 @@ class MarbleRace {
       this.leadBattleState = this.leadBattleState ? { ...this.leadBattleState, active: false } : null;
     }
     desired.copy(this.applyDefaultCameraPitch(desired, target, activeCameraMode));
-    desired.copy(this.getMouseOrbitAdjustedCamera(desired, target));
+    if (!(activeCameraMode === 'finish' && this.isToyParkViewerOverlayActive())) {
+      desired.copy(this.getMouseOrbitAdjustedCamera(desired, target));
+    }
     desired.copy(this.applyCameraLineOfSightBoost(desired, target, activeCameraMode));
     const toyParkNarrowPortraitPreview = Boolean(
       this.toyParkPreviewEndpoint
@@ -22771,7 +23157,11 @@ class MarbleRace {
       toyParkVerticalRenderWithoutCropCompensation,
       cropCompensationDisabledForToyPark: toyParkVerticalRenderWithoutCropCompensation,
     };
-    if (Math.abs(this.camera.fov - compensatedDesiredFov) > 0.01) {
+    const finishCameraSteadyHoldActive = Boolean(activeCameraMode === 'finish' && this.isToyParkViewerOverlayActive());
+    if (finishCameraSteadyHoldActive) {
+      this.camera.fov = compensatedDesiredFov;
+      this.camera.updateProjectionMatrix();
+    } else if (Math.abs(this.camera.fov - compensatedDesiredFov) > 0.01) {
       this.camera.fov = lerp(this.camera.fov, compensatedDesiredFov, (activeCameraMode === 'cinematicLeader' || activeCameraMode === 'leadPack') ? 0.035 : 0.055);
       this.camera.updateProjectionMatrix();
     }
@@ -22883,6 +23273,7 @@ class MarbleRace {
       },
       fov: Number(this.camera.fov.toFixed(2)),
       desiredFov: Number(compensatedDesiredFov.toFixed(2)),
+      finishCameraSteadyHoldActive,
       crop: this.videoCompositeCameraCropState || null,
       cinematicLeader: activeCameraMode === 'cinematicLeader' ? this.cinematicLeaderCameraState || null : null,
       finish: activeCameraMode === 'finish' ? this.finishCameraState || null : null,

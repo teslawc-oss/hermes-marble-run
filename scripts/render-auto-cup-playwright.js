@@ -29,7 +29,17 @@ const estimateNonRaceSeconds = (mode, raceCount) => {
 const rawVideoCapture = String(args.get('video-capture') || process.env.MARBLE_RENDER_VIDEO_CAPTURE || '').toLowerCase();
 const MARBLE_VISUAL_THEME_KEYS = ['mixed', 'neon', 'luxe', 'candy', 'natural'];
 const rawRenderUrl = args.get('url') || process.env.MARBLE_RENDER_URL || 'http://127.0.0.1:4173';
-const isToyParkRenderUrl = /\/toypark(?:[/?#]|$)/i.test(rawRenderUrl);
+const withRenderRequestFlag = (url) => {
+  try {
+    const parsed = new URL(url);
+    if (/\/toypark(?:[/?#]|$)/i.test(parsed.pathname)) parsed.searchParams.set('render', '1');
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+};
+const normalizedRenderUrl = withRenderRequestFlag(rawRenderUrl);
+const isToyParkRenderUrl = /\/toypark(?:[/?#]|$)/i.test(normalizedRenderUrl);
 const hasExplicitForceDefaultCamera = args.has('force-default-camera') || process.env.MARBLE_RENDER_FORCE_DEFAULT_CAMERA != null;
 const hasExplicitDisableMouseOrbit = args.has('disable-mouse-orbit') || process.env.MARBLE_RENDER_DISABLE_MOUSE_ORBIT != null;
 const shouldForceDefaultCamera = hasExplicitForceDefaultCamera
@@ -49,7 +59,7 @@ const toyParkRenderDefaults = isToyParkRenderUrl ? {
   multipleRaceCount: 1,
 } : {};
 const config = {
-  url: rawRenderUrl,
+  url: normalizedRenderUrl,
   port: Number(args.get('port') || process.env.MARBLE_RENDER_PORT || 4173),
   output: path.resolve(args.get('output') || process.env.MARBLE_RENDER_OUTPUT || path.join(recordingsDir, `auto-cup-${defaultStamp}.webm`)),
   cupSize: Number(args.get('cup-size') || process.env.MARBLE_RENDER_CUP_SIZE || toyParkRenderDefaults.cupSize || 12),

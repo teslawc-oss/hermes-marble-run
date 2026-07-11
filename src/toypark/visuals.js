@@ -83,6 +83,20 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
       polygonOffsetUnits: 0,
     });
 
+    const mintSpikeBendMat = new THREE.MeshPhysicalMaterial({
+      color: 0x98f2c6,
+      roughness: 0.88,
+      metalness: 0,
+      clearcoat: 0.05,
+      clearcoatRoughness: 0.9,
+      transparent: false,
+      opacity: 1,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+
     straightMat.userData = {
       type: 'toy-park-straight-road-tile-surface-material',
       opaqueClay: true,
@@ -121,17 +135,30 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
       clayGrain: 'opaque-pastel-molded-clay-plastic',
       thickerMoldedLook: true,
     };
+    mintSpikeBendMat.userData = {
+      type: 'toy-park-mint-chocolate-spike-45-bend-render-ready-tile-surface-material',
+      opaqueClay: true,
+      tileSurfaceColor: 'mint-green-direct-track-board-color',
+      obstacleTile: true,
+      draftTile: false,
+      renderReadyTile: true,
+      obstaclePattern: 'one-second-up-one-second-down-marble-sized-chocolate-cone-spikes',
+      sourceTrackMaterialStyle: sourceMaterial?.userData?.style || null,
+      clayGrain: 'opaque-pastel-molded-clay-plastic',
+      thickerMoldedLook: true,
+    };
     const cancelledBridgeSurfaceMaterials = new Map();
     const counts = { straight: 0, rampUp: 0, elevatedStraight: 0, rampDown: 0, variableBend: 0, windmillCircle: 0, uTurn180: 0, corner45: 0 };
     app.trackPieces.forEach((piece, index) => {
       if (!piece.tileKey) return;
       const isCandyPopStraight = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle?.key;
       const isWindmillCircle = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle?.key;
+      const isMintSpikeBend45Draft = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.key;
       const isVariableBend = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend.key;
       const isRampUp = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampUp.key;
       const isElevatedStraight = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight.key;
       const isRampDown = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampDown.key;
-      const material = cancelledBridgeSurfaceMaterials.get(piece.tileKey) || (isCandyPopStraight ? candyPopStraightMat : (isVariableBend ? variableBendMat : straightMat));
+      const material = cancelledBridgeSurfaceMaterials.get(piece.tileKey) || (isCandyPopStraight ? candyPopStraightMat : (isMintSpikeBend45Draft ? mintSpikeBendMat : (isVariableBend ? variableBendMat : straightMat)));
       const samples = [];
       const startD = clamp(piece.startD, 0, app.trackLength);
       const endD = clamp(piece.endD, startD, app.trackLength);
@@ -145,8 +172,10 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
         ? `TOY_PARK_CANDY_POP_STRAIGHT_OBSTACLE_TILE_SURFACE_${counts.straight}`
         : isWindmillCircle
           ? `TOY_PARK_WINDMILL_SPINNER_CIRCLE_TILE_SURFACE_${counts.windmillCircle}`
-          : isVariableBend
-            ? `TOY_PARK_VARIABLE_ANGLE_BEND_TILE_SURFACE_${counts.variableBend}`
+          : isMintSpikeBend45Draft
+            ? `TOY_PARK_MINT_SPIKE_45_BEND_DRAFT_TILE_SURFACE_${counts.variableBend}`
+            : isVariableBend
+              ? `TOY_PARK_VARIABLE_ANGLE_BEND_TILE_SURFACE_${counts.variableBend}`
             : isRampUp
               ? `TOY_PARK_RAMP_UP_ROAD_TILE_SURFACE_${counts.rampUp}`
               : isElevatedStraight
@@ -174,8 +203,10 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
             ? 'pink-orange-candy-pop-straight-obstacle'
             : isWindmillCircle
               ? 'sky-blue-host-straight-under-short-purple-windmill-overlay'
-              : isVariableBend
-                ? 'warm-orange-variable-bend'
+              : isMintSpikeBend45Draft
+                ? 'mint-green-chocolate-pop-up-cone-spike-45-bend-render-ready'
+                : isVariableBend
+                  ? 'warm-orange-variable-bend'
                 : isRampUp
                   ? 'mint-green-ramp-up'
                   : isElevatedStraight
@@ -188,9 +219,11 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
           bridgeModule: Boolean(piece.bridgeModule),
           bridgeModuleRole: piece.bridgeModuleRole ?? null,
           bridgeHeight: piece.bridgeHeight ?? 0,
-          obstacleTile: isCandyPopStraight || isWindmillCircle,
+          obstacleTile: isCandyPopStraight || isWindmillCircle || isMintSpikeBend45Draft,
+          draftTile: false,
+          renderReadyTile: isMintSpikeBend45Draft,
           circleTile: isWindmillCircle,
-          obstaclePattern: isCandyPopStraight ? 'alternating-left-right-candy-pop-bumpers' : (isWindmillCircle ? 'center-four-blade-rotating-windmill-spinner' : null),
+          obstaclePattern: isCandyPopStraight ? 'alternating-left-right-candy-pop-bumpers' : (isWindmillCircle ? 'center-four-blade-rotating-windmill-spinner' : (isMintSpikeBend45Draft ? 'centerline-one-second-pop-up-cone-spikes' : null)),
           pathHeightMode: piece.pathHeightMode ?? null,
           uTurn180: false,
         },
@@ -437,7 +470,7 @@ export function addToyParkTrackTileRibbons(app, sourceMaterial = null) {
         group.userData.circleRailGapFix = 'rounded-end-caps-on-open-circle-rail-ends-no-inner-rail';
         app.trackGroup.add(group);
       }
-      if (isVariableBend) counts.variableBend += 1;
+      if (isVariableBend || isMintSpikeBend45Draft) counts.variableBend += 1;
       else if (isWindmillCircle) counts.windmillCircle += 1;
       else if (isRampUp) counts.rampUp += 1;
       else if (isElevatedStraight) counts.elevatedStraight += 1;
@@ -769,6 +802,8 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
     const railChunkGap = 0.035;
     const tileConnectorOverlap = TOY_PARK_RAIL_TILE_CONNECTOR_OVERLAP;
     const { red: redMaterial, white: whiteMaterial, innerGray: innerGrayMaterial, straightBlue: straightBlueMaterial, candyPopPinkOrange: candyPopPinkOrangeMaterial } = createToyParkRailMaterialSet(app, material);
+    const mintSpikeGreenMaterial = new THREE.MeshPhysicalMaterial({ color: 0x98f2c6, roughness: 0.9, metalness: 0, clearcoat: 0.04, clearcoatRoughness: 0.92, transparent: false, opacity: 1, side: THREE.DoubleSide });
+    mintSpikeGreenMaterial.userData = { type: 'toy-park-mint-chocolate-spike-45-bend-render-ready-tile-rail-material', tileRailColor: 'mint-green', draftTile: false, renderReadyTile: true, matchesMintSpikeBendSurfaceColor: true, opaqueClay: true, materialFeel: 'rough pitted molded clay half-round rail matching mint green chocolate spike bend surface' };
     const windmillLightPurpleMaterial = new THREE.MeshPhysicalMaterial({
       color: 0xd8bdff,
       roughness: 0.88,
@@ -834,6 +869,7 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
       .filter((piece) => bridgeTileKeys.has(piece.tileKey));
     const bendTileKeys = new Set([
       TOY_PARK_TRACK_TILE_LIBRARY.variableBend.key,
+      TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.key,
     ]);
     const bendPieces = (app.trackPieces || [])
       .filter((piece) => bendTileKeys.has(piece.tileKey));
@@ -1060,6 +1096,7 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
     let stripeIndex = 0;
       bendPieces.forEach((piece) => {
         const isNinetyDegreeBend = Math.abs(Number(piece.turnDegrees || 0)) === 90;
+        const isMintSpikeBend45Draft = piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.key;
         const pieceStart = clamp(piece.startD - (isNinetyDegreeBend ? 0 : tileConnectorOverlap), 0, app.trackLength);
         const pieceEnd = clamp(piece.endD + (isNinetyDegreeBend ? 0 : tileConnectorOverlap), pieceStart, app.trackLength);
         const sideSummaries = [-1, 1].map((bendSide) => {
@@ -1090,7 +1127,7 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
             const tube = buildToyParkHalfRoundRailMesh(app,
               innerFlushSamples,
               railRadius,
-              innerGrayMaterial,
+              isMintSpikeBend45Draft ? mintSpikeGreenMaterial : innerGrayMaterial,
               `toy-park-half-round-inner-smooth-gray-continuous-rail-${bendSide < 0 ? 'left' : 'right'}-${grayInnerRailChunks}`,
               {
                 type: 'toy-park-gray-inner-rail',
@@ -1117,9 +1154,13 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
                 tileRailConnectorOverlap: 0,
                 innerRailFlushButtJoint: true,
                 railJoinFix: 'inner-short-side-generated-as-one-continuous-smooth-gray-rail-length-based-role',
-                materialFeel: isNinetyDegreeBend
-                  ? 'large 30%-smaller one-piece smooth gray molded-clay half-round rail restored on the shorter inside of the 90-degree bend by user request; flush butt joints preserved at tile boundaries'
-                  : 'large 30%-smaller one-piece smooth gray molded-clay half-round rail on the shorter inside of the variable-angle bend; 180-degree U-turn tile cancelled',
+                draftMintSpikeBendRail: isMintSpikeBend45Draft,
+                railAndTrackColor: isMintSpikeBend45Draft ? 'mint-green' : null,
+                materialFeel: isMintSpikeBend45Draft
+                  ? 'mint green one-piece rough molded-clay half-round rail matching the render-ready chocolate pop-up spike bend surface'
+                  : (isNinetyDegreeBend
+                    ? 'large 30%-smaller one-piece smooth gray molded-clay half-round rail restored on the shorter inside of the 90-degree bend by user request; flush butt joints preserved at tile boundaries'
+                    : 'large 30%-smaller one-piece smooth gray molded-clay half-round rail on the shorter inside of the variable-angle bend; 180-degree U-turn tile cancelled'),
                 cameraOccluder: true,
                 cameraOccluderType: 'toy-park-gray-inner-rail',
                 cameraOccluderDistanceStart: pieceStart,
@@ -1155,7 +1196,7 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
             const startD = pieceStart + chunk.start;
             const endD = pieceStart + chunk.end;
             const samples = buildToyParkRailCurve(app, startD, endD, bendSide, width, railOffset, railBaseLift);
-            const railMaterial = stripeIndex % 2 === 0 ? redMaterial : whiteMaterial;
+            const railMaterial = isMintSpikeBend45Draft ? mintSpikeGreenMaterial : (stripeIndex % 2 === 0 ? redMaterial : whiteMaterial);
             const tube = buildToyParkHalfRoundRailMesh(app,
               samples,
               railRadius,
@@ -1190,7 +1231,11 @@ export function addToyParkMarbleGuardRails(app, points, material, width) {
                   : 'outer-long-side-red-white-chunks-inner-short-side-continuous-gray-length-based-role',
                 flushTileBoundaryStart: chunk.flushStart,
                 flushTileBoundaryEnd: chunk.flushEnd,
-                materialFeel: 'large 30%-smaller dense-striped rough clay half-round rail on the longer outside of the variable-angle bend; 180-degree U-turn tile cancelled',
+                materialFeel: isMintSpikeBend45Draft
+                  ? 'mint green rough molded-clay half-round rail matching the draft pop-up spike bend surface'
+                  : 'large 30%-smaller dense-striped rough clay half-round rail on the longer outside of the variable-angle bend; 180-degree U-turn tile cancelled',
+                draftMintSpikeBendRail: isMintSpikeBend45Draft,
+                railAndTrackColor: isMintSpikeBend45Draft ? 'mint-green' : null,
                 cameraOccluder: true,
                 cameraOccluderType: 'toy-park-red-white-outer-rail',
                 cameraOccluderDistanceStart: startD,

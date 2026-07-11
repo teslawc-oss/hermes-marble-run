@@ -451,7 +451,7 @@ const applyBridgeModuleSetToPieces = (pieces) => {
   return nextPieces;
 };
 
-const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, attempt, generator }) => {
+const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, attempt, generator, previewTileKey = null, previewBendIndex = -1 } = {}) => {
   const straightTile = TOY_PARK_TRACK_TILE_LIBRARY.straight;
   const candyPopStraightObstacleTile = isToyParkTileRenderReady(TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle)
     ? TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle
@@ -460,6 +460,11 @@ const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, a
     ? TOY_PARK_TRACK_TILE_LIBRARY.windmillSpinnerCircle
     : null;
   const variableBendTile = TOY_PARK_TRACK_TILE_LIBRARY.variableBend;
+  const mintSpikeBend45TileEnabled = isToyParkTileRenderReady(TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft)
+    || previewTileKey === TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.key;
+  const mintSpikeBend45Tile = mintSpikeBend45TileEnabled
+    ? TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft
+    : null;
   const pieces = [];
   const pickStraightTile = (straightIndex, length) => {
     const enoughRoomForWindmillCircle = length >= TOY_PARK_WINDMILL_VISUAL_FOOTPRINT.minHostStraightLength;
@@ -489,20 +494,28 @@ const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, a
       randomLoopStraightIndex: index,
       closureSolved: true,
     }));
-    pieces.push(cloneTilePiece(variableBendTile, {
-      type: 'variable-bend',
+    const useMintSpikeBend45 = Boolean(mintSpikeBend45Tile)
+      && index === previewBendIndex
+      && Math.abs(turnDegrees) === 45;
+    const selectedBendTile = useMintSpikeBend45 ? mintSpikeBend45Tile : variableBendTile;
+    pieces.push(cloneTilePiece(selectedBendTile, {
+      type: useMintSpikeBend45 ? 'mint-chocolate-spike-bend-45' : 'variable-bend',
       length: bendLengths[index],
       turnDegrees,
       variableAngleDegrees: Math.abs(turnDegrees),
       loopPrototype: true,
       loopPrototypeIndex: index,
-      loopSegmentRole: `random-loop-${turnDegrees < 0 ? 'left' : 'right'}-${Math.abs(turnDegrees)}-degree-bend`,
+      loopSegmentRole: useMintSpikeBend45
+        ? 'render-ready-mint-chocolate-pop-up-cone-spike-45-bend-closure-solved'
+        : `random-loop-${turnDegrees < 0 ? 'left' : 'right'}-${Math.abs(turnDegrees)}-degree-bend`,
       randomLoop: true,
       randomLoopGenerator: generator,
       randomLoopAttempt: attempt,
       randomLoopTurnIndex: index,
       turnDirection: turnDegrees < 0 ? 'left' : 'right',
       closureSolved: true,
+      draftPreviewTileKey: useMintSpikeBend45 && !isToyParkTileRenderReady(mintSpikeBend45Tile) ? mintSpikeBend45Tile.key : null,
+      draftPreviewRenderExcluded: useMintSpikeBend45 && !isToyParkTileRenderReady(mintSpikeBend45Tile) ? true : null,
     }));
   });
   const finishStraightTile = pickStraightTile(straightLengths.length - 1, straightLengths[straightLengths.length - 1]);
@@ -526,12 +539,21 @@ const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, a
   return applyBridgeModuleSetToPieces(pieces);
 };
 
-const solveRandomClosedLoopPieces = (rng) => {
+const solveRandomClosedLoopPieces = (rng, { previewTileKey = null } = {}) => {
   const target = { x: 0, z: TOY_PARK_START_BOARD_ENTRANCE_OFFSET_FROM_EXIT };
   const clockwiseSign = rng() < 0.5 ? 1 : -1;
   for (let attempt = 1; attempt <= TOY_PARK_RANDOM_LOOP.maxAttempts; attempt += 1) {
     const turns = turnAnglesForAttempt(rng, clockwiseSign);
-    const bendLengths = turns.map((turnDegrees) => {
+    const previewTile = previewTileKey === TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.key
+      ? TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft
+      : null;
+    const renderReadyMintSpikeTile = isToyParkTileRenderReady(TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft)
+      ? TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft
+      : null;
+    const activeMintSpikeTile = previewTile || renderReadyMintSpikeTile;
+    const previewBendIndex = activeMintSpikeTile ? turns.findIndex((turnDegrees) => Math.abs(turnDegrees) === 45) : -1;
+    const bendLengths = turns.map((turnDegrees, index) => {
+      if (activeMintSpikeTile && index === previewBendIndex) return activeMintSpikeTile.length;
       const isNinetyDegree = Math.abs(turnDegrees) === 90;
       const minLength = isNinetyDegree ? TOY_PARK_RANDOM_LOOP.ninetyDegreeBendMinLength : TOY_PARK_RANDOM_LOOP.bendMinLength;
       const maxLength = isNinetyDegree ? TOY_PARK_RANDOM_LOOP.ninetyDegreeBendMaxLength : TOY_PARK_RANDOM_LOOP.bendMaxLength;
@@ -580,6 +602,8 @@ const solveRandomClosedLoopPieces = (rng) => {
       turns,
       attempt,
       generator: TOY_PARK_RANDOM_LOOP.label,
+      previewTileKey,
+      previewBendIndex,
     });
     const simulated = simulatePiecesPlanar(pieces, TOY_PARK_RANDOM_LOOP.roadFootprintAvoidance.sampleStep);
     const closureDistance = Math.hypot(simulated.x - target.x, simulated.z - target.z);
@@ -616,6 +640,13 @@ const solveRandomClosedLoopPieces = (rng) => {
         rampBridgeCancelled: true,
         rampBridgeReplacementPolicy: TOY_PARK_RANDOM_LOOP.bridgeModuleSet.replacementPolicy,
         activeTileKeys: [...new Set(pieces.map((piece) => piece.tileKey))],
+        formalTileKey: renderReadyMintSpikeTile?.key || null,
+        formalMintChocolateSpikeBendIndex: renderReadyMintSpikeTile ? previewBendIndex : null,
+        draftPreviewTileKey: previewTile && !renderReadyMintSpikeTile ? previewTile.key : null,
+        draftPreviewBendIndex: previewTile && !renderReadyMintSpikeTile ? previewBendIndex : null,
+        draftPreviewRenderExcluded: Boolean(previewTile && !renderReadyMintSpikeTile),
+        draftPreviewClosurePolicy: previewTile && !renderReadyMintSpikeTile ? 'draft-tile-length-participates-in-loop-solver-before-straight-closure-lengths-are-calculated' : null,
+        formalTileClosurePolicy: renderReadyMintSpikeTile ? 'render-ready-spike-tile-length-participates-in-loop-solver-before-straight-closure-lengths-are-calculated' : null,
         startAreaAvoidance,
         roadFootprintAvoidance,
         avoidsStartBoardArea: true,
@@ -681,9 +712,23 @@ const buildFallbackClosedLoopPieces = () => {
   return pieces;
 };
 
-export const buildToyParkDefaultTilePieces = ({ rng = seededFallbackRng } = {}) => (
-  solveRandomClosedLoopPieces(rng) || buildFallbackClosedLoopPieces()
-);
+export const buildToyParkDefaultTilePieces = ({ rng = seededFallbackRng, previewTileKey = null } = {}) => {
+  const pieces = solveRandomClosedLoopPieces(rng, { previewTileKey }) || buildFallbackClosedLoopPieces();
+  if (previewTileKey === TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.key
+    && !isToyParkTileRenderReady(TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft)) {
+    const previewTile = TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft;
+    pieces.draftPreviewTileKey = previewTile.key;
+    pieces.draftPreviewRenderExcluded = true;
+    pieces.randomLoopSummary = {
+      ...(pieces.randomLoopSummary || {}),
+      draftPreviewTileKey: previewTile.key,
+      draftPreviewRenderExcluded: true,
+      draftPreviewPolicy: 'manual-preview-only-not-render-ready',
+      draftPreviewClosurePolicy: 'preview-draft-track-blocks-are-included-before-loop-solving-so-start-and-finish-stay-closed',
+    };
+  }
+  return pieces;
+};
 
 export const getToyParkTrackRoadLength = (pieces = null) => (
   (pieces || buildToyParkDefaultTilePieces()).reduce((sum, piece) => sum + piece.length, 0)
@@ -696,7 +741,7 @@ export const getToyParkTileLabel = (tileKey) => {
 
 const getToyParkBoardRole = (piece) => {
   if (piece.bridgeModule) return piece.elevationRole || 'bridge';
-  if (piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend.key) return 'bend';
+  if (piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend.key || piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.key) return 'bend';
   if (piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampUp.key) return 'ramp-up';
   if (piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight.key) return 'elevated';
   if (piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.rampDown.key) return 'ramp-down';
@@ -722,7 +767,7 @@ export const buildToyParkBoardSequence = ({ pieceMetadata = [], loopClosure = nu
     tileKey: piece.tileKey || piece.type,
     tileLabel: piece.tileLabel || getToyParkTileLabel(piece.tileKey) || null,
     turnDegrees: piece.turnDegrees || 0,
-    bendDegrees: piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend.key ? Math.abs(piece.turnDegrees || 0) : 0,
+    bendDegrees: (piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend.key || piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.key) ? Math.abs(piece.turnDegrees || 0) : 0,
     bendDirection: piece.turnDegrees < 0 ? 'left' : (piece.turnDegrees > 0 ? 'right' : null),
     elevationRole: piece.elevationRole ?? null,
     bridgeModule: Boolean(piece.bridgeModule),
@@ -776,7 +821,10 @@ export const buildToyParkTrackTileSummary = ({ pieceMetadata, rightAngleTurns, f
       TOY_PARK_TRACK_TILE_LIBRARY.straight,
       TOY_PARK_TRACK_TILE_LIBRARY.variableBend,
       TOY_PARK_TRACK_TILE_LIBRARY.finish,
+      TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft,
     ],
+    draftTileTypes: Object.values(TOY_PARK_TRACK_TILE_LIBRARY).filter((tile) => tile?.renderStatus === 'draft-upcoming'),
+    draftTilePolicy: 'draft/upcoming tiles stay out of render list until user approval; render-ready spike tile is now part of the formal Toy Park tile library',
     disabledTileTypes: [
       TOY_PARK_TRACK_TILE_LIBRARY.rampUp,
       TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight,
