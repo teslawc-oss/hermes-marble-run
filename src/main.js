@@ -5737,6 +5737,36 @@ class MarbleRace {
     return texture;
   }
 
+  createToyParkChocolateClayTexture() {
+    const { canvas, ctx } = this.createTextureCanvas(256, '#8a5532');
+    const grad = ctx.createRadialGradient(108, 82, 16, 128, 128, 190);
+    grad.addColorStop(0, '#bd8555');
+    grad.addColorStop(0.42, '#9b653a');
+    grad.addColorStop(1, '#6b3c24');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 900; i += 1) {
+      const x = (i * 47) % 256;
+      const y = (i * 83) % 256;
+      const shade = i % 3 === 0 ? '255,232,198' : '94,50,29';
+      const alpha = i % 3 === 0 ? 0.082 : 0.09;
+      ctx.fillStyle = `rgba(${shade},${alpha})`;
+      ctx.fillRect(x, y, 1 + (i % 2), 1 + ((i >> 1) % 2));
+    }
+    for (let i = 0; i < 46; i += 1) {
+      const x = (i * 61) % 256;
+      const y = (i * 29) % 256;
+      const r = 1 + (i % 3);
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = i % 2 ? 'rgba(102,55,32,0.16)' : 'rgba(184,120,72,0.18)';
+      ctx.fill();
+    }
+    const texture = this.finishTexture(canvas, 2, 2);
+    texture.userData = { style: 'toy-park-heavy-pitted-light-brown-chocolate-clay-grain', size: 256 };
+    return texture;
+  }
+
   createTrackTexture() {
     // Seamless track material：避免高頻重複貼圖造成一格格拼接感，改用大面積低對比縱向細紋。
     const { canvas, ctx } = this.createTextureCanvas(1024, '#8b8378');
@@ -9645,15 +9675,16 @@ class MarbleRace {
     const coneRadius = marbleRadiusReference;
     const coneHeight = marbleRadiusReference * 1.85;
     const material = new THREE.MeshPhysicalMaterial({
-      color: 0x5a2f1b,
-      roughness: 0.42,
-      metalness: 0.02,
-      clearcoat: 0.36,
-      clearcoatRoughness: 0.28,
+      color: 0x9b653a,
+      map: this.createToyParkChocolateClayTexture(),
+      roughness: 0.88,
+      metalness: 0,
+      clearcoat: 0.045,
+      clearcoatRoughness: 0.92,
       transparent: false,
       opacity: 1,
     });
-    material.userData = { type: 'toy-park-chocolate-pop-up-cone-spike-material', marbleSized: true, draftTile: false, renderReadyTile: true, chocolateSpike: true, chocolateColor: '#5a2f1b' };
+    material.userData = { type: 'toy-park-chocolate-pop-up-cone-spike-material', marbleSized: true, draftTile: false, renderReadyTile: true, chocolateSpike: true, chocolateColor: '#9b653a', clayGrain: 'heavy-pitted-matte-light-brown-chocolate-clay', materialFeel: 'lighter matte rough molded clay, low clearcoat, no metallic/glossy spike shine' };
     const markerMaterial = new THREE.MeshPhysicalMaterial({
       color: 0xf7fff4,
       roughness: 0.34,
@@ -9700,7 +9731,7 @@ class MarbleRace {
       renderReadyTile: true,
       marbleSizedConeSpike: true,
       chocolateSpike: true,
-      chocolateColor: '#5a2f1b',
+      chocolateColor: '#9b653a',
       oneSecondUpOneSecondDown: true,
       tileKey: options.tileKey || null,
       spikePositionMarkedByCircle: true,
@@ -9845,10 +9876,10 @@ class MarbleRace {
       spikeCount: created.length,
       circleMarkerCount: created.length,
       surfaceAndRailColor: 'mint-green',
-      spikeColor: 'chocolate-brown',
+      spikeColor: 'light-chocolate-brown',
       spikePositionMarker: 'circle-on-track-at-each-spike-position',
-      obstaclePattern: 'oxo/xox/oxo/xox repeating 3-lane spike grid; x has a chocolate-brown pop-up cone with a circle marker',
-      patternLegend: { x: 'chocolate-brown pop-up cone spike with circle marker', o: 'open lane' },
+      obstaclePattern: 'oxo/xox/oxo/xox repeating 3-lane spike grid; x has a light-chocolate-brown pop-up cone with a circle marker',
+      patternLegend: { x: 'light-chocolate-brown pop-up cone spike with circle marker', o: 'open lane' },
       pieces: summary,
     };
     return created;
@@ -15796,13 +15827,74 @@ class MarbleRace {
     return Number.isFinite(rank) && rank > 5;
   }
 
-  pickShortActionLine(lines = [], fallback = '', seed = 0) {
+  getCommentaryLineSignature(line = '') {
+    let text = String(line || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    (this.marbleData || []).forEach((data) => {
+      const name = String(data?.name || '').toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (name) text = text.replace(new RegExp(`\\b${name}\\b`, 'g'), '{racer}');
+    });
+    text = text
+      .replace(/\b\d+(?:\.\d+)?\s*(?:m\/s|%|seconds?|s|m)?\b/g, '#')
+      .replace(/\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|\d+(?:st|nd|rd|th))\b/g, '{rank}')
+      .replace(/[^a-z{}# ]+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const phraseGroups = [
+      [/\b(?:just )?(?:blasted|blasts|blast) past\b/, 'overtake-blast-past'],
+      [/\b(?:finds?|found) the gap\b|\bgap opens\b/, 'overtake-gap'],
+      [/\bsqueezes? through\b|\bthreads? the needle\b/, 'overtake-squeeze'],
+      [/\btakes? the lane\b|\bclaims? the lane\b/, 'overtake-lane'],
+      [/\bsays? excuse me\b|\bexcuse me\b/, 'overtake-excuse-me'],
+      [/\bslips? through\b/, 'overtake-slip'],
+      [/\bis flying now\b|\bturns on the jets\b/, 'overtake-flying'],
+      [/\bdives? inside\b|\btakes? the inside route\b/, 'overtake-inside'],
+      [/\bsnaps? onto the faster line\b|\bfaster line\b/, 'overtake-line'],
+      [/\btimes? the run\b|\bperfectly\b/, 'overtake-timing'],
+      [/\bmuscles? through\b|\bthrough the traffic\b/, 'overtake-traffic'],
+      [/\bcatches? the draft\b|\bpops? out ahead\b/, 'overtake-draft'],
+      [/\bturns? defence into attack\b/, 'overtake-counter'],
+      [/\bcharging up\b|\bon the charge\b/, 'overtake-charge'],
+      [/\bgains? a place\b|\bclimbs? the order\b/, 'overtake-climb'],
+      [/\bclean air\b|\bpicking them off\b|\bcomeback run\b|\banother step toward the front\b/, 'overtake-momentum'],
+    ];
+    for (const [pattern, signature] of phraseGroups) {
+      if (pattern.test(text)) return signature;
+    }
+    return text.split(' ').slice(0, 7).join(' ');
+  }
+
+  getRecentCommentaryLineSignatures(limit = 8) {
+    const lines = [
+      this.lastCommentaryVoiceLine,
+      this.commentaryVoiceCurrentLine,
+      ...(this.commentaryVoiceQueue || []).map((item) => item?.line),
+      ...(this.commentaryHistory || []).slice(0, limit).map((item) => item?.line),
+    ].filter(Boolean);
+    const signatures = new Set(lines.map((line) => this.getCommentaryLineSignature(line)));
+    const exact = new Set(lines.map((line) => String(line || '').replace(/\s+/g, ' ').trim().toLowerCase()));
+    return { signatures, exact };
+  }
+
+  pickShortActionLine(lines = [], fallback = '', seed = 0, { avoidRecent = true } = {}) {
     const cleanLines = (Array.isArray(lines) ? lines : [lines])
       .map((line) => String(line || '').replace(/\s+/g, ' ').trim())
       .filter(Boolean);
     if (!cleanLines.length) return String(fallback || '').replace(/\s+/g, ' ').trim();
     const rawSeed = Number.isFinite(seed) ? seed : performance.now();
-    return cleanLines[Math.abs(Math.round(rawSeed * 997)) % cleanLines.length];
+    const start = Math.abs(Math.round(rawSeed * 997)) % cleanLines.length;
+    const rotated = cleanLines.slice(start).concat(cleanLines.slice(0, start));
+    if (avoidRecent && cleanLines.length > 1) {
+      const recent = this.getRecentCommentaryLineSignatures(10);
+      const fresh = rotated.find((line) => {
+        const normalized = line.toLowerCase();
+        const signature = this.getCommentaryLineSignature(line);
+        return !recent.exact.has(normalized) && !recent.signatures.has(signature);
+      });
+      if (fresh) return fresh;
+      const exactFresh = rotated.find((line) => !recent.exact.has(line.toLowerCase()));
+      if (exactFresh) return exactFresh;
+    }
+    return rotated[0];
   }
 
   getSpokenPosition(rank = 1) {
@@ -16400,6 +16492,14 @@ class MarbleRace {
               `${racerName} says excuse me and takes ${position}`,
               `${racerName} slips through, unbelievable timing`,
               `${racerName} is flying now and leaves ${rivalName} behind`,
+              `${racerName} dives inside ${rivalName}, clean move into ${position}`,
+              `${racerName} threads the needle and steals ${position}`,
+              `${racerName} snaps onto the faster line and clears ${rivalName}`,
+              `${racerName} times the run perfectly, ${position} place taken`,
+              `${racerName} muscles through the traffic and moves up`,
+              `${racerName} catches the draft and pops out ahead`,
+              `${racerName} turns defence into attack, up to ${position}`,
+              `${racerName} takes the inside route and completes the pass`,
             ]
           : [
               `${racerName} is charging up to ${position}`,
@@ -16408,6 +16508,10 @@ class MarbleRace {
               `${racerName} is now ${position}, pressure rising`,
               `${racerName} keeps moving forward, huge momentum`,
               `${racerName} is on the charge now`,
+              `${racerName} finds clean air and moves up`,
+              `${racerName} keeps picking them off`,
+              `${racerName} is building a comeback run`,
+              `${racerName} takes another step toward the front`,
             ];
         this.pushBroadcastEvent('Overtake!', detail, { kind: 'overtake', force: true, marbleId: frontOvertake.data.id, rivalId: passed?.id ?? null, distance: frontOvertake.data.distance, progress: frontOvertake.data.progress, lines });
       }
