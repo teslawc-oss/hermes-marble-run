@@ -12,6 +12,7 @@ import {
   TOY_PARK_TRACK_WIDTH_SCALE,
   TOY_PARK_WORLD_VISUAL_THEME_STYLE,
   buildToyParkPhysicsMechanicProfile,
+  isToyParkTileRenderReady,
 } from './toypark/config.js';
 import {
   buildToyParkDefaultTilePieces,
@@ -3858,12 +3859,21 @@ class MarbleRace {
     this.toyParkPreviewEndpoint = toyParkPreview;
     const explicitToyParkPreviewTileKey = toyParkPreview ? String(params.get('toyParkPreviewTile') || params.get('previewTile') || '').trim() : '';
     const toyParkRenderRequest = toyParkPreview && ['1', 'true', 'yes'].includes(String(params.get('render') || params.get('capture') || '').toLowerCase());
-    const defaultPreviewTileKey = TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.renderStatus === 'draft-upcoming'
-      ? TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.key || ''
-      : '';
-    this.toyParkPreviewTileKey = explicitToyParkPreviewTileKey
-      || (toyParkPreview && !toyParkRenderRequest ? defaultPreviewTileKey : '');
-    this.toyParkPreviewTileSource = explicitToyParkPreviewTileKey ? 'query-param' : (this.toyParkPreviewTileKey ? 'web-ui-draft-preview-default' : null);
+    const defaultPreviewTileKey = TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.renderStatus === 'draft-upcoming'
+      ? TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key || ''
+      : (TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.renderStatus === 'draft-upcoming'
+        ? TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft?.key || ''
+        : '');
+    const explicitToyParkPreviewTile = explicitToyParkPreviewTileKey
+      ? Object.values(TOY_PARK_TRACK_TILE_LIBRARY).find((tile) => tile?.key === explicitToyParkPreviewTileKey) || null
+      : null;
+    const explicitToyParkPreviewAllowed = Boolean(explicitToyParkPreviewTileKey)
+      && (!toyParkRenderRequest || isToyParkTileRenderReady(explicitToyParkPreviewTile));
+    this.toyParkPreviewTileKey = explicitToyParkPreviewAllowed
+      ? explicitToyParkPreviewTileKey
+      : (toyParkPreview && !toyParkRenderRequest ? defaultPreviewTileKey : '');
+    this.toyParkPreviewTileSource = explicitToyParkPreviewAllowed ? 'query-param' : (this.toyParkPreviewTileKey ? 'web-ui-draft-preview-default' : null);
+    this.toyParkPreviewTileRenderExcluded = Boolean(explicitToyParkPreviewTileKey && toyParkRenderRequest && !explicitToyParkPreviewAllowed);
     document.body?.classList.toggle('toypark-preview-endpoint', toyParkPreview);
     if (toyParkPreview) {
       const requestedProfile = String(params.get('renderPerformanceProfile') || params.get('performanceProfile') || 'turbo60').trim();
@@ -3921,6 +3931,7 @@ class MarbleRace {
       visualThemeKey: this.visualThemeKey,
       toyParkPreviewTileKey: this.toyParkPreviewTileKey || null,
       toyParkPreviewTileSource: this.toyParkPreviewTileSource || null,
+      toyParkPreviewTileRenderExcluded: Boolean(this.toyParkPreviewTileRenderExcluded),
       toyParkRenderRequest,
       obstaclePresetIndex: this.ui.obstacle ? Number(this.ui.obstacle.value) : this.obstacleIndex,
       obstacleTypes: [...(this.enabledObstacleTypes || new Set())],
@@ -6785,13 +6796,48 @@ class MarbleRace {
           slopeDropPerMeter + slopeJitter + startRampRatio * START_RAMP.extraDropPerMeter + rightAngleExtraDrop + transitionExtraDrop
         );
         y -= deltaD * segmentDropPerMeter;
-        if (toyParkFlatTrack && piece.elevationRole) {
+        const isCandyRampStraight = toyParkFlatTrack && piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key;
+        let toyParkTerrainHeightOffset = 0;
+        let toyParkTerrainProfile = null;
+        if (isCandyRampStraight) {
+          const rampTile = TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft;
+          const rampSections = rampTile?.rampSections || { entryFlat: 2, upSlope: 3.5, crest: 3, downSlope: 3.5, exitFlat: 2 };
+          const rampTotal = Math.max(0.001,
+            (rampSections.entryFlat || 0)
+            + (rampSections.upSlope || 0)
+            + (rampSections.crest || 0)
+            + (rampSections.downSlope || 0)
+            + (rampSections.exitFlat || 0)
+          );
+          const localDistance = localT * rampTotal;
+          const entryEnd = rampSections.entryFlat || 0;
+          const upEnd = entryEnd + (rampSections.upSlope || 0);
+          const crestEnd = upEnd + (rampSections.crest || 0);
+          const downEnd = crestEnd + (rampSections.downSlope || 0);
+          const rampHeight = rampTile?.rampHeight ?? 0.65;
+          if (localDistance <= entryEnd || localDistance >= downEnd) {
+            toyParkTerrainHeightOffset = 0;
+            toyParkTerrainProfile = 'flat-entry-exit';
+          } else if (localDistance < upEnd) {
+            toyParkTerrainHeightOffset = rampHeight * ((localDistance - entryEnd) / Math.max(0.001, upEnd - entryEnd));
+            toyParkTerrainProfile = 'orange-up-slope';
+          } else if (localDistance <= crestEnd) {
+            toyParkTerrainHeightOffset = rampHeight;
+            toyParkTerrainProfile = 'orange-crest';
+          } else {
+            toyParkTerrainHeightOffset = rampHeight * (1 - ((localDistance - crestEnd) / Math.max(0.001, downEnd - crestEnd)));
+            toyParkTerrainProfile = 'orange-down-slope';
+          }
+          y = startHeight + toyParkTerrainHeightOffset;
+        } else if (toyParkFlatTrack && piece.elevationRole) {
           const bridgeHeight = piece.bridgeHeight ?? TOY_PARK_TRACK_TILE_LIBRARY.elevatedStraight?.bridgeHeight ?? 0;
           let elevationOffset = 0;
           if (piece.elevationRole === 'ramp-up') elevationOffset = bridgeHeight * localT;
           else if (piece.elevationRole === 'elevated') elevationOffset = bridgeHeight;
           else if (piece.elevationRole === 'ramp-down') elevationOffset = bridgeHeight * (1 - localT);
           y = startHeight + elevationOffset;
+          toyParkTerrainHeightOffset = elevationOffset;
+          toyParkTerrainProfile = piece.elevationRole;
         }
         pathPoints.push({
           x,
@@ -6813,6 +6859,8 @@ class MarbleRace {
           bridgeModuleRole: piece.bridgeModuleRole ?? null,
           bridgeHeight: piece.bridgeHeight ?? 0,
           toyParkIndependentBridgeHeightOffset: toyParkFlatTrack && piece.elevationRole ? Number((y - startHeight).toFixed(4)) : 0,
+          toyParkTerrainHeightOffset: toyParkFlatTrack ? Number(toyParkTerrainHeightOffset.toFixed(4)) : 0,
+          toyParkTerrainProfile,
         });
         if (d >= targetLength) break;
       }
@@ -6844,6 +6892,14 @@ class MarbleRace {
         bridgeHostStraightIndex: piece.bridgeHostStraightIndex ?? null,
         pathHeightMode: piece.elevationRole
           ? 'independent-ramp-up-elevated-ramp-down-board-height-from-piece-metadata'
+          : (piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key
+            ? 'candy-ramp-render-ready-physical-centerline-height-profile-flat-up-crest-down-flat'
+            : null),
+        terrainProfile: piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key
+          ? TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.terrainProfile || 'flat-up-slope-short-crest-down-slope-flat'
+          : null,
+        rampHeight: piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key
+          ? TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.rampHeight ?? 0.65
           : null,
         startHeading,
         endHeading: heading,
@@ -6869,7 +6925,7 @@ class MarbleRace {
     const rightAngleTurns = pieceMetadata.filter((piece) => Math.abs(piece.turnDegrees) === 90);
     const fortyFiveTurns = pieceMetadata.filter((piece) => Math.abs(piece.turnDegrees) === 45);
     const variableBendTurns = pieceMetadata.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend?.key);
-    const straightPieces = pieceMetadata.filter((piece) => piece.type === 'straight');
+    const straightPieces = pieceMetadata.filter((piece) => piece.type === 'straight' || piece.type === 'straight-terrain');
     const rightAngleSlopePanels = pathPoints.filter((point) => (point.rightAngleExtraDrop || 0) > 0);
     const startPoint = pathPoints[0];
     const finishPoint = pathPoints[pathPoints.length - 1];

@@ -451,8 +451,13 @@ const applyBridgeModuleSetToPieces = (pieces) => {
   return nextPieces;
 };
 
-const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, attempt, generator, previewTileKey = null, previewBendIndex = -1 } = {}) => {
+const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, attempt, generator, previewTileKey = null, previewBendIndex = -1, previewStraightIndex = -1 } = {}) => {
   const straightTile = TOY_PARK_TRACK_TILE_LIBRARY.straight;
+  const candyRampStraightTileEnabled = isToyParkTileRenderReady(TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft)
+    || previewTileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key;
+  const candyRampStraightTile = candyRampStraightTileEnabled
+    ? TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft
+    : null;
   const candyPopStraightObstacleTile = isToyParkTileRenderReady(TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle)
     ? TOY_PARK_TRACK_TILE_LIBRARY.candyPopStraightObstacle
     : null;
@@ -467,6 +472,9 @@ const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, a
     : null;
   const pieces = [];
   const pickStraightTile = (straightIndex, length) => {
+    if (candyRampStraightTile && straightIndex === previewStraightIndex && length >= candyRampStraightTile.length) {
+      return candyRampStraightTile;
+    }
     const enoughRoomForWindmillCircle = length >= TOY_PARK_WINDMILL_VISUAL_FOOTPRINT.minHostStraightLength;
     const enoughRoomForCandyPopPattern = length >= 7.8;
     if (straightIndex > 0 && straightIndex % 4 === 2 && enoughRoomForWindmillCircle && windmillSpinnerCircleTile) {
@@ -482,17 +490,21 @@ const buildPiecesFromLengthsAndTurns = ({ straightLengths, bendLengths, turns, a
   turns.forEach((turnDegrees, index) => {
     const selectedStraightTile = pickStraightTile(index, straightLengths[index]);
     pieces.push(cloneTilePiece(selectedStraightTile, {
-      type: ['straight-obstacle', 'circle-obstacle'].includes(selectedStraightTile.role) ? selectedStraightTile.role : 'straight',
+      type: selectedStraightTile.role === 'straight-terrain' ? 'straight-terrain' : (['straight-obstacle', 'circle-obstacle'].includes(selectedStraightTile.role) ? selectedStraightTile.role : 'straight'),
       length: straightLengths[index],
       turnDegrees: 0,
       loopPrototype: true,
       loopPrototypeIndex: index,
-      loopSegmentRole: index === 0 ? 'random-loop-opening-straight' : (selectedStraightTile.role === 'straight-obstacle' ? 'random-loop-candy-pop-straight-obstacle' : (selectedStraightTile.role === 'circle-obstacle' ? 'random-loop-windmill-spinner-circle-obstacle' : 'random-loop-straight')),
+      loopSegmentRole: selectedStraightTile.role === 'straight-terrain'
+        ? 'render-ready-candy-ramp-straight-terrain'
+        : (index === 0 ? 'random-loop-opening-straight' : (selectedStraightTile.role === 'straight-obstacle' ? 'random-loop-candy-pop-straight-obstacle' : (selectedStraightTile.role === 'circle-obstacle' ? 'random-loop-windmill-spinner-circle-obstacle' : 'random-loop-straight'))),
       randomLoop: true,
       randomLoopGenerator: generator,
       randomLoopAttempt: attempt,
       randomLoopStraightIndex: index,
       closureSolved: true,
+      draftPreviewTileKey: selectedStraightTile === candyRampStraightTile && !isToyParkTileRenderReady(candyRampStraightTile) ? selectedStraightTile.key : null,
+      draftPreviewRenderExcluded: selectedStraightTile === candyRampStraightTile && !isToyParkTileRenderReady(candyRampStraightTile) ? true : null,
     }));
     const useMintSpikeBend45 = Boolean(mintSpikeBend45Tile)
       && index === previewBendIndex
@@ -552,6 +564,9 @@ const solveRandomClosedLoopPieces = (rng, { previewTileKey = null } = {}) => {
       : null;
     const activeMintSpikeTile = previewTile || renderReadyMintSpikeTile;
     const previewBendIndex = activeMintSpikeTile ? turns.findIndex((turnDegrees) => Math.abs(turnDegrees) === 45) : -1;
+    const formalCandyRampStraightTile = isToyParkTileRenderReady(TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft)
+      ? TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft
+      : null;
     const bendLengths = turns.map((turnDegrees, index) => {
       if (activeMintSpikeTile && index === previewBendIndex) return activeMintSpikeTile.length;
       const isNinetyDegree = Math.abs(turnDegrees) === 90;
@@ -595,6 +610,14 @@ const solveRandomClosedLoopPieces = (rng, { previewTileKey = null } = {}) => {
     const chosen = solvedCandidates[0];
     straightLengths[chosen.a] = chosen.lengthA;
     straightLengths[chosen.b] = chosen.lengthB;
+    const activeCandyRampStraightTile = formalCandyRampStraightTile
+      || (previewTileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key ? TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft : null);
+    let previewStraightIndex = -1;
+    if (activeCandyRampStraightTile) {
+      const rampLength = activeCandyRampStraightTile.length || 14;
+      previewStraightIndex = straightLengths.findIndex((length, index) => index > 0 && length >= rampLength);
+      if (previewStraightIndex < 0) continue;
+    }
 
     const pieces = buildPiecesFromLengthsAndTurns({
       straightLengths,
@@ -604,6 +627,7 @@ const solveRandomClosedLoopPieces = (rng, { previewTileKey = null } = {}) => {
       generator: TOY_PARK_RANDOM_LOOP.label,
       previewTileKey,
       previewBendIndex,
+      previewStraightIndex,
     });
     const simulated = simulatePiecesPlanar(pieces, TOY_PARK_RANDOM_LOOP.roadFootprintAvoidance.sampleStep);
     const closureDistance = Math.hypot(simulated.x - target.x, simulated.z - target.z);
@@ -642,11 +666,17 @@ const solveRandomClosedLoopPieces = (rng, { previewTileKey = null } = {}) => {
         activeTileKeys: [...new Set(pieces.map((piece) => piece.tileKey))],
         formalTileKey: renderReadyMintSpikeTile?.key || null,
         formalMintChocolateSpikeBendIndex: renderReadyMintSpikeTile ? previewBendIndex : null,
+        formalCandyRampStraightTileKey: formalCandyRampStraightTile?.key || null,
+        formalCandyRampStraightIndex: formalCandyRampStraightTile ? previewStraightIndex : null,
+        webPreviewTileKey: previewTileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key && !formalCandyRampStraightTile ? previewTileKey : null,
+        webPreviewStraightIndex: previewTileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key && !formalCandyRampStraightTile ? previewStraightIndex : null,
+        webPreviewRenderExcluded: previewTileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key && !formalCandyRampStraightTile,
+        webPreviewPolicy: previewTileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key && !formalCandyRampStraightTile ? 'draft-candy-ramp-straight-tile-is-web-preview-only-and-not-render-ready' : null,
         draftPreviewTileKey: previewTile && !renderReadyMintSpikeTile ? previewTile.key : null,
         draftPreviewBendIndex: previewTile && !renderReadyMintSpikeTile ? previewBendIndex : null,
         draftPreviewRenderExcluded: Boolean(previewTile && !renderReadyMintSpikeTile),
         draftPreviewClosurePolicy: previewTile && !renderReadyMintSpikeTile ? 'draft-tile-length-participates-in-loop-solver-before-straight-closure-lengths-are-calculated' : null,
-        formalTileClosurePolicy: renderReadyMintSpikeTile ? 'render-ready-spike-tile-length-participates-in-loop-solver-before-straight-closure-lengths-are-calculated' : null,
+        formalTileClosurePolicy: renderReadyMintSpikeTile || formalCandyRampStraightTile ? 'render-ready-special-tile-lengths-participate-in-loop-solver-before-straight-closure-lengths-are-calculated' : null,
         startAreaAvoidance,
         roadFootprintAvoidance,
         avoidsStartBoardArea: true,
@@ -797,6 +827,7 @@ export const buildToyParkTrackTileSummary = ({ pieceMetadata, rightAngleTurns, f
   const tileCounts = {
     start: 1,
     straight: pieceMetadata.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.straight.key).length,
+    candyRampStraightDraft: pieceMetadata.filter((piece) => piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key).length,
     rampUp: 0,
     elevatedStraight: 0,
     rampDown: 0,
@@ -822,6 +853,7 @@ export const buildToyParkTrackTileSummary = ({ pieceMetadata, rightAngleTurns, f
       TOY_PARK_TRACK_TILE_LIBRARY.variableBend,
       TOY_PARK_TRACK_TILE_LIBRARY.finish,
       TOY_PARK_TRACK_TILE_LIBRARY.mintSpikeBend45Draft,
+      TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft,
     ],
     draftTileTypes: Object.values(TOY_PARK_TRACK_TILE_LIBRARY).filter((tile) => tile?.renderStatus === 'draft-upcoming'),
     draftTilePolicy: 'draft/upcoming tiles stay out of render list until user approval; render-ready spike tile is now part of the formal Toy Park tile library',
@@ -873,6 +905,7 @@ export const buildToyParkTrackTileSummary = ({ pieceMetadata, rightAngleTurns, f
     onlyStraightAndVariableBendsBetweenStartFinish: pieceMetadata.every((piece) => (
       piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.straight.key
       || piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.variableBend.key
+      || piece.tileKey === TOY_PARK_TRACK_TILE_LIBRARY.candyRampStraightDraft?.key
     )),
     onlyStraightVariableBendsAndBridgeModulesBetweenStartFinish: false,
     onlyStraightVariableBendsAndUTurnBetweenStartFinish: false,
